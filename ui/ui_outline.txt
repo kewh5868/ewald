@@ -1,0 +1,76 @@
+
+1. **`MainWindow` (QMainWindow)**
+
+   * **Layout Setup**
+
+     * Central widget: a top-level `QSplitter(Qt.Horizontal)`
+
+       * Left pane (1/5 width)
+       * Right pane (4/5 width)
+
+2. **Left Pane** (`left_pane/file_tree.py`)
+
+   * `FileTreeView` (inherits `QTreeView`)
+   * `FileSystemModel` backing model for TIFF folders/projects
+   * Signals:
+
+     * `imageSelected(path: str)`
+
+3. **Right Pane** (`QWidget` with its own splitter)
+
+   * Top-level `QSplitter(Qt.Vertical)` or nested horizontal/vertical split
+
+   A. **Center + Bottom Section**
+
+   * **Center Pane** (`center_pane/image_view.py`)
+
+     * `ImageCanvas` (e.g. `pyqtgraph.ImageView` or Matplotlib widget)
+     * Methods: `loadImage(path)`, `setROI(mask)`
+     * Signals: `regionSelected(mask)`
+
+   * **Subplots** (`center_pane/subplots.py`)
+
+     * `IntegrationPlot1D` (Matplotlib widget)
+     * `TopographyPlot2D` (Matplotlib widget)
+     * Slots: `updateIntegration(data)`, `updateTopography(data)`
+
+   * **Bottom Pane** (`bottom_pane/peak_table.py`)
+
+     * `PeakTableModel` (inherits `QAbstractTableModel`, backed by xarray.DataArray/DataFrame)
+     * `PeakTableView` (`QTableView`)
+     * Controls: “Add Peak,” “Remove Peak,” “Export” buttons
+
+   B. **Right Control Panel** (`right_pane/…`)
+
+   * **UnitCellView** (`right_pane/unit_cell_view.py`)
+
+     * 3D rendering widget (e.g. VisPy canvas)
+     * Methods: `setCell(a,b,c,α,β,γ)`, `setOrientation(… )`
+   * **Structure File Browser** (`right_pane/structure_tree.py`)
+
+     * `StructureTreeView` (`QTreeView`) with CIF/.ewld project files
+     * Signals: `structureSelected(path)`
+   * **Cell Parameters Editor** (`right_pane/cell_params.py`)
+
+     * `QTabWidget` with two tabs:
+
+       1. **Manual Params**: six `QDoubleSpinBox` for a,b,c,α,β,γ
+       2. **Orientation**: three sliders or Euler-angle spinboxes
+     * “Apply” button emits `paramsChanged(a,b,c,α,β,γ)`
+
+4. **Cross-Component Signal Flow**
+
+   * FileTree → ImageCanvas → Subplots & PeakTable updates
+   * ImageCanvas region selection → Subplots & PeakTable
+   * CellParams → UnitCellView & triggers Bragg overlay on ImageCanvas
+   * StructureTree → loads new model into UnitCellView
+
+5. **Resources & Styling** (`ui/resources/`)
+
+   * `icons/` for toolbar buttons
+   * `styles.py` for centralized Qt stylesheet
+
+6. **Entry Point** (`ui/main_window.py`)
+
+   * `if __name__ == "__main__":` → instantiate `QApplication`, create `MainWindow`, `show()`, `app.exec()`
+
