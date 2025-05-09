@@ -1,10 +1,10 @@
 # File: ewald/ui/right_pane/cell_params.py
 """
-CellParamsEditor: edit unit cell parameters and orientation with crystal system presets.
+CellParamsEditor: edit unit cell parameters and orientation with crystal system presets, add custom structure naming.
 """
 from PyQt6.QtWidgets import (
     QWidget, QTabWidget, QFormLayout, QDoubleSpinBox,
-    QVBoxLayout, QPushButton, QComboBox
+    QVBoxLayout, QPushButton, QComboBox, QLineEdit
 )
 from PyQt6.QtCore import pyqtSignal
 
@@ -12,6 +12,8 @@ class CellParamsEditor(QWidget):
     # Emitted when lattice or orientation parameters are applied
     latticeChanged = pyqtSignal(float, float, float, float, float, float)
     orientationChanged = pyqtSignal(float, float, float)
+    # Emitted when a new custom structure is defined
+    customStructureAdded = pyqtSignal(str, float, float, float, float, float, float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -19,17 +21,21 @@ class CellParamsEditor(QWidget):
         self._setup_presets()
 
     def _init_ui(self):
-        tabs = QTabWidget()
-
-        # Crystal system selector
-        self.combo_system = QComboBox()
-        tabs.addTab(QWidget(), "Lattice")  # placeholder, will replace layout
-        tabs.insertTab(0, tabs.widget(0), "Lattice")  # ensure index
+        self.tabs = QTabWidget()
 
         # Lattice parameters tab
         lattice_tab = QWidget()
         form1 = QFormLayout(lattice_tab)
+
+        # Custom structure name field
+        self.name_edit = QLineEdit()
+        form1.addRow("Name", self.name_edit)
+
+        # Crystal system selector
+        self.combo_system = QComboBox()
         form1.addRow("Crystal System", self.combo_system)
+
+        # Lattice spin boxes
         self.spin_a = QDoubleSpinBox(); self.spin_b = QDoubleSpinBox()
         self.spin_c = QDoubleSpinBox(); self.spin_alpha = QDoubleSpinBox()
         self.spin_beta = QDoubleSpinBox(); self.spin_gamma = QDoubleSpinBox()
@@ -40,8 +46,8 @@ class CellParamsEditor(QWidget):
             spin.setRange(0.0, 1000.0)
             spin.setDecimals(4)
             form1.addRow(name, spin)
-        tabs.removeTab(0)
-        tabs.insertTab(0, lattice_tab, "Lattice")
+
+        self.tabs.addTab(lattice_tab, "Lattice")
 
         # Orientation tab
         orient_tab = QWidget()
@@ -51,7 +57,7 @@ class CellParamsEditor(QWidget):
             spin.setRange(-360.0, 360.0)
             spin.setDecimals(2)
             form2.addRow(name, spin)
-        tabs.addTab(orient_tab, "Orientation")
+        self.tabs.addTab(orient_tab, "Orientation")
 
         # Apply button
         apply_btn = QPushButton("Apply")
@@ -59,7 +65,7 @@ class CellParamsEditor(QWidget):
 
         # Main layout
         main_layout = QVBoxLayout(self)
-        main_layout.addWidget(tabs)
+        main_layout.addWidget(self.tabs)
         main_layout.addWidget(apply_btn)
 
         # Connect preset change
@@ -90,41 +96,35 @@ class CellParamsEditor(QWidget):
         }
         # Populate combo box
         self.combo_system.addItems(list(self.lattice_presets.keys()))
-        # Initialize to Custom
         self.combo_system.setCurrentText("Custom")
 
     def _on_system_change(self, system):
         # Apply preset values and enable/disable fields
         preset = self.lattice_presets.get(system)
-        # Map field names to spin objects
         field_map = {
             "a": self.spin_a, "b": self.spin_b, "c": self.spin_c,
             "alpha": self.spin_alpha, "beta": self.spin_beta, "gamma": self.spin_gamma
         }
         if preset:
-            # Block signals while setting values
-            for name, spin in field_map.items():
-                spin.blockSignals(True)
+            for spin in field_map.values(): spin.blockSignals(True)
             a, b, c, alpha, beta, gamma = preset
-            self.spin_a.setValue(a)
-            self.spin_b.setValue(b)
-            self.spin_c.setValue(c)
-            self.spin_alpha.setValue(alpha)
-            self.spin_beta.setValue(beta)
-            self.spin_gamma.setValue(gamma)
-            for spin in field_map.values():
-                spin.blockSignals(False)
-        # Enable or disable fields
+            self.spin_a.setValue(a); self.spin_b.setValue(b)
+            self.spin_c.setValue(c); self.spin_alpha.setValue(alpha)
+            self.spin_beta.setValue(beta); self.spin_gamma.setValue(gamma)
+            for spin in field_map.values(): spin.blockSignals(False)
         disabled = set(self.disable_map.get(system, []))
         for name, spin in field_map.items():
             spin.setEnabled(name not in disabled)
 
     def _on_apply(self):
-        # Emit both lattice and orientation signals
-        self.latticeChanged.emit(
-            self.spin_a.value(), self.spin_b.value(), self.spin_c.value(),
-            self.spin_alpha.value(), self.spin_beta.value(), self.spin_gamma.value()
-        )
+        # Emit lattice/orientation signals
+        a, b, c = self.spin_a.value(), self.spin_b.value(), self.spin_c.value()
+        alpha, beta, gamma = self.spin_alpha.value(), self.spin_beta.value(), self.spin_gamma.value()
+        self.latticeChanged.emit(a, b, c, alpha, beta, gamma)
         self.orientationChanged.emit(
             self.spin_omega.value(), self.spin_chi.value(), self.spin_phi.value()
         )
+        # Emit new custom structure if named
+        name = self.name_edit.text().strip()
+        if name:
+            self.customStructureAdded.emit(name, a, b, c, alpha, beta, gamma)

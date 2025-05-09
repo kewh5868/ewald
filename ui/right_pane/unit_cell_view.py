@@ -1,12 +1,12 @@
-# -------------------------------------------
 # File: ewald/ui/right_pane/unit_cell_view.py
 """
 UnitCellView: 3D visualization of the currently selected unit cell.
 """
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
-from vispy.scene import SceneCanvas
-from vispy.scene import visuals
+from vispy.scene import SceneCanvas, visuals
+from vispy.visuals.transforms import MatrixTransform
 import numpy as np
+import math
 
 class UnitCellView(QWidget):
     def __init__(self, parent=None):
@@ -26,7 +26,38 @@ class UnitCellView(QWidget):
         ], dtype=float)
         self.cell_lines.set_data(corners, connect='strip')
 
-    def setOrientation(self, rot_matrix):
-        transform = visuals.transforms.MatrixTransform()
-        transform.matrix = rot_matrix
+    def setOrientation(self, omega, chi, phi):
+        """
+        Apply Euler rotations (omega, chi, phi in degrees) to the unit cell wireframe.
+        Rotation order: X (omega), then Y (chi), then Z (phi).
+        """
+        # Convert degrees to radians
+        o = math.radians(omega)
+        c_ang = math.radians(chi)
+        p = math.radians(phi)
+
+        # Rotation matrices (4x4 homogeneous)
+        Rx = np.array([
+            [1, 0, 0, 0],
+            [0, math.cos(o), -math.sin(o), 0],
+            [0, math.sin(o),  math.cos(o), 0],
+            [0, 0, 0, 1]
+        ], dtype=float)
+        Ry = np.array([
+            [ math.cos(c_ang), 0, math.sin(c_ang), 0],
+            [0, 1, 0, 0],
+            [-math.sin(c_ang), 0, math.cos(c_ang), 0],
+            [0, 0, 0, 1]
+        ], dtype=float)
+        Rz = np.array([
+            [math.cos(p), -math.sin(p), 0, 0],
+            [math.sin(p),  math.cos(p), 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1]
+        ], dtype=float)
+
+        # Combined rotation
+        matrix = Rz @ Ry @ Rx
+        transform = MatrixTransform()
+        transform.matrix = matrix
         self.cell_lines.transform = transform
