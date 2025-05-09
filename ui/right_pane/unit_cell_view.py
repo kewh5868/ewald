@@ -16,13 +16,10 @@ class UnitCellView(QWidget):
         self.view = self.canvas.central_widget.add_view()
         self.view.camera = 'turntable'
         layout.addWidget(self.canvas.native)
-        # Draw axes
         visuals.XYZAxis(parent=self.view.scene)
-        # Placeholder for cell edges
         self.cell_lines = visuals.Line(color='white', parent=self.view.scene)
 
     def setCell(self, a, b, c, alpha, beta, gamma):
-        # Calculate orthogonal corners of unit cell
         corners = np.array([
             [0, 0, 0], [a, 0, 0], [a, b, 0], [0, b, 0], [0, 0, 0],
             [0, 0, c], [a, 0, c], [a, b, c], [0, b, c], [0, 0, c]
@@ -30,7 +27,6 @@ class UnitCellView(QWidget):
         self.cell_lines.set_data(corners, connect='strip')
 
     def setOrientation(self, rot_matrix):
-        # Apply rotation matrix to the cell lines
         transform = visuals.transforms.MatrixTransform()
         transform.matrix = rot_matrix
         self.cell_lines.transform = transform
