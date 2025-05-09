@@ -73,6 +73,15 @@ class MainWindow(QMainWindow):
         self.cell_params.latticeChanged.connect(self.unit_cell_view.setCell)
         self.cell_params.orientationChanged.connect(self.unit_cell_view.setOrientation)
         self.cell_params.customStructureAdded.connect(self.struct_tree.addCustomStructure)
+    
+    # When a row is clicked in the structure table,
+    # update the 3D cell view with its lattice (and reset orientation to 0,0,0)
+        self.struct_tree.structureSelected.connect(
+            lambda name, sys_, a, b, c, alpha, beta, gamma: (
+                self.unit_cell_view.setCell(a, b, c, alpha, beta, gamma),
+                self.unit_cell_view.setOrientation(0, 0, 0)
+            )
+        )
 
 if __name__ == "__main__":
     import sys

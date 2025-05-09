@@ -13,7 +13,8 @@ class CellParamsEditor(QWidget):
     latticeChanged = pyqtSignal(float, float, float, float, float, float)
     orientationChanged = pyqtSignal(float, float, float)
     # Emitted when a new custom structure is defined
-    customStructureAdded = pyqtSignal(str, float, float, float, float, float, float)
+    customStructureAdded = pyqtSignal(str, str, float, float, float, float, float, float)
+
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -117,14 +118,19 @@ class CellParamsEditor(QWidget):
             spin.setEnabled(name not in disabled)
 
     def _on_apply(self):
-        # Emit lattice/orientation signals
         a, b, c = self.spin_a.value(), self.spin_b.value(), self.spin_c.value()
-        alpha, beta, gamma = self.spin_alpha.value(), self.spin_beta.value(), self.spin_gamma.value()
+        alpha, beta, gamma = (self.spin_alpha.value(), self.spin_beta.value(), self.spin_gamma.value())
+        # Emit lattice and orientation
         self.latticeChanged.emit(a, b, c, alpha, beta, gamma)
         self.orientationChanged.emit(
             self.spin_omega.value(), self.spin_chi.value(), self.spin_phi.value()
         )
-        # Emit new custom structure if named
+        # Emit custom structure with correct args
         name = self.name_edit.text().strip()
         if name:
-            self.customStructureAdded.emit(name, a, b, c, alpha, beta, gamma)
+            system = self.combo_system.currentText()
+            self.customStructureAdded.emit(
+                name, system,
+                a, b, c,
+                alpha, beta, gamma
+            )
