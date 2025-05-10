@@ -1,0 +1,12 @@
+TODO | 5/9/25
+- Sync lattice parameters based on crystal system (e.g., updating a in cubic updates b, c)
+- Require structure be applied before calculation
+- Default (hkl) to 2
+- Change defaults on test bond lengths to 5
+- Change panel sizes upon opening
+- Add rotation sliders to manipulate structure in pane and update peak positions on plot. 
+- add hover-over (hkl) indices to the main plot. 
+- make subplots into widgets that can pop
+- automatically update table and bragg peaks when a different structure is selected
+- change the markers for the bragg peaks
+- add q_{r} column to table and feature to sort by each table value

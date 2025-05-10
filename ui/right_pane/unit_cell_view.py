@@ -2,7 +2,8 @@
 """
 UnitCellView: 3D visualization of the currently selected unit cell.
 """
-from PyQt6.QtWidgets import QWidget, QVBoxLayout
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
+from PyQt6.QtCore import Qt
 from vispy.scene import SceneCanvas, visuals
 from vispy.visuals.transforms import MatrixTransform
 import numpy as np
@@ -16,6 +17,13 @@ class UnitCellView(QWidget):
         self.view = self.canvas.central_widget.add_view()
         self.view.camera = 'turntable'
         layout.addWidget(self.canvas.native)
+        
+        # floating overlay label
+        self.rot_label = QLabel(self)
+        self.rot_label.setStyleSheet("color: white; background: rgba(0,0,0,0);")
+        self.rot_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+        self.rot_label.raise_()
+
         visuals.XYZAxis(parent=self.view.scene)
         self.cell_lines = visuals.Line(color='white', parent=self.view.scene)
 
@@ -25,6 +33,11 @@ class UnitCellView(QWidget):
             [0, 0, c], [a, 0, c], [a, b, c], [0, b, c], [0, 0, c]
         ], dtype=float)
         self.cell_lines.set_data(corners, connect='strip')
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        # position at top-right, 200px wide by 20px high
+        self.rot_label.setGeometry(self.width()-210, 10, 200, 20)
 
     def setOrientation(self, omega, chi, phi):
         """
@@ -61,3 +74,6 @@ class UnitCellView(QWidget):
         transform = MatrixTransform()
         transform.matrix = matrix
         self.cell_lines.transform = transform
+
+        # update the label text
+        self.rot_label.setText(f"ω={omega:.1f}°  χ={chi:.1f}°  φ={phi:.1f}°")
