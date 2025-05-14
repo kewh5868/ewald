@@ -14,9 +14,13 @@ class StructureTreeView(QTreeView):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # 9-column model
-        self.model = QStandardItemModel(0, 9, self)
-        headers = ["Name","System","a","b","c","alpha","beta","gamma","Source"]
+        # # 9-column model
+        # self.model = QStandardItemModel(0, 9, self)
+        # headers = ["Name","System","a","b","c","alpha","beta","gamma","Source"]
+        # now a 12-column model, adding rot_ω, rot_χ, rot_φ
+        self.model = QStandardItemModel(0, 12, self)
+        headers = ["Name","System","a","b","c","alpha","beta","gamma",
+                   "rot_ω","rot_χ","rot_φ","Source"]
         self.model.setHorizontalHeaderLabels(headers)
         self.setModel(self.model)
         self.setSelectionBehavior(self.SelectionBehavior.SelectRows)
@@ -61,3 +65,12 @@ class StructureTreeView(QTreeView):
             name = self.model.item(row, 0).text()
             self.model.removeRow(row)
             self.structureDeleted.emit(name)
+
+    def updateStructureRotation(self, name, rot_omega, rot_chi, rot_phi):
+        # find row by matching the Name column
+        for row in range(self.model.rowCount()):
+            if self.model.item(row, 0).text() == name:
+                self.model.item(row, 8).setText(f"{rot_omega:.1f}")
+                self.model.item(row, 9).setText(f"{rot_chi:.1f}")
+                self.model.item(row,10).setText(f"{rot_phi:.1f}")
+                return
