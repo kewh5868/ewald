@@ -126,13 +126,18 @@ class SingleImage:
         print (f"Solid angle: {self.solid_angle}")
         print (f"Metadata attributes: {self.metadata_attributes}")
 
+        maskfile = Path(self.mask_file)
+        ponifile = Path(self.poni_file)
+        # maskfile = Path(self.mask_file) if self.mask_file is not None else None
+        # ponifile = Path(self.poni_file) if self.poni_file is not None else None
+
         ## Adding a popup dialog for integration and dataset generation time.
         # Initialize PyHyperScattering Wrapper for PyFAI FiberIntegrator object
         self.integrator = PFFIGeneralIntegrator(
             geomethod='ponifile',
-            ponifile=Path(self.poni_file),
+            ponifile=ponifile,
             maskmethod=maskmethod,
-            maskpath=Path(self.mask_file),
+            maskpath=maskfile,
             sample_orientation=int(self.sample_orientation),
             tilt_angle=self.tilt_angle,
             split_pixels=self.split_pixels,
