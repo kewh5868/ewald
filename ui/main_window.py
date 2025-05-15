@@ -86,7 +86,7 @@ class MainWindow(QMainWindow):
 
         # # Action to load single image
         # self.loadSingleImageAction.triggered.connect(self._show_load_single_dialog)
-
+        ## Initialize the image canvas and peak table
         self.image_canvas = ImageCanvas()
         self.image_canvas.fig.set_facecolor('white')
         self.peak_table = PeakTableView()
@@ -97,6 +97,10 @@ class MainWindow(QMainWindow):
         center_split.setStretchFactor(0, 5)
         center_split.setStretchFactor(1, 1)
 
+        self.image_tree.imageSelected.connect(
+            lambda img: self.image_canvas.displayReciprocal(img.recip_DS)
+        )
+        
         main_split = QSplitter(Qt.Orientation.Horizontal)
         main_split.addWidget(self.image_tree)
         main_split.addWidget(center_split)

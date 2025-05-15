@@ -12,6 +12,9 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec
 import numpy as np
+import xarray as xr
+
+from ...dataclass.single_image import SingleImage
 
 class ImageCanvas(QWidget):
     def __init__(self, parent=None):
@@ -132,3 +135,54 @@ class ImageCanvas(QWidget):
         self.ax_small2d.set_xlim(extent[0], extent[1])
         self.ax_small2d.set_ylim(extent[2], extent[3])
         self.canvas.draw()
+
+    def displayReciprocal(self, recip_ds: xr.Dataset, cmap='viridis'):
+        """
+        Display a reciprocal‐space xarray Dataset on the main 2D axes,
+        plus its q_xy and q_z 1D projections on the subplots.
+        Recognizes multiple aliases for the two axes.
+        """
+        # 1) pick the DataArray
+        if isinstance(recip_ds, xr.Dataset):
+            var = list(recip_ds.data_vars)[0]
+            da = recip_ds[var]
+        else:
+            da = recip_ds
+
+        # 2) find axis names
+        qxy_aliases = {'qxy','q_xy','qip','QXY','Qip'}
+        qz_aliases  = {'qz','q_z','qoop','QZ','Qoop'}
+        # make lowercase lookup
+        coords_lc = {name.lower(): name for name in da.coords}
+        # pick
+        try:
+            qxy_key = coords_lc[next(a for a in qxy_aliases if a.lower() in coords_lc)]
+        except StopIteration:
+            raise KeyError(f"No qxy axis found among {list(coords_lc)}")
+        try:
+            qz_key  = coords_lc[next(a for a in qz_aliases  if a.lower() in coords_lc)]
+        except StopIteration:
+            raise KeyError(f"No qz axis found among {list(coords_lc)}")
+
+        # 3) extract data and coordinates
+        data = da.values
+        q_xy = da.coords[qxy_key].values
+        q_z  = da.coords[qz_key].values
+
+        # 4) compute extent in q-space
+        extent = [float(q_xy.min()), float(q_xy.max()),
+                  float(q_z.min()),  float(q_z.max())]
+
+        # 5) show on main axes
+        self.displayImage(data, extent=extent, cmap=cmap)
+
+        # 6) 1D cuts
+        I_qxy = da.sum(dim=qz_key).values
+        I_qz  = da.sum(dim=qxy_key).values
+        self.update1D('qxy', q_xy, I_qxy)
+        self.update1D('qz',  q_z,  I_qz)
+
+        self.canvas.draw()
+
+    def displaySingleImage(self, img: SingleImage, **kwargs):
+        self.displayReciprocal(img.recip_DS, **kwargs)

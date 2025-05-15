@@ -18,3 +18,9 @@ BUGS
     - if there are two data objects two windows, if 3 then 3, if 4 then 4, etc.
 - Automated metadata attribute extraction for compatibility with pyHyperScattering
 - Issue with custom string metadata inputs being recognized.
+- Clear All ROIs not functioning:   File "/Users/keithwhite/repos/ewald/ui/center_pane/roi_manager.py", line 32, in clear_all
+    rect_dict['main'].remove()
+  File "/opt/anaconda3/envs/ewald/lib/python3.10/site-packages/matplotlib/artist.py", line 256, in remove
+    raise NotImplementedError('cannot remove artist')
+NotImplementedError: cannot remove artist
+
