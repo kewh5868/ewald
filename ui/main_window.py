@@ -19,6 +19,7 @@ from .right_pane.cell_params import CellParamsEditor
 from .top_window.appmenubar import AppMenuBar
 from .top_window.maintoolbar import MainToolBar
 from .center_pane.roi_manager import ROIManager
+from .dialogs.load_single_image_dialog import LoadSingleImageDialog
 
 def rotate_lattice(a, b, c, axis, angle_deg):
     """
@@ -56,9 +57,16 @@ class MainWindow(QMainWindow):
         ## Add the toolbar
         self.toolbar = MainToolBar(self)
         
+        ## Connect single image dialog
+        self.toolbar.load_single_action.triggered.connect(
+        self.open_load_single_image_dialog
+    )
         # allow toggle behavior for ROI
         self.toolbar.roi_box_action.setCheckable(True)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar)
+        
+        # Initialize dialogs
+        self._init_dialogs()
 
         # Instantiate ROI manager and hook ROI action after UI setup
         # ROI drawing will only activate when the toolbar button is toggled
@@ -225,6 +233,51 @@ class MainWindow(QMainWindow):
         self.image_canvas.canvas.draw()
         self.peak_table.calc_model.clear()
         self.peak_table.calc_model.add_peaks(data_peaks)
+
+    def open_load_single_image_dialog(self):
+        dlg = LoadSingleImageDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            path = dlg.file_path_edit.text()
+            mask = dlg.mask_combo.currentText()
+            poni = dlg.poni_combo.currentText()
+            incidence = dlg.incidence_spin.value()
+            polarization = dlg.polarization_spin.value()
+            solid_angle = dlg.solid_angle_chk.isChecked()
+            metadata = dlg.get_metadata()
+            # Now pass these into your loader, e.g.:
+            self.load_single_image(path, mask, poni,
+                                incidence, polarization,
+                                solid_angle, metadata)
+
+    def _init_dialogs(self):
+        # Single image loader dialog
+        self.loadSingleDialog = LoadSingleImageDialog(self)
+        # Series images loader dialog
+        # self.loadSeriesDialog = LoadSeriesImageDialog(self)
+
+    # Open dialog slots
+    def openLoadSingleImageDialog(self):
+        self.loadSingleDialog.show()
+
+    def openLoadSeriesImageDialog(self):
+        self.loadSeriesDialog.show()
+
+    # Handlers for toolbar file-loading signals
+    def onPoniLoaded(self, filePath: str):
+        """Receive new PONI path and add to single-image dialog dropdown."""
+        try:
+            self.loadSingleDialog.addPoniFile(filePath)
+        except AttributeError:
+            # Fallback: reload full list
+            self.loadSingleDialog.reloadPoniList()
+
+    def onMaskLoaded(self, filePath: str):
+        """Receive new mask path and add to single-image dialog dropdown."""
+        try:
+            self.loadSingleDialog.addMaskFile(filePath)
+        except AttributeError:
+            # Fallback: reload full list
+            self.loadSingleDialog.reloadMaskList()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
