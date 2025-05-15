@@ -2,7 +2,7 @@ import sys
 from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QSplitter, QDockWidget,
     QWidget, QVBoxLayout, QMenuBar, QMenu,
-    QDialog, QFormLayout, QLineEdit, QDialogButtonBox
+    QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QMessageBox
 )
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt
@@ -40,6 +40,8 @@ def rotate_lattice(a, b, c, axis, angle_deg):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        # keep an in-memory store of data objects
+        self.data_objects = {}
         self.xmin = self.xmax = None
         self.ymin = self.ymax = None
         self.current_lattice = None
@@ -57,17 +59,13 @@ class MainWindow(QMainWindow):
         ## Add the toolbar
         self.toolbar = MainToolBar(self)
         
-        ## Connect single image dialog
-        self.toolbar.load_single_action.triggered.connect(
-        self.open_load_single_image_dialog
-    )
+        # Initialize dialogs
+        self._init_dialogs()
+
         # allow toggle behavior for ROI
         self.toolbar.roi_box_action.setCheckable(True)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar)
         
-        # Initialize dialogs
-        self._init_dialogs()
-
         # Instantiate ROI manager and hook ROI action after UI setup
         # ROI drawing will only activate when the toolbar button is toggled
         self.roi_manager = ROIManager(self.image_canvas, self.peak_table)
@@ -80,8 +78,14 @@ class MainWindow(QMainWindow):
         )  # reflect state
 
     def setup_ui(self):
-        self.image_tree = FileTreeView()
+        # --- Central splitter layout ---
+        # Left: File tree
+        self.image_tree = FileTreeView(self)
+        self.image_tree.setObjectName("fileTreeView")
         self.image_tree.imageSelected.connect(self.on_file_selected)
+
+        # # Action to load single image
+        # self.loadSingleImageAction.triggered.connect(self._show_load_single_dialog)
 
         self.image_canvas = ImageCanvas()
         self.image_canvas.fig.set_facecolor('white')
@@ -127,6 +131,35 @@ class MainWindow(QMainWindow):
                 name, sys_, a,b,c,alpha,beta,gamma)
         )
         self.struct_tree.structureSelected.connect(self.on_structure_selected)
+
+    ## --- Single Image Loading Logic ---
+    # Initialie the dialog box
+    def _init_dialogs(self):
+        # Single image loader dialog
+        self.loadSingleDialog = LoadSingleImageDialog(self)
+        # Series images loader dialog
+        # self.loadSeriesDialog = LoadSeriesImageDialog(self)
+
+    # Run dialog window
+    def openLoadSingleImageDialog(self):
+        # self.loadSingleDialog.show()
+        dlg = self.loadSingleDialog
+        dlg.single_image_loaded.connect(self._on_new_single_image)
+        dlg = self.loadSingleDialog.exec()
+
+    def _on_new_single_image(self, single_image):
+        name = single_image.data_name
+        if name in self.data_objects:
+            QMessageBox.warning(self, "Duplicate Data Name",
+                                f"A data object named '{name}' already exists.")
+            return
+        # store and display
+        self.data_objects[name] = single_image
+        self.image_tree.add_data_object(single_image)
+
+        # optionally expand and select the newly added item
+        index = self.image_tree.model.indexFromItem(self.image_tree._items[name])
+        self.image_tree.setCurrentIndex(index)
 
     def update_tree_rotation(self, omega, chi, phi):
         # push into the tree model
@@ -233,31 +266,6 @@ class MainWindow(QMainWindow):
         self.image_canvas.canvas.draw()
         self.peak_table.calc_model.clear()
         self.peak_table.calc_model.add_peaks(data_peaks)
-
-    def open_load_single_image_dialog(self):
-        dlg = LoadSingleImageDialog(self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            path = dlg.file_path_edit.text()
-            mask = dlg.mask_combo.currentText()
-            poni = dlg.poni_combo.currentText()
-            incidence = dlg.incidence_spin.value()
-            polarization = dlg.polarization_spin.value()
-            solid_angle = dlg.solid_angle_chk.isChecked()
-            metadata = dlg.get_metadata()
-            # Now pass these into your loader, e.g.:
-            self.load_single_image(path, mask, poni,
-                                incidence, polarization,
-                                solid_angle, metadata)
-
-    def _init_dialogs(self):
-        # Single image loader dialog
-        self.loadSingleDialog = LoadSingleImageDialog(self)
-        # Series images loader dialog
-        # self.loadSeriesDialog = LoadSeriesImageDialog(self)
-
-    # Open dialog slots
-    def openLoadSingleImageDialog(self):
-        self.loadSingleDialog.show()
 
     def openLoadSeriesImageDialog(self):
         self.loadSeriesDialog.show()

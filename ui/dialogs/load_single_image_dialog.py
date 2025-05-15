@@ -4,18 +4,24 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QFileDialog, QLabel, QWidget
 )
 from PyQt6.QtCore import Qt
+from PyQt6.QtCore import pyqtSignal
+from ...dataclass.single_image import SingleImage
 
 class LoadSingleImageDialog(QDialog):
     """
     Dialog for loading a single GIWAXS image with options for mask, PONI,
     incidence angle, polarization, solid angle toggle, and custom metadata.
     """
+    single_image_loaded = pyqtSignal(object)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         # Initialize file lists for dropdowns
         self.mask_files = []
         self.poni_files = []
         self.setWindowTitle("Load Single Image")
+        self.meta_rows = []  # list of (key_widget, value_widget, type_dropdown)
+
         self._init_ui()
 
     def _init_ui(self):
@@ -23,6 +29,11 @@ class LoadSingleImageDialog(QDialog):
         layout = QVBoxLayout(self)
         # Form layout for rows
         form = QFormLayout()
+
+        # --- Data Object Name ---
+        self.data_object_name_edit = QLineEdit()
+        self.data_object_name_edit.setPlaceholderText("Enter data object name")
+        form.addRow("Data Object Name:", self.data_object_name_edit)
 
         # --- File selector ---
         self.file_path_edit = QLineEdit()
@@ -44,15 +55,40 @@ class LoadSingleImageDialog(QDialog):
         self.poniCombo.addItem("None")
         form.addRow("PONI File:", self.poniCombo)
 
-        # --- Incidence angle and polarization ---
+        # --- Incidence angle ---
         self.incidence_spin = QDoubleSpinBox()
         self.incidence_spin.setRange(0.0, 90.0)
         self.incidence_spin.setDecimals(4)
+        self.incidence_spin.setValue(0.3)  # Default for GIWAXS
         form.addRow("Incidence Angle (°):", self.incidence_spin)
 
+        # --- Tilt angle ---
+        self.tilt_spin = QDoubleSpinBox()
+        self.tilt_spin.setRange(-90.0, 90.0)
+        self.tilt_spin.setDecimals(4)
+        self.tilt_spin.setValue(0.0)  # Default for GIWAXS
+        form.addRow("Tilt Angle (°):", self.tilt_spin)
+
+        # --- Sample orientation ---
+        self.sample_orientation_combo = QComboBox()
+        self.sample_orientation_combo.addItems([str(i) for i in range(1, 9)])
+        self.sample_orientation_combo.setCurrentText("4")
+        form.addRow("Sample Orientation:", self.sample_orientation_combo)
+        
+        # --- Split pixels, output space, and solid angle toggle ---
+        self.split_pixels_chk = QCheckBox()
+        self.split_pixels_chk.setChecked(True)  # Default to split pixels
+        form.addRow("Split Pixels:", self.split_pixels_chk)
+        self.output_space_combo = QComboBox()
+        self.output_space_combo.addItems(["Reciprocal Space", "Polar (Azimuthal)", "Both"])
+        self.output_space_combo.setCurrentText("Reciprocal Space")
+        form.addRow("Output Space:", self.output_space_combo)
+
+        # --- Polarization ---
         self.polarization_spin = QDoubleSpinBox()
         self.polarization_spin.setRange(0.0, 1.0)
         self.polarization_spin.setDecimals(4)
+        self.polarization_spin.setValue(0.95)  # Default for synchrotron data
         form.addRow("Polarization:", self.polarization_spin)
 
         # --- Solid angle toggle ---
@@ -76,14 +112,13 @@ class LoadSingleImageDialog(QDialog):
         self.meta_rows_layout = QVBoxLayout()
         layout.addLayout(self.meta_rows_layout)
 
-        # --- Dialog buttons ---
+        # Dialog buttons
         buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok |
-            QDialogButtonBox.StandardButton.Cancel,
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
             Qt.Orientation.Horizontal,
             self
         )
-        buttons.accepted.connect(self.accept)
+        buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
@@ -172,8 +207,58 @@ class LoadSingleImageDialog(QDialog):
         data = []
         for i in range(self.meta_rows_layout.count()):
             row = self.meta_rows_layout.itemAt(i).widget()
-            name = row.findChildren(QLineEdit)[0].text()
-            value = row.findChildren(QLineEdit)[1].text()
-            typ = row.findChildren(QComboBox)[0].currentText()
-            data.append((name, value, typ))
+            edits = row.findChildren(QLineEdit)
+            combo = row.findChildren(QComboBox)[0]
+            key = edits[0].text().strip()
+            value = edits[1].text().strip()
+            typ = combo.currentText()
+            if key:
+                data.append((key, value, typ))
         return data
+    
+    def _on_accept(self):
+        # Gather values
+        data_name = self.data_object_name_edit.text().strip()
+        file_path = self.file_path_edit.text().strip()
+        mask_file = self.getSelectedMask()
+        poni_file = self.getSelectedPoni()
+        incident_angle = float(self.incidence_spin.value())
+        tilt_angle = float(self.tilt_spin.value())
+        sample_orientation = int(self.sample_orientation_combo.currentText())
+        split_pixels = self.split_pixels_chk.isChecked()
+        output_space = self.output_space_combo.currentText()
+        if output_space == "Reciprocal Space":
+            output_space = "recip"
+        elif output_space == "Polar (Azimuthal)":
+            output_space = "polar"
+        else:
+            output_space = "both"
+        polarization = float(self.polarization_spin.value())
+        solid_angle = self.solid_angle_chk.isChecked()
+        metadata_entries = self.get_metadata()
+        metadata = {}
+        for key, value, typ in metadata_entries:
+            if typ == "Value":
+                try:
+                    metadata[key] = float(value) if '.' in value else int(value)
+                except ValueError:
+                    metadata[key] = value
+            else:
+                metadata[key] = value
+
+        single_image = SingleImage(
+            data_name=data_name,
+            file_path=file_path,
+            mask_file=mask_file,
+            poni_file=poni_file,
+            incident_angle=incident_angle,
+            tilt_angle=tilt_angle,
+            sample_orientation=sample_orientation,
+            split_pixels=split_pixels,
+            output_space=output_space,
+            polarization=polarization,
+            solid_angle=solid_angle,
+            metadata_attributes=metadata
+        )
+        self.single_image_loaded.emit(single_image)
+        super().accept()

@@ -11,3 +11,10 @@ TODO | 5/9/25
 - change the markers for the bragg peaks
 - add q_{r} column to table and feature to sort by each table value
 - highlight selected point on grid
+
+
+BUGS
+- Multiple popup warnings for "this file has been created" generated when file is loaded.
+    - if there are two data objects two windows, if 3 then 3, if 4 then 4, etc.
+- Automated metadata attribute extraction for compatibility with pyHyperScattering
+- Issue with custom string metadata inputs being recognized.
