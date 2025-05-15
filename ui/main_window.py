@@ -16,7 +16,9 @@ from .bottom_pane.peak_table import PeakTableView
 from .right_pane.unit_cell_view import UnitCellView
 from .right_pane.structure_tree import StructureTreeView
 from .right_pane.cell_params import CellParamsEditor
-
+from .top_window.appmenubar import AppMenuBar
+from .top_window.maintoolbar import MainToolBar
+from .center_pane.roi_manager import ROIManager
 
 def rotate_lattice(a, b, c, axis, angle_deg):
     """
@@ -34,27 +36,6 @@ def rotate_lattice(a, b, c, axis, angle_deg):
     ], dtype=float)
     return R.dot(a), R.dot(b), R.dot(c)
 
-class AppMenuBar(QMenuBar):
-    """
-    Shared application menu bar with standard menus.
-    """
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        file_menu = self.addMenu("File")
-        load_menu = QMenu("Load Files", self)
-        load_action = QAction("Load Files...", self)
-        load_menu.addAction(load_action)
-        file_menu.addMenu(load_menu)
-        self.load_action = load_action
-        self.addMenu("Edit")
-        view_menu = self.addMenu("View")
-        modify_range = QAction("Modify Plot Range...", self)
-        view_menu.addAction(modify_range)
-        self.modify_range_action = modify_range
-        self.addMenu("Tools")
-        self.addMenu("Windows")
-        self.addMenu("Settings")
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -65,12 +46,30 @@ class MainWindow(QMainWindow):
         self.peak_range = (1, 1, 1)
         self.calc = None
 
+        ## Setup the main UI
         self.setup_ui()
         menu = AppMenuBar(self)
         self.setMenuBar(menu)
         menu.load_action.triggered.connect(self.load_files)
         menu.modify_range_action.triggered.connect(self.open_plot_range_dialog)
-        self.showMaximized()
+
+        ## Add the toolbar
+        self.toolbar = MainToolBar(self)
+        
+        # allow toggle behavior for ROI
+        self.toolbar.roi_box_action.setCheckable(True)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar)
+
+        # Instantiate ROI manager and hook ROI action after UI setup
+        # ROI drawing will only activate when the toolbar button is toggled
+        self.roi_manager = ROIManager(self.image_canvas, self.peak_table)
+        self.toolbar.roi_box_action.toggled.connect(
+            self.roi_manager.enable_selector
+        )
+        # When exiting ROI mode, ensure selector is disabled
+        self.toolbar.roi_box_action.toggled.connect(
+            lambda checked: self.toolbar.roi_box_action.setChecked(checked)
+        )  # reflect state
 
     def setup_ui(self):
         self.image_tree = FileTreeView()
