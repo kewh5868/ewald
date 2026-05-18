@@ -48,7 +48,7 @@ def test_project_round_trip_preserves_data_groups(repo_root, tmp_path):
     project.integration_regions[data_id] = [
         {"name": "fit-window", "q_ip_min": 0.1, "q_ip_max": 0.4}
     ]
-    box_roi = project.add_roi_region(
+    project.add_roi_region(
         ROIRegion(
             target_id=data_id,
             kind="box",

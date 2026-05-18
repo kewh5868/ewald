@@ -137,7 +137,8 @@ def compute_peak_fit_integrations(
 def fit_peak_integration(
     integration: dict[str, Any],
 ) -> dict[str, Any] | None:
-    """Fit a single 1D integration profile with a Gaussian plus offset."""
+    """Fit a single 1D integration profile with a Gaussian plus
+    offset."""
 
     x_values = np.asarray(integration.get("x_values", []), dtype=float)
     y_values = np.asarray(integration.get("y_values", []), dtype=float)
@@ -274,7 +275,8 @@ def evaluate_peak_fit_2d(
     roi: dict[str, Any],
     fit: dict[str, Any],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
-    """Return qxy, qz, observed intensity, and model grids for plotting."""
+    """Return qxy, qz, observed intensity, and model grids for
+    plotting."""
 
     sliced = slice_peak_roi(image, axis_ranges, roi)
     if sliced is None:

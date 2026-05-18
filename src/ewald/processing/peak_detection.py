@@ -305,9 +305,9 @@ def threshold_peaks(
 ) -> list[PeakCandidate]:
     """Return bright-pixel peak candidates from a 2D image.
 
-    This is a deliberately small placeholder for the later 2D peak model. It
-    gives the UI and project file a concrete contract while the full detector
-    fitting path is built out.
+    This is a deliberately small placeholder for the later 2D peak
+    model. It gives the UI and project file a concrete contract while
+    the full detector fitting path is built out.
     """
 
     array = np.asarray(image)

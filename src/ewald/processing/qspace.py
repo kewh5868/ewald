@@ -1,4 +1,4 @@
-"""pyFAI-backed reciprocal-space and caking transforms."""
+"""PyFAI-backed reciprocal-space and caking transforms."""
 
 from __future__ import annotations
 
@@ -88,7 +88,8 @@ def cake_image(
     dark: Any | None = None,
     flat: Any | None = None,
 ) -> xr.DataArray:
-    """Return a caked detector image with azimuth and radial coordinates."""
+    """Return a caked detector image with azimuth and radial
+    coordinates."""
 
     settings = config or CakingConfig()
     ai = load_azimuthal_integrator(poni_file)

@@ -115,4 +115,3 @@ Source: `docs/assets/diagrams/calibration-workflow.mmd`
 - Keep CI and docs build reproducible before large UI captures are produced.
 - Prevent broken links when UI screenshots are being refreshed.
 - Track missing media in one section and keep workflow pages easier to read.
-

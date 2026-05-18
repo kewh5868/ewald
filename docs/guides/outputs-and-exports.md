@@ -38,4 +38,3 @@ EWALD stores most results in the active `.ewld` project and selected tool output
 - Keep source images separate from `.ewld` project files.
 - Keep structure files and masks in a version-controlled project folder when possible.
 - Keep exported screenshots and tables in an `outputs/` directory next to the project.
-

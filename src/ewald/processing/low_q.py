@@ -48,7 +48,8 @@ class LowQFeature:
 
 @dataclass(slots=True)
 class RefractiveIndexEstimate:
-    """Film chemistry estimate for the X-ray refractive-index decrement."""
+    """Film chemistry estimate for the X-ray refractive-index
+    decrement."""
 
     input_formula: str
     normalized_formula: str
@@ -78,7 +79,8 @@ class RefractiveIndexEstimate:
 
 @dataclass(slots=True)
 class StructureOpticsEstimate:
-    """Film-optics estimate derived from a reference crystal structure."""
+    """Film-optics estimate derived from a reference crystal
+    structure."""
 
     structure_path: str
     file_format: str
@@ -131,7 +133,8 @@ def estimate_refractive_index_delta(
     density_g_cm3: float,
     xray_energy_kev: float,
 ) -> RefractiveIndexEstimate:
-    """Estimate X-ray refractive delta from composition and mass density.
+    """Estimate X-ray refractive delta from composition and mass
+    density.
 
     The estimate uses the non-resonant electron-density approximation,
     ``delta = r_e * lambda^2 * rho_e / (2*pi)``. It is intended as a
@@ -259,7 +262,8 @@ def estimate_refractive_index_from_structure(
 
 
 def critical_angle_deg_from_delta(delta: float) -> float:
-    """Return the small-angle X-ray critical angle from refractive delta."""
+    """Return the small-angle X-ray critical angle from refractive
+    delta."""
 
     if delta < 0:
         raise ValueError("Refractive-index delta must be non-negative.")
@@ -409,7 +413,8 @@ def estimate_bright_spot_centroid(
     rotation_deg: int = 0,
     mirrored_y: bool = False,
 ) -> tuple[float, float] | None:
-    """Estimate a bright low-q beam spot centroid from a detector image."""
+    """Estimate a bright low-q beam spot centroid from a detector
+    image."""
 
     array = np.asarray(image, dtype=float)
     if array.ndim > 2:
@@ -471,7 +476,8 @@ def _composition_from_formula(formula: str):
 
 
 def _normalize_alias_formula(formula: str) -> str:
-    """Normalize simple beamline/sample labels into an elemental formula."""
+    """Normalize simple beamline/sample labels into an elemental
+    formula."""
 
     from pymatgen.core import Element
 

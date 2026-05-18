@@ -9,4 +9,3 @@
 - [ ] Re-run `mkdocs build` before each tagged release.
 - [ ] Verify README links still point to documentation and install sections.
 - [ ] Verify GitHub Pages deployment URL and workflow status.
-

@@ -41,4 +41,3 @@ The built site appears in `site/`.
 - Rebuild and confirm all docs pages render cleanly.
 
 ![Loading placeholder](../assets/placeholders/loading-data.svg)
-

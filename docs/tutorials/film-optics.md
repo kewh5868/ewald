@@ -42,4 +42,3 @@ Load a valid structure reference to support composition- or phase-aware optics b
 
 - Basic film optics workflow and memory items are implemented.
 - Advanced multilayer stack modeling is **Planned**.
-

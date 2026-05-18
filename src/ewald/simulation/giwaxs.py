@@ -122,7 +122,8 @@ class EwaldSphereSweepParameters(GIWAXSSimulationParameters):
         theta_x_deg: float,
         theta_y_deg: float,
     ) -> GIWAXSSimulationParameters:
-        """Return single-pattern parameters for one sweep orientation."""
+        """Return single-pattern parameters for one sweep
+        orientation."""
 
         return GIWAXSSimulationParameters(
             sigma_theta=self.sigma_theta,
@@ -205,7 +206,8 @@ class GIWAXSImageComparison:
 
 @dataclass(slots=True)
 class GIWAXSSimulationFitRecord:
-    """One ranked structure/parameter comparison against an experiment."""
+    """One ranked structure/parameter comparison against an
+    experiment."""
 
     structure_name: str
     structure_path: str
@@ -257,9 +259,9 @@ def compare_giwaxs_images(
 ) -> GIWAXSImageComparison:
     """Fit and compare two q-space GIWAXS images on one detector grid.
 
-    The simulated image is interpolated onto the target qxy/qz grid, both
-    images are robustly normalized, and the simulated image is fit with a
-    scale/offset term before residual metrics are calculated.
+    The simulated image is interpolated onto the target qxy/qz grid,
+    both images are robustly normalized, and the simulated image is fit
+    with a scale/offset term before residual metrics are calculated.
     """
 
     target_da = _standardize_qspace_image(target, "target")
@@ -336,7 +338,8 @@ def rank_giwaxs_simulation_fits(
     structures: Iterable[str | Path | tuple[str, str | Path]],
     parameter_grid: Iterable[GIWAXSSimulationParameters | dict[str, Any]],
 ) -> list[GIWAXSSimulationFitRecord]:
-    """Rank structures and simulation parameters against a target image."""
+    """Rank structures and simulation parameters against a target
+    image."""
 
     ranked: list[GIWAXSSimulationFitRecord] = []
     for structure_name, structure_path in _named_structure_paths(structures):
@@ -696,7 +699,8 @@ def simulate_giwaxs_image(
     structure_path: str | Path,
     parameters: GIWAXSSimulationParameters | None = None,
 ) -> xr.DataArray:
-    """Compute a q_{xy}-q_{z} GIWAXS intensity image from a structure file.
+    """Compute a q_{xy}-q_{z} GIWAXS intensity image from a structure
+    file.
 
     The implementation is adapted from the legacy pyWAXS simulation logic:
     reciprocal-lattice peaks are generated from a POSCAR/CIF structure, their
@@ -890,7 +894,8 @@ def run_and_store_ewald_sphere_sweep(
     parameters: EwaldSphereSweepParameters | None = None,
     target_data_id: str | None = None,
 ) -> dict[str, Any]:
-    """Run a theta sweep, save it, and attach the record to a project."""
+    """Run a theta sweep, save it, and attach the record to a
+    project."""
 
     if (
         target_data_id is not None
@@ -934,7 +939,8 @@ def run_and_store_ewald_sphere_sweep(
 
 
 def load_simulation_data(record: dict[str, Any]) -> xr.DataArray | None:
-    """Load a stored simulation image from a project simulation record."""
+    """Load a stored simulation image from a project simulation
+    record."""
 
     dataset_uri = record.get("dataset_uri")
     if not dataset_uri:
@@ -953,7 +959,8 @@ def is_ewald_sphere_sweep_record(record: dict[str, Any]) -> bool:
 
 
 def is_ewald_sphere_sweep_data(data: xr.DataArray) -> bool:
-    """Return True when a loaded simulation contains theta sweep frames."""
+    """Return True when a loaded simulation contains theta sweep
+    frames."""
 
     return {"theta_x", "theta_y", "qz", "qxy"}.issubset(data.dims)
 
@@ -966,9 +973,10 @@ def reconstruct_ewald_sphere_points(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build a point-cloud reconstruction from a stored theta sweep.
 
-    The sweep patterns are recorded in the lab q_{xy}/q_{z} plane. For each
-    selected bright pixel, the q-vector is rotated back by the frame orientation so the
-    accumulated point cloud approximates the single-crystal reciprocal sphere.
+    The sweep patterns are recorded in the lab q_{xy}/q_{z} plane. For
+    each selected bright pixel, the q-vector is rotated back by the
+    frame orientation so the accumulated point cloud approximates the
+    single-crystal reciprocal sphere.
     """
 
     if not is_ewald_sphere_sweep_data(data):
@@ -1026,7 +1034,8 @@ def calculate_giwaxs_peak_rows(
 
 
 def load_structure(path: str | Path) -> StructureData:
-    """Load CIF/POSCAR structures through pymatgen or a POSCAR fallback."""
+    """Load CIF/POSCAR structures through pymatgen or a POSCAR
+    fallback."""
 
     structure_path = Path(path)
     try:
@@ -1105,10 +1114,10 @@ def _bragg_peaks(
     b3 = 2.0 * np.pi * np.cross(lattice[0], lattice[1]) / volume
     extent = max(0, int(params.hkl_extent))
     miller_range = np.arange(-extent, extent + 1)
-    h, k, l = np.meshgrid(
+    h, k, ell = np.meshgrid(
         miller_range, miller_range, miller_range, indexing="ij"
     )
-    hkl = np.column_stack([h.ravel(), k.ravel(), l.ravel()])
+    hkl = np.column_stack([h.ravel(), k.ravel(), ell.ravel()])
     keep = np.any(hkl != 0, axis=1)
     hkl = hkl[keep]
     q_vectors = (

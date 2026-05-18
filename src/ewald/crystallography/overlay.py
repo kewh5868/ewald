@@ -51,7 +51,8 @@ CRYSTAL_SYSTEMS: dict[str, dict[str, Any]] = {
 
 @dataclass(slots=True)
 class CrystalOverlayParameters:
-    """Parameters used to project reciprocal-lattice peaks onto q_{xy}/q_{z}."""
+    """Parameters used to project reciprocal-lattice peaks onto
+    q_{xy}/q_{z}."""
 
     crystal_system: str = "Triclinic"
     a: float = 6.3
@@ -111,7 +112,8 @@ class CrystalOverlayParameters:
 
 @dataclass(slots=True)
 class CrystalOverlayResult:
-    """Projected Bragg peak and unit-cell geometry for an overlay state."""
+    """Projected Bragg peak and unit-cell geometry for an overlay
+    state."""
 
     qxy: np.ndarray
     qz: np.ndarray
@@ -138,7 +140,8 @@ class CrystalOverlayResult:
 
 
 class CrystalOverlayCalculator:
-    """Cache direct and reciprocal lattice arrays for responsive overlays."""
+    """Cache direct and reciprocal lattice arrays for responsive
+    overlays."""
 
     def __init__(
         self, parameters: CrystalOverlayParameters | None = None
@@ -215,7 +218,8 @@ class CrystalOverlayCalculator:
 
 
 def apply_crystal_system_constraints(values: dict[str, Any]) -> dict[str, Any]:
-    """Mutate a lattice-parameter mapping according to its crystal system."""
+    """Mutate a lattice-parameter mapping according to its crystal
+    system."""
 
     system = str(values.get("crystal_system", "Triclinic"))
     rules = CRYSTAL_SYSTEMS.get(system, CRYSTAL_SYSTEMS["Triclinic"])
@@ -233,7 +237,8 @@ def quaternion_from_axis_angle(
     axis: Iterable[float],
     angle_degrees: float,
 ) -> tuple[float, float, float, float]:
-    """Return an ``x, y, z, w`` quaternion for an axis-angle rotation."""
+    """Return an ``x, y, z, w`` quaternion for an axis-angle
+    rotation."""
 
     vector = np.asarray(tuple(axis), dtype=float)
     norm = float(np.linalg.norm(vector))
@@ -249,7 +254,8 @@ def compose_quaternions(
     current_xyzw: Iterable[float],
     delta_xyzw: Iterable[float],
 ) -> tuple[float, float, float, float]:
-    """Apply ``delta`` after ``current`` and return a normalized quaternion."""
+    """Apply ``delta`` after ``current`` and return a normalized
+    quaternion."""
 
     x1, y1, z1, w1 = normalize_quaternion(delta_xyzw)
     x2, y2, z2, w2 = normalize_quaternion(current_xyzw)
@@ -268,7 +274,8 @@ def quaternion_from_euler_angles(
     y_degrees: float,
     z_degrees: float,
 ) -> tuple[float, float, float, float]:
-    """Return an ``x, y, z, w`` quaternion from fixed-axis XYZ angles."""
+    """Return an ``x, y, z, w`` quaternion from fixed-axis XYZ
+    angles."""
 
     quaternion = (0.0, 0.0, 0.0, 1.0)
     for axis, angle in (
@@ -330,7 +337,8 @@ def rotate_vectors_by_quaternion(
     vectors: np.ndarray,
     quaternion_xyzw: Iterable[float],
 ) -> np.ndarray:
-    """Rotate row-vector coordinates without Euler-angle singularities."""
+    """Rotate row-vector coordinates without Euler-angle
+    singularities."""
 
     array = np.asarray(vectors, dtype=float)
     if array.size == 0:

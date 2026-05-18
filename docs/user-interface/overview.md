@@ -83,4 +83,3 @@ These values are carried into downstream orientation handling and q-space mappin
 - **GIWAXS Simulation**: standalone simulation workflow panel (structure load, presets, exports).
 
 ![UI placeholder](../assets/placeholders/ui-main-window.svg)
-

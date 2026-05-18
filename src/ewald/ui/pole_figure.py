@@ -92,7 +92,8 @@ class PoleFigureGeneratorWindow(QtWidgets.QMainWindow):
         image_data: np.ndarray | None,
         axis_ranges: tuple[float, float, float, float] | None,
     ) -> None:
-        """Load selected ROI context from EWALD without duplicating the app."""
+        """Load selected ROI context from EWALD without duplicating the
+        app."""
 
         self.data_id = data_id
         self.image_data = image_data

@@ -42,8 +42,9 @@ def fit_peak_set(
     """Convert peak candidates into fit-result records.
 
     The later implementation should replace this with lmfit-backed 2D
-    Gaussian, Voigt, or instrument-aware models. Keeping this function small
-    makes the surrounding workflow testable before the fitter is complete.
+    Gaussian, Voigt, or instrument-aware models. Keeping this function
+    small makes the surrounding workflow testable before the fitter is
+    complete.
     """
 
     return [

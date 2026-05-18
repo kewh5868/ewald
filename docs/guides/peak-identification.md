@@ -49,4 +49,3 @@ Peak Identification connects visual markers with data regions and prepares peaks
   plugin-specific outputs in future releases.
 
 ![Peak Identification placeholder](../assets/placeholders/peak-identification.svg)
-

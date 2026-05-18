@@ -37,4 +37,3 @@ EWALD stores reusable film inputs:
 - Advanced optical stack models are currently **Planned**.
 
 ![Film optics placeholder](../assets/placeholders/film-optics.svg)
-

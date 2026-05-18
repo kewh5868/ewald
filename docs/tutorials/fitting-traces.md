@@ -26,4 +26,3 @@
 - Push fitted centers into Structure Analysis for candidate evaluation.
 
 ![Peak fitting tutorial placeholder](../assets/placeholders/peak-fitting.svg)
-

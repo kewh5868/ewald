@@ -36,4 +36,3 @@ Peak Fitting converts selected ROI regions into integrated traces and model fits
 - Additional curve types and multi-peak decomposition are currently **Planned**.
 
 ![Peak Fitting placeholder](../assets/placeholders/peak-fitting.svg)
-

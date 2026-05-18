@@ -15,7 +15,8 @@ DEFAULT_MANIFEST = Path("example") / "manifest.json"
 def load_example_manifest(
     path: str | Path = DEFAULT_MANIFEST,
 ) -> dict[str, Any]:
-    """Load an example manifest and resolve file paths relative to it."""
+    """Load an example manifest and resolve file paths relative to
+    it."""
 
     manifest_path = Path(path)
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))

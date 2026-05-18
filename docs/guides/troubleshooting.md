@@ -46,4 +46,3 @@
 
 - Ensure image file extensions are supported.
 - Validate metadata sidecar YAML syntax.
-

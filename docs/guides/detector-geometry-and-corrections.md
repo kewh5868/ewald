@@ -53,4 +53,3 @@ These are preserved on a per-target basis after confirmation.
 - Some advanced detector-specific correction transforms are currently **Experimental**.
 
 ![Corrections placeholder](../assets/placeholders/corrections-workflow.svg)
-

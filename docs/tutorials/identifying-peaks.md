@@ -20,4 +20,3 @@
 - Remove accidental points.
 
 ![Peak identification tutorial placeholder](../assets/placeholders/peak-identification.svg)
-

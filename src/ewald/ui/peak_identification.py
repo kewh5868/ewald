@@ -180,7 +180,8 @@ class _PeakViewBox(pg.ViewBox if pg is not None else object):
 if pg is not None:
 
     class _DraggablePeakScatter(pg.ScatterPlotItem):
-        """Scatter points that report drag gestures in data coordinates."""
+        """Scatter points that report drag gestures in data
+        coordinates."""
 
         peakClicked = QtCore.Signal(str)
         peakDragStarted = QtCore.Signal(str)
@@ -447,7 +448,8 @@ class _PeakFitMeshWidget(QtWidgets.QWidget):
 
 
 class _CrystalOrientationViewer(QtWidgets.QWidget):
-    """Antialiased direct-cell viewer with drag and wheel interaction."""
+    """Antialiased direct-cell viewer with drag and wheel
+    interaction."""
 
     orientationDeltaRequested = QtCore.Signal(float, float)
 
@@ -742,7 +744,8 @@ class _CrystalOrientationViewer(QtWidgets.QWidget):
 
 
 class PeakIdentificationPane(QtWidgets.QWidget):
-    """Identify peak centers and rectangular fit ROIs on corrected data."""
+    """Identify peak centers and rectangular fit ROIs on corrected
+    data."""
 
     peakSetChanged = QtCore.Signal(str)
 
@@ -1058,7 +1061,8 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self,
         markers: list[Any],
     ) -> list[dict[str, Any]]:
-        """Add q-space peaks generated from integration-channel markers."""
+        """Add q-space peaks generated from integration-channel
+        markers."""
 
         records = self.peaks()
         used = {_peak_id(record) for record in records}
@@ -2596,7 +2600,8 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         return bool(state)
 
     def restore_crystal_overlay_from_project(self) -> None:
-        """Reload Crystal Overlay controls from project state and redraw."""
+        """Reload Crystal Overlay controls from project state and
+        redraw."""
 
         self._restore_crystal_overlay_state()
         self._update_crystal_overlay_now()
@@ -4135,7 +4140,8 @@ def _hkl_spinbox(value: int) -> QtWidgets.QSpinBox:
 
 
 def _project_cell_preview(points: np.ndarray) -> np.ndarray:
-    """Project 3D cell coordinates into a lightweight oblique preview."""
+    """Project 3D cell coordinates into a lightweight oblique
+    preview."""
 
     array = np.asarray(points, dtype=float)
     return np.column_stack(

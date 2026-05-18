@@ -27,7 +27,8 @@ def rich_label(text: str) -> QtWidgets.QLabel:
 
 
 class RichTextComboBox(QtWidgets.QComboBox):
-    """Combo box that renders rich text in the popup and current label."""
+    """Combo box that renders rich text in the popup and current
+    label."""
 
     def __init__(
         self,

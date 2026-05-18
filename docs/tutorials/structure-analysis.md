@@ -56,4 +56,3 @@ Use this sequence after peak fitting to build and rank structure candidates.
 - Core workflow steps are implemented.
 - Full Wyckoff pipeline depth and some advanced interpretation helpers are currently
   **Experimental**.
-

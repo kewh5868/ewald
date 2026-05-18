@@ -165,7 +165,8 @@ class _SquarePreviewContainer(QtWidgets.QWidget):
 
 
 class _GeneratedCifPreview(QtWidgets.QWidget):
-    """Compact atom/unit-cell visualizer for generated draft CIF records."""
+    """Compact atom/unit-cell visualizer for generated draft CIF
+    records."""
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
@@ -363,7 +364,8 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self._sync_all_views()
 
     def refresh_from_peak_fit(self) -> None:
-        """Refresh unedited Structure Analysis rows from Peak Fit results."""
+        """Refresh unedited Structure Analysis rows from Peak Fit
+        results."""
 
         self._refresh_imported_peaks(preserve_user_edits=True)
         self._sync_all_views()

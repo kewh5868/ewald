@@ -8,7 +8,8 @@ from pathlib import Path
 
 @dataclass(slots=True)
 class CalibrationInputs:
-    """Files and scalar settings needed to move detector data into q-space."""
+    """Files and scalar settings needed to move detector data into
+    q-space."""
 
     poni_file: Path | None = None
     mask_file: Path | None = None

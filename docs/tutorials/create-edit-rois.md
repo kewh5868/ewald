@@ -31,4 +31,3 @@ This tutorial covers ROI setup for downstream peak workflows.
 - Save the `.ewld` project frequently.
 
 ![ROI tutorial placeholder](../assets/placeholders/tutorial-roi.svg)
-

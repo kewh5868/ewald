@@ -43,4 +43,3 @@ This guide keeps user-facing docs consistent across EWALD pages.
 
 - Prefer repository-relative paths in examples.
 - Use fenced code blocks for commands.
-

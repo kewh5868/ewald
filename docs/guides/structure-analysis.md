@@ -51,4 +51,3 @@ Structure Analysis turns peak measurements into candidate structures.
 - Full Wyckoff workflow depth beyond core generation is partially **Experimental** and evolving.
 
 ![Structure Analysis placeholder](../assets/placeholders/structure-analysis.svg)
-

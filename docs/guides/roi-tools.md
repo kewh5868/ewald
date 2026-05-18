@@ -51,4 +51,3 @@ Each ROI stores:
 - Some advanced automatic ROI coupling modes are marked as **Planned** for future UI refinements.
 
 ![ROI placeholder](../assets/placeholders/roi-tools.svg)
-

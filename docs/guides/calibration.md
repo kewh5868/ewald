@@ -38,4 +38,3 @@ This state gates opening downstream tabs in the right panel.
 - Unconfirmed correction state: downstream tabs remain disabled until confirm.
 
 ![Calibration placeholder](../assets/placeholders/calibration-workflow.svg)
-

@@ -37,13 +37,13 @@ mkdocs serve
 1. Follow the dedicated contributor guide:
    [`add-new-documentation-page`](add-new-documentation-page.md).
 1. Add a `.md` file under `docs/`.
-2. Add a short parent section in `mkdocs.yml`.
-3. Include:
+1. Add a short parent section in `mkdocs.yml`.
+1. Include:
    - purpose
    - prerequisites
    - expected outcomes
    - known limitations
-4. Include planned/experimental markers where needed.
+1. Include planned/experimental markers where needed.
 
 ## Documentation style rules
 

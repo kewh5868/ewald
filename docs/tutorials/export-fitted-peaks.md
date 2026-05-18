@@ -50,4 +50,3 @@ format-specific batch exporters. Track implementation progress in release notes.
 
 - Use a fitted-peak workflow screenshot in
   `docs/assets/placeholders/peak-fitting.svg` until a finalized GUI capture is available.
-

@@ -26,7 +26,8 @@ STRUCTURE_ANALYSIS_PEAKS_KEY = "peaks"
 
 @dataclass(slots=True)
 class DataFileRef:
-    """Reference to one detector image or a manifest of detector images."""
+    """Reference to one detector image or a manifest of detector
+    images."""
 
     path: Path
     data_id: str | None = None
@@ -266,7 +267,8 @@ class ImageCorrectionState:
 
 @dataclass(slots=True)
 class ROIRegion:
-    """A user-defined integration region on a corrected q-space image."""
+    """A user-defined integration region on a corrected q-space
+    image."""
 
     target_id: str
     kind: str = "box"
@@ -366,7 +368,8 @@ def set_roi_hkl_metadata(
     l: Any | None = None,
     label: Any | None = None,
 ) -> dict[str, Any]:
-    """Validate and store optional integer hkl fields plus a custom label."""
+    """Validate and store optional integer hkl fields plus a custom
+    label."""
 
     normalized = {
         "h": _optional_int(h),
@@ -393,7 +396,8 @@ def roi_hkl_label(roi: ROIRegion) -> str:
 
 
 def roi_geometry_signature(roi: ROIRegion) -> str:
-    """Return a stable signature for geometry fields that affect reduction."""
+    """Return a stable signature for geometry fields that affect
+    reduction."""
 
     payload = {
         "kind": roi.kind,
@@ -439,7 +443,8 @@ def set_roi_pole_figure_record(
 
 
 def roi_pole_figure_is_current(roi: ROIRegion) -> bool:
-    """Return whether linked pole-figure metadata matches ROI geometry."""
+    """Return whether linked pole-figure metadata matches ROI
+    geometry."""
 
     record = roi_pole_figure_record(roi)
     if record is None:
@@ -463,7 +468,8 @@ def mark_roi_pole_figure_stale(
     *,
     reason: str = "ROI geometry changed",
 ) -> None:
-    """Mark a linked pole figure stale without removing saved metadata."""
+    """Mark a linked pole figure stale without removing saved
+    metadata."""
 
     record = roi_pole_figure_record(roi)
     if record is None:
@@ -609,7 +615,8 @@ class ProjectState:
         target_ids: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> CorrectionAssetRef:
-        """Add a PONI calibrant and optionally apply it to data targets."""
+        """Add a PONI calibrant and optionally apply it to data
+        targets."""
 
         return self.add_correction_asset(
             "calibrant",
@@ -726,7 +733,8 @@ class ProjectState:
         kind: str,
         target_id: str | None,
     ) -> list[CorrectionAssetRef]:
-        """Return correction assets applied directly to a data target."""
+        """Return correction assets applied directly to a data
+        target."""
 
         if target_id is None:
             return []
@@ -740,7 +748,8 @@ class ProjectState:
         self,
         state: ImageCorrectionState,
     ) -> ImageCorrectionState:
-        """Store correction confirmation state for one detector image."""
+        """Store correction confirmation state for one detector
+        image."""
 
         self.image_corrections[state.target_id] = state
         self.processing_history.append(
@@ -881,7 +890,8 @@ class ProjectState:
         *,
         reason: str = "ROI geometry changed",
     ) -> None:
-        """Mark pole figures linked to an ROI or its coupled pair stale."""
+        """Mark pole figures linked to an ROI or its coupled pair
+        stale."""
 
         linked_ids = {roi_id}
         for roi in self.roi_regions.get(target_id, []):
@@ -998,7 +1008,8 @@ class ProjectState:
         peak_id: str,
         phase_tag: str | None,
     ) -> dict[str, Any]:
-        """Set a peak phase tag and mark structure candidates for refresh."""
+        """Set a peak phase tag and mark structure candidates for
+        refresh."""
 
         record = self.peak_by_id(target_id, peak_id)
         if record is None:
@@ -1035,7 +1046,8 @@ class ProjectState:
         l: Any | None = None,
         label: Any | None = None,
     ) -> dict[str, Any]:
-        """Set a peak hkl tag and mirror it to the linked ROI when present."""
+        """Set a peak hkl tag and mirror it to the linked ROI when
+        present."""
 
         record = self.peak_by_id(target_id, peak_id)
         if record is None:
@@ -1069,7 +1081,8 @@ class ProjectState:
         roi_id: str | None = None,
         metrics: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Store the fitted center source of truth and sync analysis rows."""
+        """Store the fitted center source of truth and sync analysis
+        rows."""
 
         fit_store = self._peak_fit_store(target_id, create=True)
         peak_store = fit_store.setdefault(
@@ -1099,7 +1112,8 @@ class ProjectState:
         target_id: str,
         peak_id: str,
     ) -> dict[str, Any] | None:
-        """Refresh one Structure Analysis entry from peak and fit state."""
+        """Refresh one Structure Analysis entry from peak and fit
+        state."""
 
         if not peak_id:
             return None
@@ -1249,7 +1263,8 @@ class ProjectState:
         ]
 
     def data_file_by_id(self, data_id: str | None) -> DataFileRef | None:
-        """Return a data file reference from grouped or ungrouped data."""
+        """Return a data file reference from grouped or ungrouped
+        data."""
 
         if data_id is None:
             return None

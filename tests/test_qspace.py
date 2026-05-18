@@ -1,4 +1,4 @@
-"""pyFAI q-space processing wrappers."""
+"""PyFAI q-space processing wrappers."""
 
 from math import pi, radians, sin
 from types import SimpleNamespace

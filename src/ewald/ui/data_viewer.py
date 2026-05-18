@@ -1027,7 +1027,8 @@ class _IntegrationChannelPanel(QtWidgets.QFrame):
 
 
 class _DetachedIntegrationWindow(QtWidgets.QDialog):
-    """Floating matplotlib window for one detached integration channel."""
+    """Floating matplotlib window for one detached integration
+    channel."""
 
     reattachRequested = QtCore.Signal(int)
     clearRequested = QtCore.Signal(int)
@@ -1142,7 +1143,8 @@ class _DetachedIntegrationWindow(QtWidgets.QDialog):
 
 
 class DataViewerPane(QtWidgets.QWidget):
-    """Display corrected detector data and user-defined integration ROIs."""
+    """Display corrected detector data and user-defined integration
+    ROIs."""
 
     roiRegionsChanged = QtCore.Signal(str)
     previewOrientationChanged = QtCore.Signal(str)
@@ -2311,7 +2313,8 @@ class DataViewerPane(QtWidgets.QWidget):
         )
 
     def refresh_roi_table(self) -> None:
-        """Refresh ROI table metadata/status after an external tool save."""
+        """Refresh ROI table metadata/status after an external tool
+        save."""
 
         selected = self._selected_roi_region()
         selected_roi_id = selected.roi_id if selected is not None else None

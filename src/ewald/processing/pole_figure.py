@@ -10,11 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from ewald.data.models import (
-    ROIRegion,
-    roi_hkl_label,
-    roi_hkl_metadata,
-)
+from ewald.data.models import ROIRegion, roi_hkl_label, roi_hkl_metadata
 
 BACKGROUND_NONE = "none"
 BACKGROUND_CONSTANT = "constant"
@@ -387,7 +383,8 @@ def local_annular_background_mask(
     *,
     settings: PoleFigureSettings,
 ) -> np.ndarray:
-    """Return neighboring radial bands at the same chi range as the ROI."""
+    """Return neighboring radial bands at the same chi range as the
+    ROI."""
 
     if not np.any(roi_mask):
         return np.zeros_like(roi_mask, dtype=bool)

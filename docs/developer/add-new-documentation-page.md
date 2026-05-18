@@ -60,4 +60,3 @@ Every page should include:
    ```
 2. Rebuild and review the page with `mkdocs serve`.
 3. Commit both the content file and any required image updates.
-

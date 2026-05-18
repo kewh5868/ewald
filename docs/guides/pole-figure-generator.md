@@ -35,4 +35,3 @@ The Pole Figure tool is launched from EWALD with selected data context.
 - Re-run to refresh stale status.
 
 ![Pole Figure placeholder](../assets/placeholders/pole-figure.svg)
-

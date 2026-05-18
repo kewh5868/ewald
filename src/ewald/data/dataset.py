@@ -1,4 +1,4 @@
-"""xarray/dask detector image containers."""
+"""Xarray/dask detector image containers."""
 
 from __future__ import annotations
 
@@ -54,9 +54,10 @@ def open_detector_images(
 ) -> DetectorImageSet:
     """Open detector images as a lazy xarray dataset.
 
-    The first frame is read immediately to infer shape and dtype. Remaining
-    images are wrapped as dask delayed tasks so large collections can be
-    processed without loading every frame into memory at once.
+    The first frame is read immediately to infer shape and dtype.
+    Remaining images are wrapped as dask delayed tasks so large
+    collections can be processed without loading every frame into memory
+    at once.
     """
 
     import dask.array as da

@@ -58,4 +58,3 @@ Common parsed values include:
 4. Continue to corrections and Data Viewer.
 
 ![Data loading placeholder](../assets/placeholders/data-loading.svg)
-

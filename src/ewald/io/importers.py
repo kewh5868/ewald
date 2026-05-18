@@ -23,7 +23,8 @@ def build_data_group_from_paths(
     delimiter: str = "_",
     metadata_yml: str | Path | None = None,
 ) -> tuple[DataGroupRef, FolderMetadataReport]:
-    """Build a project data group from image paths and filename metadata."""
+    """Build a project data group from image paths and filename
+    metadata."""
 
     path_list = [Path(path) for path in paths]
     report = infer_folder_metadata(path_list, delimiter=delimiter)
@@ -69,7 +70,8 @@ def build_data_group_from_folder(
     metadata_type: str = "filename",
     metadata_yml: str | Path | None = None,
 ) -> tuple[DataGroupRef, FolderMetadataReport]:
-    """Build a project data group from all supported image files in a folder."""
+    """Build a project data group from all supported image files in a
+    folder."""
 
     folder_path = Path(folder)
     return build_data_group_from_paths(

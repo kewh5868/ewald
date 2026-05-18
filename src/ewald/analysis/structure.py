@@ -187,7 +187,8 @@ class StructurePeak:
 
 @dataclass(slots=True)
 class CandidateSearchConfig:
-    """Configuration shared by lattice refinement and candidate guessing."""
+    """Configuration shared by lattice refinement and candidate
+    guessing."""
 
     crystal_systems: tuple[str, ...] = SIMPLE_CRYSTAL_SYSTEM_ORDER
     hkl_max: int = 4
@@ -364,7 +365,8 @@ def build_structure_peaks(
     """Merge Peak Identification records into Structure Analysis peaks.
 
     Structure Analysis owns user edits. Existing edited peak centers are
-    preserved, while unedited rows are refreshed from ROI fits when available.
+    preserved, while unedited rows are refreshed from ROI fits when
+    available.
     """
 
     fit_records = fit_records or {}
@@ -430,7 +432,8 @@ def refine_lattice_candidate(
     initial: LatticeCandidate | CrystalOverlayParameters | dict[str, Any],
     config: CandidateSearchConfig | None = None,
 ) -> LatticeCandidate:
-    """Refine lattice constants against active observed peak positions."""
+    """Refine lattice constants against active observed peak
+    positions."""
 
     config = config or CandidateSearchConfig()
     active = _active_peaks(peaks, config.phase_tag)
@@ -487,7 +490,8 @@ def suggest_non_main_phase_peaks(
     candidate: LatticeCandidate | dict[str, Any],
     config: CandidateSearchConfig | None = None,
 ) -> list[dict[str, Any]]:
-    """Return peaks that do not agree with the current main-phase lattice."""
+    """Return peaks that do not agree with the current main-phase
+    lattice."""
 
     config = config or CandidateSearchConfig()
     active = _active_peaks(peaks, config.phase_tag)
@@ -521,7 +525,8 @@ def group_peak_families(
     ratio_tolerance: float = 0.06,
     phase_tag: str = DEFAULT_PHASE_TAG,
 ) -> list[dict[str, Any]]:
-    """Suggest candidate plane families by similar coordinates and ratios."""
+    """Suggest candidate plane families by similar coordinates and
+    ratios."""
 
     active = _active_peaks(peaks, phase_tag)
     families: list[dict[str, Any]] = []
@@ -564,7 +569,8 @@ def group_peak_families(
 
 
 def crystal_system_for_space_group(space_group_number: int) -> str:
-    """Return the conventional crystal system for an IT space-group number."""
+    """Return the conventional crystal system for an IT space-group
+    number."""
 
     number = int(space_group_number)
     for crystal_system, numbers in CRYSTAL_SYSTEM_SPACE_GROUP_RANGES.items():
@@ -577,7 +583,8 @@ def crystal_system_for_space_group(space_group_number: int) -> str:
 def wyckoff_space_group_option(
     space_group_number: int,
 ) -> WyckoffSpaceGroupOption:
-    """Return all registered Wyckoff site options for one space group."""
+    """Return all registered Wyckoff site options for one space
+    group."""
 
     number = int(space_group_number)
     crystal_system = crystal_system_for_space_group(number)
@@ -713,7 +720,8 @@ def registered_wyckoff_possibilities(
     *,
     include_sites: bool = True,
 ) -> list[dict[str, Any]]:
-    """Return the Wyckoff registry as serializable possibility records."""
+    """Return the Wyckoff registry as serializable possibility
+    records."""
 
     return [
         option.as_dict(include_sites=include_sites)
@@ -761,7 +769,8 @@ def generate_ranked_cif_records(
     observed_score: float | None = None,
     limit: int = 5,
 ) -> list[dict[str, Any]]:
-    """Create lightweight ranked CIF records for downstream simulation."""
+    """Create lightweight ranked CIF records for downstream
+    simulation."""
 
     candidate_obj = (
         LatticeCandidate.from_dict(candidate)
@@ -1093,7 +1102,8 @@ def _projected_axis_candidates(
     peaks: list[StructurePeak],
     config: CandidateSearchConfig,
 ) -> list[LatticeCandidate]:
-    """Infer GIWAXS-oriented cells from qxy/qz peak-coordinate families."""
+    """Infer GIWAXS-oriented cells from qxy/qz peak-coordinate
+    families."""
 
     systems = set(_ordered_crystal_systems(config.crystal_systems))
     if not systems.intersection({"Orthorhombic", "Monoclinic", "Triclinic"}):

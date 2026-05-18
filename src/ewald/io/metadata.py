@@ -1,4 +1,5 @@
-"""Metadata inference for experimental detector filenames and folders."""
+"""Metadata inference for experimental detector filenames and
+folders."""
 
 from __future__ import annotations
 

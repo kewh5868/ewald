@@ -32,7 +32,8 @@ def compare_cif_atom_coordinates(
     generated_path: str | Path,
     reference_path: str | Path,
 ) -> dict[str, Any]:
-    """Compare two CIFs with formula, lattice, and atom-coordinate metrics."""
+    """Compare two CIFs with formula, lattice, and atom-coordinate
+    metrics."""
 
     generated = _load_structure_for_comparison(generated_path)
     reference = _load_structure_for_comparison(reference_path)

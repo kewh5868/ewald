@@ -178,7 +178,8 @@ FIELD_TOOLTIPS = {
 
 
 class ApplyImageCorrectionsPane(QtWidgets.QWidget):
-    """Collect and confirm mask/PONI corrections for one detector image."""
+    """Collect and confirm mask/PONI corrections for one detector
+    image."""
 
     correctionsApplied = QtCore.Signal(str)
     correctionsConfirmed = QtCore.Signal(str)

@@ -913,7 +913,8 @@ class GIWAXSComparisonPane(QtWidgets.QWidget):
 
 
 class EwaldSphereReconstructionWindow(QtWidgets.QMainWindow):
-    """Separate 3D point-cloud viewer for a stored Ewald sphere sweep."""
+    """Separate 3D point-cloud viewer for a stored Ewald sphere
+    sweep."""
 
     def __init__(
         self,
@@ -1017,7 +1018,8 @@ class EwaldSphereReconstructionWindow(QtWidgets.QMainWindow):
 
 
 class SquarePlotContainer(QtWidgets.QWidget):
-    """Keep the contained plotting widget square inside a flexible layout."""
+    """Keep the contained plotting widget square inside a flexible
+    layout."""
 
     def __init__(
         self,
@@ -1460,7 +1462,8 @@ class OrientationDistributionView(QtWidgets.QWidget):
 
 
 class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
-    """Deployable simulation tool linked to an optional EWALD project."""
+    """Deployable simulation tool linked to an optional EWALD
+    project."""
 
     simulationCreated = QtCore.Signal(str)
     simulationLinked = QtCore.Signal(str)
@@ -3123,7 +3126,8 @@ def _experimental_qspace_for_project(
     project: ProjectState,
     data_id: str,
 ) -> Any | None:
-    """Backward-compatible alias for loading a comparison target image."""
+    """Backward-compatible alias for loading a comparison target
+    image."""
 
     return _target_qspace_for_project(project, data_id)
 

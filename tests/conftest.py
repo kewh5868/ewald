@@ -9,7 +9,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 def pytest_collection_modifyitems(config, items):
-    """Skip source-checkout example tests when local example data is absent."""
+    """Skip source-checkout example tests when local example data is
+    absent."""
 
     example_dir = Path(__file__).resolve().parents[1] / "example"
     if example_dir.exists():

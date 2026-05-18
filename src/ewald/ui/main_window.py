@@ -1029,7 +1029,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
 class MetadataImportContextDialog(QtWidgets.QDialog):
-    """Collect user context for filename and sidecar metadata parsing."""
+    """Collect user context for filename and sidecar metadata
+    parsing."""
 
     def __init__(
         self,
