@@ -1946,24 +1946,44 @@ def test_data_viewer_roi_graphics_are_draggable_and_resizable(
     assert arch.qz_center == pytest.approx(0.1588, abs=1.0e-3)
     assert viewer.roi_table.rowCount() == 2
 
-    thickness_handle = next(
-        handle["item"]
-        for handle in arch_graphic.handles
-        if handle["name"] == "arch-thickness"
-    )
+    arch_handles = {
+        str(handle["name"]): handle["item"] for handle in arch_graphic.handles
+    }
+    center_after_drag = (arch.qxy_center, arch.qz_center)
+    thickness_handle = arch_handles["arch-thickness"]
     arch_graphic.movePoint(
         thickness_handle,
         QtCore.QPointF(arch.qxy_center, arch.qz_center + 1.2),
     )
 
+    assert arch.qxy_center == pytest.approx(center_after_drag[0])
+    assert arch.qz_center == pytest.approx(center_after_drag[1])
     assert arch.qr_min == pytest.approx(0.5)
     assert arch.qr_max == pytest.approx(1.2)
 
-    chi_max_handle = next(
-        handle["item"]
-        for handle in arch_graphic.handles
-        if handle["name"] == "arch-chi-max"
+    radius_handle = arch_handles["arch-radius"]
+    thickness = (arch.qr_max or 0.0) - (arch.qr_min or 0.0)
+    radius_center = ((arch.qr_min or 0.0) + (arch.qr_max or 0.0)) / 2.0
+    target_radius_center = radius_center + 0.25
+    arch_graphic.movePoint(
+        radius_handle,
+        QtCore.QPointF(
+            arch.qxy_center,
+            arch.qz_center + target_radius_center,
+        ),
     )
+
+    assert arch.qxy_center == pytest.approx(center_after_drag[0])
+    assert arch.qz_center == pytest.approx(center_after_drag[1])
+    assert (arch.qr_max or 0.0) - (arch.qr_min or 0.0) == pytest.approx(
+        thickness
+    )
+    radius_center_after_resize = (
+        (arch.qr_min or 0.0) + (arch.qr_max or 0.0)
+    ) / 2.0
+    assert radius_center_after_resize == pytest.approx(target_radius_center)
+
+    chi_max_handle = arch_handles["arch-chi-max"]
     side_radius = ((arch.qr_min or 0.0) + (arch.qr_max or 0.0)) / 2.0
     side_x = arch.qxy_center + side_radius * np.sin(np.radians(45.0))
     side_y = arch.qz_center + side_radius * np.cos(np.radians(45.0))

@@ -40,6 +40,7 @@ except Exception:  # pragma: no cover
 
 ARCH_CHI_LIMITS_DEG = (-90.0, 90.0)
 ARCH_CHI_LOCKED_METADATA_KEY = "chi_locked"
+ARCH_HANDLE_SIZE = 11
 COUPLED_ROI_GROUP_METADATA_KEY = "coupling_id"
 COUPLED_ROI_ID_METADATA_KEY = "coupled_roi_id"
 COUPLED_ROI_IDS_METADATA_KEY = "coupled_roi_ids"
@@ -338,7 +339,8 @@ if pg is not None:
                 rotatable=False,
             )
             self.brush = pg.mkBrush(242, 166, 90, 45)
-            self.handleSize = 7
+            self.handleSize = ARCH_HANDLE_SIZE
+            self._fixed_resize_center: tuple[float, float] | None = None
             self.addFreeHandle((0.5, 0.8), name=self.RADIUS_HANDLE)
             self.addFreeHandle((0.5, 1.0), name=self.THICKNESS_HANDLE)
             self.addFreeHandle((0.0, 0.5), name=self.CHI_MIN_HANDLE)
@@ -353,12 +355,20 @@ if pg is not None:
             self.chi_locked = _arch_chi_locked(roi)
             self.center_qxy = float(roi.qxy_center)
             self.center_qz = float(roi.qz_center)
+            self._fixed_resize_center = None
             self._apply_arch_bounds()
 
         def arch_parameters(self) -> tuple[float, float, float, float]:
             return self.qr_min, self.qr_max, self.chi_min, self.chi_max
 
         def arch_center(self) -> tuple[float, float]:
+            if self._fixed_resize_center is not None:
+                return self._fixed_resize_center
+            center = self._center_from_graphic_position()
+            self.center_qxy, self.center_qz = center
+            return center
+
+        def _center_from_graphic_position(self) -> tuple[float, float]:
             x_min, _x_max, y_min, _y_max = _arch_local_bounds(
                 self.qr_min,
                 self.qr_max,
@@ -367,6 +377,13 @@ if pg is not None:
             )
             position = self.pos()
             return float(position.x() - x_min), float(position.y() - y_min)
+
+        def _begin_fixed_center_resize(self) -> None:
+            if self._fixed_resize_center is None:
+                self._fixed_resize_center = (
+                    self._center_from_graphic_position()
+                )
+            self.center_qxy, self.center_qz = self._fixed_resize_center
 
         def _apply_arch_bounds(
             self,
@@ -448,6 +465,7 @@ if pg is not None:
                 self.chi_min,
                 self.chi_max,
             )
+            self._begin_fixed_center_resize()
             arch_x = local_x + x_min
             arch_y = local_y + y_min
             if name == self.RADIUS_HANDLE:
@@ -482,6 +500,8 @@ if pg is not None:
                         ARCH_CHI_LIMITS_DEG[1],
                     )
             self._apply_arch_bounds(block_signals=False, finish=finish)
+            if finish:
+                self._fixed_resize_center = None
 
         def _handle_name(self, handle) -> str | None:
             for info in self.handles:
