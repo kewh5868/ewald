@@ -9,6 +9,7 @@ from qtpy import QtCore, QtGui, QtWidgets
 
 from ewald.data.models import (
     PEAK_POINT_KIND_COMMITTED,
+    PEAK_POINT_KIND_GAP_ESTIMATED,
     ImageCorrectionState,
     ProjectState,
     ROIRegion,
@@ -1453,6 +1454,81 @@ def test_peak_finder_presets_update_detection_controls(qtbot):
     assert pane.min_snr.value() == pytest.approx(4.5)
     assert pane.max_peaks.value() == 600
     assert pane.adaptive_peak_threshold_check.isChecked()
+
+
+def test_peak_finder_mirrors_selected_missing_peaks(qtbot):
+    from ewald.ui.peak_identification import PeakIdentificationPane
+
+    project = ProjectState()
+    pane = PeakIdentificationPane(project, "synthetic")
+    qtbot.addWidget(pane)
+
+    pane.image_data = np.zeros((41, 41), dtype=float)
+    pane.axis_ranges = (-1.0, 1.0, 0.0, 2.0)
+    pane.coordinate_space = "qspace"
+    pane.symmetry_qxy_tolerance.setValue(0.02)
+    pane.symmetry_qz_tolerance.setValue(0.02)
+
+    matched_source = pane.add_peak_at(
+        0.35,
+        0.8,
+        record_history=False,
+    )
+    missing_source = pane.add_peak_at(
+        0.65,
+        1.2,
+        record_history=False,
+    )
+    pane.add_peak_at(-0.35, 0.8, record_history=False)
+
+    assert (
+        pane.peak_table.selectionMode()
+        == QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
+    )
+    pane.peak_table.clearSelection()
+    selection = pane.peak_table.selectionModel()
+    flags = (
+        QtCore.QItemSelectionModel.SelectionFlag.Select
+        | QtCore.QItemSelectionModel.SelectionFlag.Rows
+    )
+    for row in (0, 1):
+        selection.select(pane.peak_table.model().index(row, 0), flags)
+
+    pane.mirror_missing_button.click()
+
+    records = project.peak_sets["synthetic"]
+    assert len(records) == 4
+    mirrored = [
+        record
+        for record in records
+        if record.get("metadata", {}).get("mirror_source_peak_id")
+        == missing_source["peak_id"]
+    ]
+    assert len(mirrored) == 1
+    mirrored_peak = mirrored[0]
+    assert mirrored_peak["qxy"] == pytest.approx(-0.65)
+    assert mirrored_peak["qz"] == pytest.approx(1.2)
+    assert mirrored_peak["source"] == "gap estimate"
+    assert mirrored_peak["point_kind"] == PEAK_POINT_KIND_GAP_ESTIMATED
+    assert mirrored_peak["gap_estimated"] is True
+    assert mirrored_peak["metadata"]["estimate_method"] == (
+        "mirror across qz axis"
+    )
+    assert not any(
+        record.get("metadata", {}).get("mirror_source_peak_id")
+        == matched_source["peak_id"]
+        for record in records
+    )
+    assert (
+        "Added 1 mirrored gap estimate" in pane.symmetry_summary_label.text()
+    )
+
+    pane.mirror_missing_button.click()
+    assert len(project.peak_sets["synthetic"]) == 4
+    assert "No missing mirrored partners" in pane.symmetry_summary_label.text()
+
+    pane.undo_peak_action()
+    assert len(project.peak_sets["synthetic"]) == 3
 
 
 def test_peak_fit_subtab_runs_roi_fit_workflow(qtbot):

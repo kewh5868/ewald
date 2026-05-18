@@ -115,6 +115,9 @@ ORIENTATION_ANGLE_LIMITS_DEG = (-180.0, 180.0)
 ORIENTATION_SLIDER_SCALE = 10.0
 PEAK_UNDO_LIMIT = 50
 PEAK_ACTION_ICON_SIZE = QtCore.QSize(18, 18)
+MIRROR_SOURCE_SELECTED = "selected"
+MIRROR_SOURCE_POSITIVE_QXY = "positive-qxy"
+MIRROR_SOURCE_NEGATIVE_QXY = "negative-qxy"
 ROI_RESIZE_SYMMETRIC = "symmetric"
 ROI_RESIZE_QZ = "qz"
 ROI_RESIZE_QXY = "qxy"
@@ -1273,6 +1276,154 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             f"{matched}/{len(records)} peak(s) have a mirrored partner."
         )
 
+    def mirror_missing_peaks(self) -> None:
+        """Add gap-estimated mirror partners across the qz axis."""
+
+        records = self.peaks()
+        if not records:
+            self.symmetry_summary_label.setText("No peaks to mirror.")
+            return
+        qxy_tolerance = self.symmetry_qxy_tolerance.value()
+        qz_tolerance = self.symmetry_qz_tolerance.value()
+        source_records = self._mirror_source_peak_records(
+            records,
+            qxy_tolerance=qxy_tolerance,
+        )
+        if not source_records:
+            self.symmetry_summary_label.setText(
+                "Select peaks or choose a populated qxy side to mirror."
+            )
+            return
+
+        used = {_peak_id(record) for record in records}
+        updated_records = copy.deepcopy(records)
+        added: list[dict[str, Any]] = []
+        skipped_existing = 0
+        skipped_axis = 0
+        for source in source_records:
+            source_qxy = _peak_qxy(source)
+            if abs(source_qxy) <= qxy_tolerance:
+                skipped_axis += 1
+                continue
+            target_qxy = -source_qxy
+            target_qz = _peak_qz(source)
+            if self._has_peak_near(
+                updated_records,
+                target_qxy,
+                target_qz,
+                qxy_tolerance=qxy_tolerance,
+                qz_tolerance=qz_tolerance,
+            ):
+                skipped_existing += 1
+                continue
+            mirrored = self._mirrored_gap_peak_record(
+                source,
+                target_qxy,
+                target_qz,
+                used_ids=used,
+            )
+            updated_records.append(mirrored)
+            added.append(mirrored)
+
+        if not added:
+            self.symmetry_summary_label.setText(
+                "No missing mirrored partners found "
+                f"({skipped_existing} already matched, "
+                f"{skipped_axis} near the qz axis)."
+            )
+            return
+
+        self._push_undo_state()
+        self._set_peaks(updated_records)
+        self.active_peak_id = _peak_id(added[0])
+        self._sync_after_peak_change()
+        self.symmetry_summary_label.setText(
+            f"Added {len(added)} mirrored gap estimate(s); "
+            f"skipped {skipped_existing} existing partner(s)."
+        )
+
+    def _mirror_source_peak_records(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        qxy_tolerance: float,
+    ) -> list[dict[str, Any]]:
+        mode = str(
+            self.mirror_source_combo.currentData() or MIRROR_SOURCE_SELECTED
+        )
+        if mode == MIRROR_SOURCE_POSITIVE_QXY:
+            return [
+                record
+                for record in records
+                if _peak_qxy(record) > qxy_tolerance
+            ]
+        if mode == MIRROR_SOURCE_NEGATIVE_QXY:
+            return [
+                record
+                for record in records
+                if _peak_qxy(record) < -qxy_tolerance
+            ]
+        selected = self._selected_peak_records(records)
+        if selected:
+            return selected
+        active = self._active_record()
+        return [active] if active is not None else []
+
+    def _selected_peak_records(
+        self,
+        records: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        selection_model = self.peak_table.selectionModel()
+        if selection_model is None:
+            return []
+        rows = sorted(
+            {index.row() for index in selection_model.selectedRows()}
+        )
+        return [records[row] for row in rows if 0 <= row < len(records)]
+
+    def _has_peak_near(
+        self,
+        records: list[dict[str, Any]],
+        qxy: float,
+        qz: float,
+        *,
+        qxy_tolerance: float,
+        qz_tolerance: float,
+    ) -> bool:
+        return any(
+            abs(_peak_qxy(record) - qxy) <= qxy_tolerance
+            and abs(_peak_qz(record) - qz) <= qz_tolerance
+            for record in records
+        )
+
+    def _mirrored_gap_peak_record(
+        self,
+        source: dict[str, Any],
+        qxy: float,
+        qz: float,
+        *,
+        used_ids: set[str],
+    ) -> dict[str, Any]:
+        record = self._peak_record(
+            qxy,
+            qz,
+            self._intensity_at(qxy, qz),
+            source="gap estimate",
+            used_ids=used_ids,
+        )
+        record["point_kind"] = PEAK_POINT_KIND_GAP_ESTIMATED
+        record["gap_estimated"] = True
+        record["phase_tag"] = "gap-estimated"
+        record["metadata"] = {
+            "gap_estimate": True,
+            "estimate_method": "mirror across qz axis",
+            "mirror_axis": "qz",
+            "mirror_source_peak_id": _peak_id(source),
+            "mirror_source_qxy": _peak_qxy(source),
+            "mirror_source_qz": _peak_qz(source),
+        }
+        return record
+
     def apply_roi_to_selected_peak(self) -> None:
         record = self._active_record()
         if record is None:
@@ -1732,6 +1883,26 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.symmetry_qxy_tolerance.setValue(0.03)
         self.symmetry_qz_tolerance = _roi_size_spinbox()
         self.symmetry_qz_tolerance.setValue(0.03)
+        self.mirror_source_combo = RichTextComboBox()
+        self.mirror_source_combo.addItem(
+            "Selected peaks",
+            MIRROR_SOURCE_SELECTED,
+        )
+        self.mirror_source_combo.addItem(
+            f"{QXY_HTML} > 0",
+            MIRROR_SOURCE_POSITIVE_QXY,
+        )
+        self.mirror_source_combo.addItem(
+            f"{QXY_HTML} < 0",
+            MIRROR_SOURCE_NEGATIVE_QXY,
+        )
+        self.mirror_missing_button = QtWidgets.QToolButton()
+        self.mirror_missing_button.setText("Mirror Missing")
+        self.mirror_missing_button.setToolTip(
+            "<qt>Add gap-estimated mirror partners across the "
+            f"{QZ_HTML} axis when no matching peak exists.</qt>"
+        )
+        self.mirror_missing_button.clicked.connect(self.mirror_missing_peaks)
         self.symmetry_check_button = QtWidgets.QToolButton()
         self.symmetry_check_button.setText("Check Symmetry")
         self.symmetry_check_button.clicked.connect(self.check_peak_symmetry)
@@ -2072,6 +2243,9 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.peak_table.setSelectionBehavior(
             QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
         )
+        self.peak_table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         self.peak_table.setEditTriggers(
             QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
         )
@@ -2216,8 +2390,11 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         analysis_layout.addWidget(self.symmetry_qxy_tolerance, 1, 1)
         analysis_layout.addWidget(rich_label(f"{QZ_HTML} tol"), 2, 0)
         analysis_layout.addWidget(self.symmetry_qz_tolerance, 2, 1)
-        analysis_layout.addWidget(self.symmetry_check_button, 3, 0, 1, 2)
-        analysis_layout.addWidget(self.symmetry_summary_label, 4, 0, 1, 2)
+        analysis_layout.addWidget(QtWidgets.QLabel("Mirror source"), 3, 0)
+        analysis_layout.addWidget(self.mirror_source_combo, 3, 1)
+        analysis_layout.addWidget(self.mirror_missing_button, 4, 0, 1, 2)
+        analysis_layout.addWidget(self.symmetry_check_button, 5, 0, 1, 2)
+        analysis_layout.addWidget(self.symmetry_summary_label, 6, 0, 1, 2)
         content_layout.addWidget(analysis_group)
 
         content_layout.addStretch(1)
