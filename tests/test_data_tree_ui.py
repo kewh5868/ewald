@@ -1878,7 +1878,13 @@ def test_data_viewer_roi_graphics_are_draggable_and_resizable(
     assert box is not None
     box_graphic = viewer.roi_graphics[box.roi_id]
     assert box_graphic.translatable
-    assert len(box_graphic.getHandles()) >= 3
+    assert {handle["name"] for handle in box_graphic.handles} == {
+        "box-corner",
+        "box-left",
+        "box-right",
+        "box-bottom",
+        "box-top",
+    }
 
     box_graphic.setPos((0.2, 0.3))
     box_graphic.setSize((0.5, 0.6))
@@ -1888,6 +1894,31 @@ def test_data_viewer_roi_graphics_are_draggable_and_resizable(
     assert box.qxy_max == pytest.approx(0.7)
     assert box.qz_min == pytest.approx(0.3)
     assert box.qz_max == pytest.approx(0.9)
+
+    box_handles = {
+        str(handle["name"]): handle["item"] for handle in box_graphic.handles
+    }
+    box_graphic.movePoint(
+        box_handles["box-left"],
+        QtCore.QPointF(0.0, 0.6),
+    )
+    box_graphic.movePoint(
+        box_handles["box-right"],
+        QtCore.QPointF(0.8, 0.6),
+    )
+    box_graphic.movePoint(
+        box_handles["box-bottom"],
+        QtCore.QPointF(0.4, 0.1),
+    )
+    box_graphic.movePoint(
+        box_handles["box-top"],
+        QtCore.QPointF(0.4, 1.0),
+    )
+
+    assert box.qxy_min == pytest.approx(0.0)
+    assert box.qxy_max == pytest.approx(0.8)
+    assert box.qz_min == pytest.approx(0.1)
+    assert box.qz_max == pytest.approx(1.0)
 
     viewer.arch_button.setChecked(True)
     arch = viewer.add_roi_from_bounds(-0.4, 0.4, 0.5, 1.0)

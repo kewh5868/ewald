@@ -264,6 +264,56 @@ class _ImageAspectPlotFrame(QtWidgets.QWidget):
 
 if pg is not None:
 
+    class _BoxROI(pg.ROI):
+        """Movable rectangular ROI with resize handles on every edge."""
+
+        CORNER_HANDLE = "box-corner"
+        LEFT_HANDLE = "box-left"
+        RIGHT_HANDLE = "box-right"
+        BOTTOM_HANDLE = "box-bottom"
+        TOP_HANDLE = "box-top"
+
+        def __init__(
+            self,
+            pos: tuple[float, float],
+            size: tuple[float, float],
+            pen,
+        ) -> None:
+            super().__init__(
+                pos,
+                size,
+                pen=pen,
+                movable=True,
+                rotatable=False,
+                resizable=True,
+            )
+            self.handleSize = 7
+            self.addScaleHandle(
+                (1.0, 1.0),
+                (0.0, 0.0),
+                name=self.CORNER_HANDLE,
+            )
+            self.addScaleHandle(
+                (0.0, 0.5),
+                (1.0, 0.5),
+                name=self.LEFT_HANDLE,
+            )
+            self.addScaleHandle(
+                (1.0, 0.5),
+                (0.0, 0.5),
+                name=self.RIGHT_HANDLE,
+            )
+            self.addScaleHandle(
+                (0.5, 0.0),
+                (0.5, 1.0),
+                name=self.BOTTOM_HANDLE,
+            )
+            self.addScaleHandle(
+                (0.5, 1.0),
+                (0.5, 0.0),
+                name=self.TOP_HANDLE,
+            )
+
     class _ArchROI(pg.ROI):
         """Movable annular-sector ROI with polar shape controls."""
 
@@ -2738,12 +2788,10 @@ class DataViewerPane(QtWidgets.QWidget):
         if roi.kind == "arch":
             graphic = _ArchROI(roi, pen=pen)
         else:
-            graphic = pg.RectROI(
+            graphic = _BoxROI(
                 (x_min, y_min),
                 (x_max - x_min, y_max - y_min),
                 pen=pen,
-                movable=True,
-                sideScalers=True,
             )
         graphic.setZValue(10)
         graphic.sigRegionChangeStarted.connect(
