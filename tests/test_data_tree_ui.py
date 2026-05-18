@@ -1436,6 +1436,36 @@ def test_peak_finder_presets_update_detection_controls(qtbot):
     pane = PeakIdentificationPane(ProjectState(), "synthetic")
     qtbot.addWidget(pane)
 
+    peak_finder_controls = [
+        pane.threshold_percentile,
+        pane.adaptive_peak_threshold_check,
+        pane.adaptive_floor_percentile,
+        pane.min_snr,
+        pane.background_radius_px,
+        pane.max_peaks,
+        pane.min_distance_px,
+        pane.neighborhood_radius_px,
+        pane.min_qz,
+        pane.ignore_nonpositive_check,
+        pane.consolidate_peaks_check,
+        pane.find_peaks_button,
+    ]
+    for control in peak_finder_controls:
+        assert control.toolTip().startswith("<qt>")
+    assert (
+        "image-wide intensity cutoff"
+        in pane.global_peak_preset_button.toolTip()
+    )
+    assert "local background" in pane.adaptive_peak_preset_button.toolTip()
+    assert "weak peaks" in pane.sensitive_peak_preset_button.toolTip()
+    finder_labels = [
+        label
+        for label in pane.side_tabs.widget(0).findChildren(QtWidgets.QLabel)
+        if label.toolTip().startswith("<qt>")
+    ]
+    assert len(finder_labels) >= 8
+    assert any(label.text() == "Threshold" for label in finder_labels)
+
     assert pane.max_peaks.value() == 500
     assert not pane.adaptive_peak_threshold_check.isChecked()
 

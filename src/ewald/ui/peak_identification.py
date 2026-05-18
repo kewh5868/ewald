@@ -58,6 +58,7 @@ from ewald.ui.notation import (
     RichTextComboBox,
     data_image_rect,
     enable_rich_text_items,
+    qt_tooltip,
     rich_label,
     set_data_aspect_locked,
     set_data_image_plot_range,
@@ -157,6 +158,67 @@ PEAK_FINDER_PRESETS: dict[str, dict[str, float | int | bool]] = {
         "min_distance_px": 8,
         "neighborhood_radius_px": 2,
     },
+}
+PEAK_FINDER_PRESET_TOOLTIPS = {
+    "global": (
+        "Use one image-wide intensity cutoff. Best when the background is "
+        "fairly uniform and only the strongest, clearest peaks are needed."
+    ),
+    "adaptive": (
+        "Use local background and noise estimates so peaks can be accepted "
+        "even when the detector background changes across the image."
+    ),
+    "sensitive": (
+        "Lower the adaptive SNR requirement and allow more candidates. Useful "
+        "for weak peaks, but expect more false positives to review."
+    ),
+}
+PEAK_FINDER_SETTING_TOOLTIPS = {
+    "threshold": (
+        "Global percentile cutoff for candidate peak intensity. Higher values "
+        "keep only brighter pixels; lower values admit more candidates."
+    ),
+    "adaptive": (
+        "Use local background and noise estimates so weaker real peaks can "
+        "pass even when global intensity changes."
+    ),
+    "adaptive_floor": (
+        "Lowest percentile allowed as the adaptive local floor. Raising this "
+        "makes the adaptive detector more selective in noisy backgrounds."
+    ),
+    "min_snr": (
+        "Minimum signal-to-noise ratio above the local background for adaptive "
+        "peak acceptance."
+    ),
+    "background_px": (
+        "Pixel radius used to estimate the local background and noise around "
+        "each candidate."
+    ),
+    "max_peaks": (
+        "Maximum number of peaks to add or consolidate from one Find Peaks run."
+    ),
+    "distance_px": (
+        "Minimum pixel spacing between accepted candidates. Increase this to "
+        "avoid multiple points on the same broad peak."
+    ),
+    "window_px": (
+        "Neighborhood radius used to decide whether a pixel is a local maximum."
+    ),
+    "min_qz": (
+        f"Reject candidates below this {QZ_HTML} value. Useful for excluding "
+        "beamstop and low-q artifacts."
+    ),
+    "ignore_nonpositive": (
+        "Ignore zero and negative intensity pixels during peak detection."
+    ),
+    "consolidate": (
+        "Move compatible manual or channel-derived peaks onto detected local "
+        "maxima instead of creating duplicates nearby."
+    ),
+    "find_peaks": (
+        "Run peak detection using the current settings and update the peak "
+        "table."
+    ),
 }
 
 
@@ -1678,10 +1740,6 @@ class PeakIdentificationPane(QtWidgets.QWidget):
 
         self.adaptive_peak_threshold_check = QtWidgets.QCheckBox("Adaptive")
         self.adaptive_peak_threshold_check.setChecked(False)
-        self.adaptive_peak_threshold_check.setToolTip(
-            "Use local background and noise estimates so weaker real peaks "
-            "can pass even when global intensity changes."
-        )
 
         self.adaptive_floor_percentile = QtWidgets.QDoubleSpinBox()
         self.adaptive_floor_percentile.setRange(0.0, 100.0)
@@ -1753,6 +1811,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.sensitive_peak_preset_button.clicked.connect(
             lambda: self._apply_peak_finder_preset("sensitive")
         )
+        self._set_peak_finder_tooltips()
         self.peak_finder_status_label = QtWidgets.QLabel("Ready.")
         self.peak_finder_status_label.setWordWrap(True)
         self.zoom_in_button = QtWidgets.QToolButton()
@@ -1921,6 +1980,38 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.symmetry_summary_label.setWordWrap(True)
         self._build_peak_fit_controls()
         self._build_crystal_overlay_controls()
+
+    def _set_peak_finder_tooltips(self) -> None:
+        controls = {
+            self.threshold_percentile: "threshold",
+            self.adaptive_peak_threshold_check: "adaptive",
+            self.adaptive_floor_percentile: "adaptive_floor",
+            self.min_snr: "min_snr",
+            self.background_radius_px: "background_px",
+            self.max_peaks: "max_peaks",
+            self.min_distance_px: "distance_px",
+            self.neighborhood_radius_px: "window_px",
+            self.min_qz: "min_qz",
+            self.ignore_nonpositive_check: "ignore_nonpositive",
+            self.consolidate_peaks_check: "consolidate",
+            self.find_peaks_button: "find_peaks",
+        }
+        for widget, key in controls.items():
+            widget.setToolTip(qt_tooltip(PEAK_FINDER_SETTING_TOOLTIPS[key]))
+
+        presets = {
+            self.global_peak_preset_button: "global",
+            self.adaptive_peak_preset_button: "adaptive",
+            self.sensitive_peak_preset_button: "sensitive",
+        }
+        for widget, key in presets.items():
+            widget.setToolTip(qt_tooltip(PEAK_FINDER_PRESET_TOOLTIPS[key]))
+
+    @staticmethod
+    def _peak_finder_label(text: str, tooltip_key: str) -> QtWidgets.QLabel:
+        label = rich_label(text)
+        label.setToolTip(qt_tooltip(PEAK_FINDER_SETTING_TOOLTIPS[tooltip_key]))
+        return label
 
     @staticmethod
     def _configure_peak_action_button(
@@ -2326,15 +2417,39 @@ class PeakIdentificationPane(QtWidgets.QWidget):
 
         finder_group = QtWidgets.QGroupBox("Find Peaks")
         finder_form = QtWidgets.QFormLayout()
-        finder_form.addRow("Threshold", self.threshold_percentile)
+        finder_form.addRow(
+            self._peak_finder_label("Threshold", "threshold"),
+            self.threshold_percentile,
+        )
         finder_form.addRow(self.adaptive_peak_threshold_check)
-        finder_form.addRow("Adaptive floor", self.adaptive_floor_percentile)
-        finder_form.addRow("Min SNR", self.min_snr)
-        finder_form.addRow("Background px", self.background_radius_px)
-        finder_form.addRow("Max peaks", self.max_peaks)
-        finder_form.addRow("Distance px", self.min_distance_px)
-        finder_form.addRow("Window px", self.neighborhood_radius_px)
-        finder_form.addRow(rich_label(f"Min {QZ_HTML}"), self.min_qz)
+        finder_form.addRow(
+            self._peak_finder_label("Adaptive floor", "adaptive_floor"),
+            self.adaptive_floor_percentile,
+        )
+        finder_form.addRow(
+            self._peak_finder_label("Min SNR", "min_snr"),
+            self.min_snr,
+        )
+        finder_form.addRow(
+            self._peak_finder_label("Background px", "background_px"),
+            self.background_radius_px,
+        )
+        finder_form.addRow(
+            self._peak_finder_label("Max peaks", "max_peaks"),
+            self.max_peaks,
+        )
+        finder_form.addRow(
+            self._peak_finder_label("Distance px", "distance_px"),
+            self.min_distance_px,
+        )
+        finder_form.addRow(
+            self._peak_finder_label("Window px", "window_px"),
+            self.neighborhood_radius_px,
+        )
+        finder_form.addRow(
+            self._peak_finder_label(f"Min {QZ_HTML}", "min_qz"),
+            self.min_qz,
+        )
         finder_form.addRow(self.ignore_nonpositive_check)
         finder_form.addRow(self.consolidate_peaks_check)
         finder_layout = QtWidgets.QVBoxLayout(finder_group)
