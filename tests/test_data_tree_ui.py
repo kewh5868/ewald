@@ -2186,9 +2186,13 @@ def test_integration_channel_peak_markers_push_to_peak_identification(
     assert marker.qxy == pytest.approx(3.0)
     assert marker.qz == pytest.approx(5.0)
     assert marker.integrated_intensity == pytest.approx(123.0)
-    assert viewer.channel_panels[1].marker_count_label.text() == "1 mark"
+    panel = viewer.channel_panels[1]
+    assert panel.marker_count_label.text() == "1 mark"
+    assert panel.coordinate_readout_label.text() == (
+        "Ch 1 active peak: trace qz=5, I=123, qxy=3, qz=5"
+    )
 
-    plot_widget = viewer.channel_panels[1].plot_widget
+    plot_widget = panel.plot_widget
     if plot_widget.axes is None or plot_widget.canvas is None:
         pytest.skip("matplotlib is unavailable")
     trace = viewer.channel_panels[1].series[0]
@@ -2218,6 +2222,12 @@ def test_integration_channel_peak_markers_push_to_peak_identification(
         mpl_event(marker.integration_x, marker.integrated_intensity)
     )
     plot_widget._handle_mouse_motion(mpl_event(drag_x, drag_y))
+    live_readout = panel.coordinate_readout_label.text()
+    assert live_readout.startswith("Ch 1 active peak: trace qz=")
+    assert f"I={drag_y:.5g}" in live_readout
+    assert "qxy=3" in live_readout
+    assert f"qz={drag_x:.5g}" in live_readout
+    assert viewer.roi_status_label.text() == live_readout
     plot_widget._handle_mouse_release(mpl_event(drag_x, drag_y))
 
     marker = viewer.integration_peak_markers[1][0]

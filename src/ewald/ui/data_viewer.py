@@ -606,6 +606,7 @@ class _MatplotlibIntegrationWidget(QtWidgets.QWidget):
     """Matplotlib-backed line plot for one integration channel."""
 
     peakMarked = QtCore.Signal(str, float, float)
+    markerDragPreviewed = QtCore.Signal(str, float, float)
     markerMoved = QtCore.Signal(str, float, float)
     markerDeleted = QtCore.Signal(str)
 
@@ -728,6 +729,11 @@ class _MatplotlibIntegrationWidget(QtWidgets.QWidget):
             self._drag_marker_delete_pending = False
             if self.canvas is not None:
                 self.canvas.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
+            self.markerDragPreviewed.emit(
+                marker.marker_id,
+                marker.integration_x,
+                marker.integrated_intensity,
+            )
             return
         self._mark_nearest_trace_point(event)
 
@@ -761,6 +767,11 @@ class _MatplotlibIntegrationWidget(QtWidgets.QWidget):
             y_value,
         ):
             self._drag_marker_moved = True
+        self.markerDragPreviewed.emit(
+            self._drag_marker_id,
+            x_value,
+            y_value,
+        )
 
     def _handle_mouse_release(self, event: Any) -> None:
         if self._drag_marker_id is None:
@@ -1105,6 +1116,7 @@ class _IntegrationChannelPanel(QtWidgets.QFrame):
     detachRequested = QtCore.Signal(int)
     reattachDropRequested = QtCore.Signal(int)
     markerRequested = QtCore.Signal(int, str, float, float)
+    markerDragPreviewed = QtCore.Signal(int, str, float, float)
     markerMoved = QtCore.Signal(int, str, float, float)
     markerDeleted = QtCore.Signal(int, str)
     clearMarkersRequested = QtCore.Signal(int)
@@ -1141,6 +1153,9 @@ class _IntegrationChannelPanel(QtWidgets.QFrame):
         )
         self.marker_count_label = QtWidgets.QLabel("0 marks")
         self.marker_count_label.setMinimumWidth(54)
+        self.coordinate_readout_label = QtWidgets.QLabel("")
+        self.coordinate_readout_label.setMinimumWidth(150)
+        self.coordinate_readout_label.setStyleSheet("color: #475569;")
         self.clear_marks_button = QtWidgets.QToolButton()
         self.clear_marks_button.setText("Clear Marks")
         self.clear_marks_button.clicked.connect(
@@ -1168,6 +1183,7 @@ class _IntegrationChannelPanel(QtWidgets.QFrame):
         header_layout.addWidget(self.drag_label)
         header_layout.addStretch(1)
         header_layout.addWidget(self.marker_count_label)
+        header_layout.addWidget(self.coordinate_readout_label)
         header_layout.addWidget(self.clear_marks_button)
         header_layout.addWidget(self.detect_peaks_button)
         header_layout.addWidget(self.push_markers_button)
@@ -1181,6 +1197,16 @@ class _IntegrationChannelPanel(QtWidgets.QFrame):
                 roi_id,
                 x_value,
                 y_value,
+            )
+        )
+        self.plot_widget.markerDragPreviewed.connect(
+            lambda marker_id, x_value, y_value: (
+                self.markerDragPreviewed.emit(
+                    self.channel,
+                    marker_id,
+                    x_value,
+                    y_value,
+                )
             )
         )
         self.plot_widget.markerMoved.connect(
@@ -1226,6 +1252,9 @@ class _IntegrationChannelPanel(QtWidgets.QFrame):
         self.clear_marks_button.setEnabled(count > 0)
         self.push_markers_button.setEnabled(count > 0)
 
+    def set_peak_readout(self, text: str) -> None:
+        self.coordinate_readout_label.setText(text)
+
     def set_detached(self, detached: bool) -> None:
         self.detached = detached
         self.plot_widget.setVisible(not detached)
@@ -1268,6 +1297,7 @@ class _DetachedIntegrationWindow(QtWidgets.QDialog):
     reattachRequested = QtCore.Signal(int)
     clearRequested = QtCore.Signal(int)
     markerRequested = QtCore.Signal(int, str, float, float)
+    markerDragPreviewed = QtCore.Signal(int, str, float, float)
     markerMoved = QtCore.Signal(int, str, float, float)
     markerDeleted = QtCore.Signal(int, str)
     clearMarkersRequested = QtCore.Signal(int)
@@ -1299,6 +1329,9 @@ class _DetachedIntegrationWindow(QtWidgets.QDialog):
             lambda _checked=False: self.clearRequested.emit(self.channel)
         )
         self.marker_count_label = QtWidgets.QLabel("0 marks")
+        self.coordinate_readout_label = QtWidgets.QLabel("")
+        self.coordinate_readout_label.setMinimumWidth(150)
+        self.coordinate_readout_label.setStyleSheet("color: #475569;")
         self.clear_marks_button = QtWidgets.QToolButton()
         self.clear_marks_button.setText("Clear Marks")
         self.clear_marks_button.clicked.connect(
@@ -1325,6 +1358,7 @@ class _DetachedIntegrationWindow(QtWidgets.QDialog):
         header_layout.addWidget(self.drag_label)
         header_layout.addStretch(1)
         header_layout.addWidget(self.marker_count_label)
+        header_layout.addWidget(self.coordinate_readout_label)
         header_layout.addWidget(self.clear_marks_button)
         header_layout.addWidget(self.detect_peaks_button)
         header_layout.addWidget(self.push_markers_button)
@@ -1338,6 +1372,16 @@ class _DetachedIntegrationWindow(QtWidgets.QDialog):
                 roi_id,
                 x_value,
                 y_value,
+            )
+        )
+        self.plot_widget.markerDragPreviewed.connect(
+            lambda marker_id, x_value, y_value: (
+                self.markerDragPreviewed.emit(
+                    self.channel,
+                    marker_id,
+                    x_value,
+                    y_value,
+                )
             )
         )
         self.plot_widget.markerMoved.connect(
@@ -1374,6 +1418,9 @@ class _DetachedIntegrationWindow(QtWidgets.QDialog):
         self.marker_count_label.setText(f"{count} {suffix}")
         self.clear_marks_button.setEnabled(count > 0)
         self.push_markers_button.setEnabled(count > 0)
+
+    def set_peak_readout(self, text: str) -> None:
+        self.coordinate_readout_label.setText(text)
 
     def close_from_viewer(self) -> None:
         self._closing_from_viewer = True
@@ -1766,6 +1813,9 @@ class DataViewerPane(QtWidgets.QWidget):
             panel.detachRequested.connect(self._detach_channel)
             panel.reattachDropRequested.connect(self._reattach_channel)
             panel.markerRequested.connect(self._add_channel_peak_marker)
+            panel.markerDragPreviewed.connect(
+                self._preview_channel_peak_marker_coordinate
+            )
             panel.markerMoved.connect(self._move_channel_peak_marker)
             panel.markerDeleted.connect(self._delete_channel_peak_marker)
             panel.clearMarkersRequested.connect(self._clear_channel_markers)
@@ -2682,6 +2732,7 @@ class DataViewerPane(QtWidgets.QWidget):
         self.channel_assignments[channel].clear()
         self.channel_modes[channel] = None
         self.integration_peak_markers[channel].clear()
+        self._set_channel_peak_readout(channel, "")
         self._refresh_channel(channel)
         self._sync_roi_table()
 
@@ -2694,6 +2745,9 @@ class DataViewerPane(QtWidgets.QWidget):
         window.reattachRequested.connect(self._reattach_channel)
         window.clearRequested.connect(self._clear_channel)
         window.markerRequested.connect(self._add_channel_peak_marker)
+        window.markerDragPreviewed.connect(
+            self._preview_channel_peak_marker_coordinate
+        )
         window.markerMoved.connect(self._move_channel_peak_marker)
         window.markerDeleted.connect(self._delete_channel_peak_marker)
         window.clearMarkersRequested.connect(self._clear_channel_markers)
@@ -2772,7 +2826,33 @@ class DataViewerPane(QtWidgets.QWidget):
         if marker is None:
             return
         self.integration_peak_markers[channel].append(marker)
+        self._set_channel_peak_readout(
+            channel,
+            _channel_peak_readout_text(channel, roi, marker),
+        )
         self._refresh_channel(channel)
+
+    def _preview_channel_peak_marker_coordinate(
+        self,
+        channel: int,
+        marker_id: str,
+        integration_x: float,
+        integrated_intensity: float,
+    ) -> None:
+        marker = self._channel_marker_by_id(channel, marker_id)
+        if marker is None:
+            return
+        roi = self._roi_by_id(marker.roi_id)
+        if roi is None:
+            return
+        preview_marker = replace(
+            marker,
+            integration_x=float(integration_x),
+            integrated_intensity=float(integrated_intensity),
+        )
+        text = _channel_peak_readout_text(channel, roi, preview_marker)
+        self._set_channel_peak_readout(channel, text)
+        self._set_roi_status(text)
 
     def _detect_channel_peaks(self, channel: int) -> None:
         traces = list(self.channel_panels[channel].series)
@@ -2851,6 +2931,10 @@ class DataViewerPane(QtWidgets.QWidget):
                 ),
             )
             self._refresh_channel(channel)
+            self._set_channel_peak_readout(
+                channel,
+                _channel_peak_readout_text(channel, roi, markers[index]),
+            )
             return
 
     def _delete_channel_peak_marker(
@@ -2866,7 +2950,18 @@ class DataViewerPane(QtWidgets.QWidget):
             marker for marker in markers if marker.marker_id != marker_id
         ]
         if len(self.integration_peak_markers[channel]) != before:
+            self._set_channel_peak_readout(channel, "")
             self._refresh_channel(channel)
+
+    def _channel_marker_by_id(
+        self,
+        channel: int,
+        marker_id: str,
+    ) -> IntegrationPeakMarker | None:
+        for marker in self.integration_peak_markers.get(channel, []):
+            if marker.marker_id == marker_id:
+                return marker
+        return None
 
     def _channel_has_marker_near(
         self,
@@ -2895,6 +2990,7 @@ class DataViewerPane(QtWidgets.QWidget):
 
     def _clear_channel_markers(self, channel: int) -> None:
         self.integration_peak_markers[channel].clear()
+        self._set_channel_peak_readout(channel, "")
         self._refresh_channel(channel)
 
     def _remove_channel_markers(
@@ -2905,6 +3001,7 @@ class DataViewerPane(QtWidgets.QWidget):
     ) -> None:
         if roi_id is None:
             self.integration_peak_markers[channel].clear()
+            self._set_channel_peak_readout(channel, "")
             self._refresh_channel(channel)
             return
         before = len(self.integration_peak_markers[channel])
@@ -2914,7 +3011,16 @@ class DataViewerPane(QtWidgets.QWidget):
             if marker.roi_id != roi_id
         ]
         if len(self.integration_peak_markers[channel]) != before:
+            self._set_channel_peak_readout(channel, "")
             self._refresh_channel(channel)
+
+    def _set_channel_peak_readout(self, channel: int, text: str) -> None:
+        panel = self.channel_panels.get(channel)
+        if panel is not None:
+            panel.set_peak_readout(text)
+        window = self.channel_windows.get(channel)
+        if window is not None:
+            window.set_peak_readout(text)
 
     def _push_channel_markers(self, channel: int) -> None:
         markers = self._markers_for_channel(
@@ -3654,6 +3760,36 @@ def _integration_peak_marker(
             f"@ {_format_float(float(integration_x))}"
         ),
     )
+
+
+def _channel_peak_readout_text(
+    channel: int,
+    roi: ROIRegion,
+    marker: IntegrationPeakMarker,
+) -> str:
+    axis_label = _roi_integration_axis_label(roi)
+    coordinate = _integration_peak_qspace_coordinate(
+        roi,
+        marker.integration_x,
+    )
+    base = (
+        f"Ch {channel} active peak: "
+        f"trace {axis_label}={_format_float(marker.integration_x)}, "
+        f"I={_format_float(marker.integrated_intensity)}"
+    )
+    if coordinate is None:
+        return base
+    qxy, qz = coordinate
+    return f"{base}, " f"qxy={_format_float(qxy)}, " f"qz={_format_float(qz)}"
+
+
+def _roi_integration_axis_label(roi: ROIRegion) -> str:
+    mode = _roi_integration_mode(roi)
+    if mode == "arch":
+        return "chi"
+    if mode == "box:qxy":
+        return "qxy"
+    return "qz"
 
 
 def _integration_peak_qspace_coordinate(
