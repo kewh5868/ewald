@@ -162,6 +162,7 @@ class DataTreePane(QtWidgets.QWidget):
             project,
         )
         self._add_simulations(root, project)
+        self._add_structures(root, project)
 
         root.setExpanded(True)
 
@@ -529,6 +530,84 @@ class DataTreePane(QtWidgets.QWidget):
         for key, value in sorted(record.get("parameters", {}).items()):
             self._add_leaf(parameters_item, _labelize(key), value)
 
+    def _add_structures(
+        self,
+        parent: QtWidgets.QTreeWidgetItem,
+        project: ProjectState,
+    ) -> None:
+        records = _computed_cif_records(project)
+        structures_item = QtWidgets.QTreeWidgetItem(
+            ["Computed CIFs", str(len(records))]
+        )
+        structures_item.setData(
+            0,
+            QtCore.Qt.ItemDataRole.UserRole,
+            {"kind": "structure-collection"},
+        )
+        parent.addChild(structures_item)
+        if not records:
+            self._add_leaf(structures_item, "Status", "No computed CIFs")
+            return
+        for cif_id, record in records:
+            self._add_structure_record(structures_item, cif_id, record)
+
+    def _add_structure_record(
+        self,
+        parent: QtWidgets.QTreeWidgetItem,
+        cif_id: str,
+        record: dict[str, Any],
+    ) -> None:
+        label = (
+            record.get("label")
+            or record.get("name")
+            or record.get("cif_id")
+            or record.get("structure_id")
+            or cif_id
+        )
+        item = QtWidgets.QTreeWidgetItem([str(label), "generated CIF"])
+        item.setData(
+            0,
+            QtCore.Qt.ItemDataRole.UserRole,
+            {
+                "kind": "structure",
+                "structure_id": cif_id,
+                "cif_id": record.get("cif_id", cif_id),
+                "path": record.get("path") or record.get("local_path"),
+            },
+        )
+        parent.addChild(item)
+        self._add_leaf(item, "CIF id", record.get("cif_id", cif_id))
+        for key in (
+            "candidate_id",
+            "data_id",
+            "score",
+            "status",
+            "path",
+            "local_path",
+            "archive_path",
+            "source",
+        ):
+            if record.get(key) not in (None, ""):
+                self._add_leaf(item, _labelize(key), record.get(key))
+        space_group = record.get("space_group")
+        if isinstance(space_group, dict):
+            self._add_leaf(item, "Space group", space_group.get("symbol"))
+            self._add_leaf(
+                item, "Space group number", space_group.get("number")
+            )
+        elif space_group:
+            self._add_leaf(item, "Space group", space_group)
+        combination = record.get("wyckoff_combination")
+        if isinstance(combination, dict):
+            self._add_leaf(
+                item,
+                "Wyckoff sites",
+                combination.get("site_labels"),
+            )
+        if record.get("cif_text"):
+            line_count = len(str(record.get("cif_text", "")).splitlines())
+            self._add_leaf(item, "CIF text", f"embedded, {line_count} lines")
+
     def _add_file_analysis_scope(
         self,
         parent: QtWidgets.QTreeWidgetItem,
@@ -556,9 +635,130 @@ class DataTreePane(QtWidgets.QWidget):
                 self._add_mapping(fit_item, fit)
             return
         if isinstance(fits, dict):
+            peak_fits = fits.get("peak_fit")
+            if isinstance(peak_fits, dict):
+                self._add_peak_fits(fits_item, peak_fits)
+                for key, value in sorted(fits.items()):
+                    if key == "peak_fit":
+                        continue
+                    self._add_leaf(fits_item, _labelize(key), value)
+                return
             self._add_mapping(fits_item, fits)
             return
         self._add_leaf(fits_item, "Value", fits)
+
+    def _add_peak_fits(
+        self,
+        parent: QtWidgets.QTreeWidgetItem,
+        peak_fits: dict[str, Any],
+    ) -> None:
+        peak_fits_item = QtWidgets.QTreeWidgetItem(
+            ["Peak fits", str(len(peak_fits))]
+        )
+        parent.addChild(peak_fits_item)
+        if not peak_fits:
+            self._add_leaf(peak_fits_item, "Status", "No peak fits")
+            return
+        for peak_id, record in sorted(peak_fits.items()):
+            if not isinstance(record, dict):
+                self._add_leaf(peak_fits_item, str(peak_id), record)
+                continue
+            label = str(
+                record.get("label") or record.get("peak_id") or peak_id
+            )
+            fit_item = QtWidgets.QTreeWidgetItem(
+                [label, _peak_fit_summary(record)]
+            )
+            peak_fits_item.addChild(fit_item)
+            self._add_leaf(fit_item, "Peak id", record.get("peak_id", peak_id))
+            if record.get("roi"):
+                self._add_leaf(
+                    fit_item, "ROI", _roi_record_value(record["roi"])
+                )
+            if record.get("azimuthal_roi"):
+                self._add_leaf(
+                    fit_item,
+                    "Azimuthal ROI",
+                    _roi_record_value(record["azimuthal_roi"]),
+                )
+            self._add_integration_records(
+                fit_item,
+                record.get("integrations", {}),
+                record.get("integration_fits", {}),
+                record.get("fit_failures", {}),
+            )
+            if isinstance(record.get("fit_2d"), dict):
+                self._add_fit_record(
+                    fit_item, "2D Gaussian fit", record["fit_2d"]
+                )
+            if isinstance(record.get("fit_2d_failure"), dict):
+                failure_item = QtWidgets.QTreeWidgetItem(
+                    ["2D fit failure", ""]
+                )
+                fit_item.addChild(failure_item)
+                self._add_mapping(failure_item, record["fit_2d_failure"])
+
+    def _add_integration_records(
+        self,
+        parent: QtWidgets.QTreeWidgetItem,
+        integrations: Any,
+        integration_fits: Any,
+        failures: Any,
+    ) -> None:
+        integrations = integrations if isinstance(integrations, dict) else {}
+        integration_fits = (
+            integration_fits if isinstance(integration_fits, dict) else {}
+        )
+        failures = failures if isinstance(failures, dict) else {}
+        item = QtWidgets.QTreeWidgetItem(
+            ["Integrated traces", str(len(integrations))]
+        )
+        parent.addChild(item)
+        for name, integration in sorted(integrations.items()):
+            trace_item = QtWidgets.QTreeWidgetItem(
+                [str(name), _integration_summary(integration)]
+            )
+            item.addChild(trace_item)
+            if isinstance(integration, dict):
+                self._add_leaf(
+                    trace_item, "X label", integration.get("x_label")
+                )
+                self._add_leaf(
+                    trace_item, "Y label", integration.get("y_label")
+                )
+                metadata = integration.get("metadata")
+                if isinstance(metadata, dict):
+                    metadata_item = QtWidgets.QTreeWidgetItem(["Metadata", ""])
+                    trace_item.addChild(metadata_item)
+                    self._add_mapping(metadata_item, metadata)
+            if isinstance(integration_fits.get(name), dict):
+                self._add_fit_record(
+                    trace_item,
+                    "1D Gaussian fit",
+                    integration_fits[name],
+                )
+            if isinstance(failures.get(name), dict):
+                failure_item = QtWidgets.QTreeWidgetItem(["Fit failure", ""])
+                trace_item.addChild(failure_item)
+                self._add_mapping(failure_item, failures[name])
+
+    def _add_fit_record(
+        self,
+        parent: QtWidgets.QTreeWidgetItem,
+        title: str,
+        record: dict[str, Any],
+    ) -> None:
+        item = QtWidgets.QTreeWidgetItem([title, _fit_record_summary(record)])
+        parent.addChild(item)
+        for key, value in sorted(record.items()):
+            if key in {"x_values", "y_values", "model_y_values"}:
+                self._add_leaf(item, _labelize(key), _sequence_summary(value))
+            elif isinstance(value, dict):
+                child = QtWidgets.QTreeWidgetItem([_labelize(key), ""])
+                item.addChild(child)
+                self._add_mapping(child, value)
+            else:
+                self._add_leaf(item, _labelize(key), value)
 
     def _add_rois(
         self,
@@ -624,6 +824,108 @@ def _format_value(value: Any) -> str:
             f"{key}: {_format_value(val)}" for key, val in value.items()
         )
     return str(value)
+
+
+def _computed_cif_records(
+    project: ProjectState,
+) -> list[tuple[str, dict[str, Any]]]:
+    records: dict[str, dict[str, Any]] = {}
+    generated = project.reference_cifs.get("generated", {})
+    if isinstance(generated, dict):
+        for cif_id, record in generated.items():
+            if isinstance(record, dict):
+                records[str(record.get("cif_id") or cif_id)] = dict(record)
+    for structure_id, record in project.structures.items():
+        if not isinstance(record, dict):
+            continue
+        if not _is_generated_structure_record(record):
+            continue
+        cif_id = str(
+            record.get("cif_id") or record.get("structure_id") or structure_id
+        )
+        merged = dict(records.get(cif_id, {}))
+        merged.update(record)
+        records[cif_id] = merged
+    return sorted(records.items())
+
+
+def _is_generated_structure_record(record: dict[str, Any]) -> bool:
+    source = str(record.get("source", "")).lower()
+    return (
+        bool(record.get("cif_text"))
+        or bool(record.get("cif_id"))
+        or "generated_cif" in source
+        or "structure_analysis" in source
+    )
+
+
+def _peak_fit_summary(record: dict[str, Any]) -> str:
+    pieces = []
+    integrations = record.get("integrations", {})
+    if isinstance(integrations, dict):
+        pieces.append(f"{len(integrations)} traces")
+    fits = record.get("integration_fits", {})
+    if isinstance(fits, dict):
+        pieces.append(f"{len(fits)} 1D fits")
+    if isinstance(record.get("fit_2d"), dict):
+        pieces.append("2D fit")
+    if record.get("fit_2d_failure") or record.get("fit_failures"):
+        pieces.append("review")
+    return ", ".join(pieces) or "No fit details"
+
+
+def _integration_summary(record: Any) -> str:
+    if not isinstance(record, dict):
+        return _format_value(record)
+    x_values = record.get("x_values", [])
+    y_values = record.get("y_values", [])
+    return f"{_sequence_length(x_values)} x points, {_sequence_length(y_values)} y points"
+
+
+def _fit_record_summary(record: dict[str, Any]) -> str:
+    center = record.get("center")
+    if center is None:
+        center = record.get("center_qxy")
+    if center is None:
+        center = record.get("center_qz")
+    statistics = record.get("statistics", {})
+    r_squared = (
+        statistics.get("r_squared") if isinstance(statistics, dict) else None
+    )
+    pieces = []
+    if center is not None:
+        pieces.append(f"center {_format_value(center)}")
+    if r_squared is not None:
+        pieces.append(f"R2 {_format_value(r_squared)}")
+    return ", ".join(pieces) or str(record.get("status", "fit"))
+
+
+def _sequence_summary(value: Any) -> str:
+    return f"{_sequence_length(value)} values"
+
+
+def _sequence_length(value: Any) -> int:
+    try:
+        return len(value)
+    except TypeError:
+        return 0
+
+
+def _roi_record_value(roi: dict[str, Any]) -> str:
+    kind = str(roi.get("kind", "box")).lower()
+    if kind == "arch":
+        return (
+            f"arch qr {_format_value(roi.get('qr_min'))}-"
+            f"{_format_value(roi.get('qr_max'))}, chi "
+            f"{_format_value(roi.get('chi_min'))}-"
+            f"{_format_value(roi.get('chi_max'))}"
+        )
+    return (
+        f"box {QXY_HTML} {_format_value(roi.get('qxy_min'))}-"
+        f"{_format_value(roi.get('qxy_max'))}, {QZ_HTML} "
+        f"{_format_value(roi.get('qz_min'))}-"
+        f"{_format_value(roi.get('qz_max'))}"
+    )
 
 
 def _simulation_type_label(record: dict[str, Any]) -> str:

@@ -110,6 +110,99 @@ def test_data_tree_renders_groups_files_metadata_and_fits(qtbot, repo_root):
     assert _child_with_text(metadata_item, "Parse delimiter").text(1) == "_"
 
 
+def test_data_tree_registers_peak_fits_and_computed_cifs(
+    qtbot,
+    repo_root,
+    tmp_path,
+):
+    path = next((repo_root / "example").glob("*.tiff"))
+    group, _ = build_data_group_from_paths([path], group_name="Example")
+    project = ProjectState()
+    project.add_data_group(group)
+    data_id = group.data_files[0].data_id
+    project.fits[data_id] = {
+        "peak_fit": {
+            "p1": {
+                "peak_id": "p1",
+                "label": "Peak 1",
+                "roi": {
+                    "kind": "box",
+                    "qxy_min": 0.1,
+                    "qxy_max": 0.3,
+                    "qz_min": 0.4,
+                    "qz_max": 0.6,
+                },
+                "integrations": {
+                    "qxy": {
+                        "x_label": "qxy",
+                        "y_label": "Integrated intensity",
+                        "x_values": [0.1, 0.2, 0.3],
+                        "y_values": [10.0, 12.0, 9.0],
+                    }
+                },
+                "integration_fits": {
+                    "qxy": {
+                        "center": 0.2,
+                        "statistics": {"r_squared": 0.91},
+                    }
+                },
+                "fit_2d": {
+                    "center_qxy": 0.2,
+                    "center_qz": 0.5,
+                    "statistics": {"r_squared": 0.95},
+                },
+            }
+        }
+    }
+    cif_path = tmp_path / "candidate_001.cif"
+    cif_path.write_text("data_candidate_001\n", encoding="utf-8")
+    project.reference_cifs["generated"] = {
+        "candidate_001": {
+            "cif_id": "candidate_001",
+            "candidate_id": "candidate_001",
+            "data_id": data_id,
+            "score": 0.12,
+            "path": str(cif_path),
+            "archive_path": "structures/generated_cifs/candidate_001/candidate_001.cif",
+            "cif_text": "data_candidate_001\n",
+        }
+    }
+    project.structures["candidate_001"] = {
+        "structure_id": "candidate_001",
+        "source": "structure_analysis_generated_cif",
+        "path": str(cif_path),
+        "cif_text": "data_candidate_001\n",
+    }
+
+    pane = DataTreePane()
+    qtbot.addWidget(pane)
+    pane.set_project(project)
+
+    root = pane.tree.topLevelItem(0)
+    file_item = root.child(0)
+    fits_item = _child_with_text(file_item, "Fits")
+    peak_fits_item = _child_with_text(fits_item, "Peak fits")
+    peak_fit_item = _child_with_text(peak_fits_item, "Peak 1")
+    assert "1 traces" in peak_fit_item.text(1)
+    assert "2D fit" in peak_fit_item.text(1)
+    traces_item = _child_with_text(peak_fit_item, "Integrated traces")
+    qxy_item = _child_with_text(traces_item, "qxy")
+    assert qxy_item.text(1) == "3 x points, 3 y points"
+    assert (
+        _child_with_text(peak_fit_item, "2D Gaussian fit")
+        .text(1)
+        .startswith("center 0.2")
+    )
+
+    computed_item = _child_with_text(root, "Computed CIFs")
+    assert computed_item.text(1) == "1"
+    cif_item = _child_with_text(computed_item, "candidate_001")
+    assert _child_with_text(cif_item, "Path").text(1) == str(cif_path)
+    assert (
+        _child_with_text(cif_item, "CIF text").text(1) == "embedded, 1 lines"
+    )
+
+
 def test_main_window_has_left_data_dock(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
@@ -1185,7 +1278,7 @@ def test_major_analysis_plots_share_locked_aspect(qtbot, repo_root):
     assert structure_pane.image_data.shape == viewer.image_data.shape
     assert structure_pane.analysis_tabs.tabText(0) == "Structure Approximation"
     assert structure_pane.analysis_tabs.tabText(1) == "Peak Families"
-    assert structure_pane.analysis_tabs.tabText(2) == "Wyckoff Setup"
+    assert structure_pane.analysis_tabs.tabText(2) == "Wyckoff Mapping"
     assert "Peak Table" not in [
         structure_pane.analysis_tabs.tabText(index)
         for index in range(structure_pane.analysis_tabs.count())

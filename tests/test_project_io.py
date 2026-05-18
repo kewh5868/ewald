@@ -517,6 +517,63 @@ def test_project_round_trip_preserves_new_analysis_metadata(tmp_path):
     assert loaded.simulations["sim_1"]["cache_key"] == "abc123"
 
 
+def test_project_archive_embeds_generated_cif_files(tmp_path):
+    project = ProjectState(name="Generated CIF archive")
+    cif_path = tmp_path / "candidate_001.cif"
+    cif_text = "data_candidate_001\n_cell_length_a 6.3\n"
+    cif_path.write_text(cif_text, encoding="utf-8")
+    project.reference_cifs["generated"] = {
+        "candidate_001": {
+            "cif_id": "candidate_001",
+            "path": str(cif_path),
+            "cif_text": cif_text,
+            "status": "written",
+        }
+    }
+    project.structures["candidate_001"] = {
+        "structure_id": "candidate_001",
+        "source": "structure_analysis_generated_cif",
+        "path": str(cif_path),
+        "cif_text": cif_text,
+    }
+    project.analysis_results["structure_analysis"] = {
+        "synthetic": {
+            "wyckoff": {
+                "generated_cifs": [
+                    {
+                        "cif_id": "candidate_001",
+                        "path": str(cif_path),
+                        "cif_text": cif_text,
+                    }
+                ]
+            }
+        }
+    }
+
+    saved = save_project(project, tmp_path / "generated_cif_archive")
+    with ZipFile(saved) as archive:
+        members = set(archive.namelist())
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+    archive_path = manifest["reference_cifs"]["generated"]["candidate_001"][
+        "archive_path"
+    ]
+    cif_path.unlink()
+    loaded = load_project(saved)
+
+    assert archive_path in members
+    assert archive_path.startswith("structures/generated_cifs/candidate_001/")
+    loaded_record = loaded.reference_cifs["generated"]["candidate_001"]
+    assert loaded_record["local_path"].endswith("candidate_001.cif")
+    assert loaded_record["path"] == loaded_record["local_path"]
+    assert loaded.structures["candidate_001"]["path"] == loaded_record["path"]
+    assert (
+        loaded.analysis_results["structure_analysis"]["synthetic"]["wyckoff"][
+            "generated_cifs"
+        ][0]["path"]
+        == loaded_record["path"]
+    )
+
+
 def test_project_archive_embeds_assets_and_single_imports(repo_root, tmp_path):
     image = next((repo_root / "example").glob("*.tiff"))
     group, _ = build_data_group_from_paths([image], group_name="Single")
