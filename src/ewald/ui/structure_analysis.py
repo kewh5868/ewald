@@ -42,6 +42,7 @@ from ewald.data.models import ProjectState
 from ewald.ui.data_viewer import (
     IMAGE_COLORMAPS,
     ImageDisplayStyle,
+    ImagePlotToolbar,
     _ImageAspectPlotFrame,
     _level_spinbox,
     _quantile_spinbox,
@@ -352,6 +353,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.active_peak_id: str | None = None
         self._syncing_table = False
         self._phase_controls: list[QtWidgets.QComboBox] = []
+        self.view_box: Any | None = None
         self.plot_frame: _ImageAspectPlotFrame | None = None
         self._analysis_state()
         self._refresh_imported_peaks(preserve_user_edits=True)
@@ -629,8 +631,10 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             self.image_item = None
             self.peak_scatter = None
             self.family_highlight_scatter = None
+            self.view_box = None
             return
         self.plot_widget = pg.PlotWidget()
+        self.view_box = self.plot_widget.getViewBox()
         if self.coordinate_space == "qspace":
             set_qspace_axis_labels(self.plot_widget)
         else:
@@ -699,6 +703,21 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             self._apply_image_style_from_controls
         )
         self.auto_contrast_button.clicked.connect(self._set_quantile_levels)
+
+        self.zoom_in_button = QtWidgets.QToolButton()
+        self.zoom_in_button.setText("Zoom In")
+        self.zoom_in_button.clicked.connect(lambda: self._zoom_image(0.75))
+        self.zoom_out_button = QtWidgets.QToolButton()
+        self.zoom_out_button.setText("Zoom Out")
+        self.zoom_out_button.clicked.connect(lambda: self._zoom_image(1.35))
+        self.zoom_fit_button = QtWidgets.QToolButton()
+        self.zoom_fit_button.setText("Autoscale")
+        self.zoom_fit_button.clicked.connect(self._reset_image_zoom)
+        self.pan_button = QtWidgets.QToolButton()
+        self.pan_button.setText("Pan")
+        self.pan_button.setCheckable(True)
+        self.pan_button.toggled.connect(self._set_pan_mode)
+        self._set_pan_mode(False)
 
         self.status_label = QtWidgets.QLabel(
             "Structure Analysis edits update this tab only; Peak Fit results "
@@ -866,21 +885,19 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         controls.addTab(self._families_tab(), "Peak Families")
         controls.addTab(self._wyckoff_tab(), "Wyckoff Setup")
 
-        contrast_layout = QtWidgets.QHBoxLayout()
-        contrast_layout.addWidget(QtWidgets.QLabel("Color"))
-        contrast_layout.addWidget(self.colormap_combo)
-        contrast_layout.addSpacing(12)
-        contrast_layout.addWidget(QtWidgets.QLabel("Min"))
-        contrast_layout.addWidget(self.level_min)
-        contrast_layout.addWidget(QtWidgets.QLabel("Max"))
-        contrast_layout.addWidget(self.level_max)
-        contrast_layout.addWidget(self.quantile_check)
-        contrast_layout.addWidget(QtWidgets.QLabel("Low"))
-        contrast_layout.addWidget(self.quantile_low)
-        contrast_layout.addWidget(QtWidgets.QLabel("High"))
-        contrast_layout.addWidget(self.quantile_high)
-        contrast_layout.addWidget(self.auto_contrast_button)
-        contrast_layout.addStretch(1)
+        self.plot_toolbar = ImagePlotToolbar(
+            colormap_combo=self.colormap_combo,
+            level_min=self.level_min,
+            level_max=self.level_max,
+            quantile_check=self.quantile_check,
+            quantile_low=self.quantile_low,
+            quantile_high=self.quantile_high,
+            auto_contrast_button=self.auto_contrast_button,
+            zoom_in_button=self.zoom_in_button,
+            zoom_out_button=self.zoom_out_button,
+            autoscale_button=self.zoom_fit_button,
+            pan_button=self.pan_button,
+        )
 
         plot_area = self.plot_widget
         if pg is not None and self.image_item is not None:
@@ -889,7 +906,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         plot_section = QtWidgets.QWidget()
         plot_section_layout = QtWidgets.QVBoxLayout(plot_section)
         plot_section_layout.setContentsMargins(0, 0, 0, 0)
-        plot_section_layout.addLayout(contrast_layout)
+        plot_section_layout.addWidget(self.plot_toolbar)
         plot_section_layout.addWidget(plot_area, stretch=1)
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
@@ -1070,6 +1087,30 @@ class StructureAnalysisPane(QtWidgets.QWidget):
     def _apply_manual_levels(self) -> None:
         if not self.quantile_check.isChecked():
             self._apply_image_style_from_controls()
+
+    def _zoom_image(self, factor: float) -> None:
+        if pg is None or self.view_box is None:
+            return
+        self.view_box.scaleBy((factor, factor))
+
+    def _reset_image_zoom(self) -> None:
+        if pg is None or self.plot_widget is None or self.image_data is None:
+            return
+        set_data_image_plot_range(
+            self.plot_widget,
+            self.image_data.shape,
+            self.axis_ranges,
+        )
+
+    def _set_pan_mode(self, enabled: bool) -> None:
+        if self.view_box is not None:
+            self.view_box.setMouseEnabled(x=enabled, y=enabled)
+        if self.plot_widget is not None:
+            self.plot_widget.setCursor(
+                QtCore.Qt.CursorShape.OpenHandCursor
+                if enabled
+                else QtCore.Qt.CursorShape.ArrowCursor
+            )
 
     def image_display_style(self) -> ImageDisplayStyle:
         return ImageDisplayStyle(

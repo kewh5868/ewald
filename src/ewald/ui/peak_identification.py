@@ -41,6 +41,7 @@ from ewald.processing.peak_fitting import (
 from ewald.ui.data_viewer import (
     IMAGE_COLORMAPS,
     ImageDisplayStyle,
+    ImagePlotToolbar,
     _apply_image_orientation,
     _ImageAspectPlotFrame,
     _level_spinbox,
@@ -1821,7 +1822,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.zoom_out_button.setText("Zoom Out")
         self.zoom_out_button.clicked.connect(lambda: self._zoom_image(1.35))
         self.zoom_fit_button = QtWidgets.QToolButton()
-        self.zoom_fit_button.setText("Fit")
+        self.zoom_fit_button.setText("Autoscale")
         self.zoom_fit_button.clicked.connect(self._reset_image_zoom)
         self.pan_button = QtWidgets.QToolButton()
         self.pan_button.setText("Pan")
@@ -2364,21 +2365,19 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.side_tabs.addTab(self._roi_selection_tab(), "ROI Selection")
         self.side_tabs.addTab(self._peak_fit_tab(), "Peak Fit")
 
-        contrast_layout = QtWidgets.QHBoxLayout()
-        contrast_layout.addWidget(QtWidgets.QLabel("Color"))
-        contrast_layout.addWidget(self.colormap_combo)
-        contrast_layout.addSpacing(12)
-        contrast_layout.addWidget(QtWidgets.QLabel("Min"))
-        contrast_layout.addWidget(self.level_min)
-        contrast_layout.addWidget(QtWidgets.QLabel("Max"))
-        contrast_layout.addWidget(self.level_max)
-        contrast_layout.addWidget(self.quantile_check)
-        contrast_layout.addWidget(QtWidgets.QLabel("Low"))
-        contrast_layout.addWidget(self.quantile_low)
-        contrast_layout.addWidget(QtWidgets.QLabel("High"))
-        contrast_layout.addWidget(self.quantile_high)
-        contrast_layout.addWidget(self.auto_contrast_button)
-        contrast_layout.addStretch(1)
+        self.plot_toolbar = ImagePlotToolbar(
+            colormap_combo=self.colormap_combo,
+            level_min=self.level_min,
+            level_max=self.level_max,
+            quantile_check=self.quantile_check,
+            quantile_low=self.quantile_low,
+            quantile_high=self.quantile_high,
+            auto_contrast_button=self.auto_contrast_button,
+            zoom_in_button=self.zoom_in_button,
+            zoom_out_button=self.zoom_out_button,
+            autoscale_button=self.zoom_fit_button,
+            pan_button=self.pan_button,
+        )
 
         plot_area = self.plot_widget
         if pg is not None and self.image_item is not None:
@@ -2386,7 +2385,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             plot_area = self.plot_frame
 
         image_layout = QtWidgets.QVBoxLayout()
-        image_layout.addLayout(contrast_layout)
+        image_layout.addWidget(self.plot_toolbar)
         image_layout.addWidget(plot_area, stretch=1)
 
         plot_layout = QtWidgets.QHBoxLayout()
@@ -2476,12 +2475,6 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         finder_layout.addLayout(finder_form)
         finder_layout.addWidget(self.find_peaks_button)
         finder_layout.addWidget(self.peak_finder_status_label)
-        zoom_row = QtWidgets.QHBoxLayout()
-        zoom_row.addWidget(self.zoom_in_button)
-        zoom_row.addWidget(self.zoom_out_button)
-        zoom_row.addWidget(self.zoom_fit_button)
-        zoom_row.addWidget(self.pan_button)
-        finder_layout.addLayout(zoom_row)
         content_layout.addWidget(finder_group)
 
         edit_group = QtWidgets.QGroupBox("Manual Peaks")

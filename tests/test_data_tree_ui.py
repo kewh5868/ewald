@@ -1285,6 +1285,22 @@ def test_peak_identification_adds_detects_and_regions_peaks(qtbot, repo_root):
     assert structure_pane.image_style == viewer.image_display_style()
     assert pane.image_display_style() == viewer.image_display_style()
     assert structure_pane.image_display_style() == viewer.image_display_style()
+    assert pane.zoom_fit_button.text() == "Autoscale"
+    assert structure_pane.zoom_fit_button.text() == "Autoscale"
+    for button in (
+        pane.zoom_in_button,
+        pane.zoom_out_button,
+        pane.zoom_fit_button,
+        pane.pan_button,
+    ):
+        assert button.parentWidget() is pane.plot_toolbar
+    for button in (
+        structure_pane.zoom_in_button,
+        structure_pane.zoom_out_button,
+        structure_pane.zoom_fit_button,
+        structure_pane.pan_button,
+    ):
+        assert button.parentWidget() is structure_pane.plot_toolbar
 
     viewer.colormap_combo.setCurrentIndex(1)
     viewer.quantile_low.setValue(5.0)
@@ -2027,8 +2043,15 @@ def test_data_viewer_roi_graphics_are_draggable_and_resizable(
     assert viewer.view_box.state["mouseEnabled"] == [False, False]
     assert viewer.zoom_in_button.text() == "Zoom In"
     assert viewer.zoom_out_button.text() == "Zoom Out"
-    assert viewer.zoom_fit_button.text() == "Fit"
+    assert viewer.zoom_fit_button.text() == "Autoscale"
     assert viewer.pan_button.text() == "Pan"
+    for button in (
+        viewer.zoom_in_button,
+        viewer.zoom_out_button,
+        viewer.zoom_fit_button,
+        viewer.pan_button,
+    ):
+        assert button.parentWidget() is viewer.plot_toolbar
 
     (x_min, x_max), (y_min, y_max) = viewer.view_box.viewRange()
     viewer.zoom_in_button.click()

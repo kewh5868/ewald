@@ -123,6 +123,63 @@ class ImageDisplayStyle:
     level_max: float = 1.0
 
 
+class ImagePlotToolbar(QtWidgets.QWidget):
+    """Shared color and navigation toolbar for image-backed plots."""
+
+    def __init__(
+        self,
+        *,
+        colormap_combo: QtWidgets.QComboBox,
+        level_min: QtWidgets.QDoubleSpinBox,
+        level_max: QtWidgets.QDoubleSpinBox,
+        quantile_check: QtWidgets.QCheckBox,
+        quantile_low: QtWidgets.QDoubleSpinBox,
+        quantile_high: QtWidgets.QDoubleSpinBox,
+        auto_contrast_button: QtWidgets.QToolButton,
+        zoom_in_button: QtWidgets.QToolButton | None = None,
+        zoom_out_button: QtWidgets.QToolButton | None = None,
+        autoscale_button: QtWidgets.QToolButton | None = None,
+        pan_button: QtWidgets.QToolButton | None = None,
+        parent: QtWidgets.QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("ImagePlotToolbar")
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        layout.addWidget(QtWidgets.QLabel("Color"))
+        layout.addWidget(colormap_combo)
+        layout.addSpacing(12)
+        layout.addWidget(QtWidgets.QLabel("Min"))
+        layout.addWidget(level_min)
+        layout.addWidget(QtWidgets.QLabel("Max"))
+        layout.addWidget(level_max)
+        layout.addWidget(quantile_check)
+        layout.addWidget(QtWidgets.QLabel("Low"))
+        layout.addWidget(quantile_low)
+        layout.addWidget(QtWidgets.QLabel("High"))
+        layout.addWidget(quantile_high)
+        layout.addWidget(auto_contrast_button)
+        if all(
+            button is not None
+            for button in (
+                zoom_in_button,
+                zoom_out_button,
+                autoscale_button,
+                pan_button,
+            )
+        ):
+            assert autoscale_button is not None
+            autoscale_button.setText("Autoscale")
+            layout.addSpacing(12)
+            layout.addWidget(QtWidgets.QLabel("View"))
+            layout.addWidget(zoom_in_button)
+            layout.addWidget(zoom_out_button)
+            layout.addWidget(autoscale_button)
+            layout.addWidget(pan_button)
+        layout.addStretch(1)
+
+
 @dataclass(slots=True)
 class _IntegrationTrace:
     roi_id: str
@@ -1858,7 +1915,7 @@ class DataViewerPane(QtWidgets.QWidget):
         self.zoom_out_button.setText("Zoom Out")
         self.zoom_out_button.clicked.connect(lambda: self._zoom_image(1.35))
         self.zoom_fit_button = QtWidgets.QToolButton()
-        self.zoom_fit_button.setText("Fit")
+        self.zoom_fit_button.setText("Autoscale")
         self.zoom_fit_button.clicked.connect(self._reset_image_zoom)
         self.pan_button = QtWidgets.QToolButton()
         self.pan_button.setText("Pan")
@@ -2034,27 +2091,19 @@ class DataViewerPane(QtWidgets.QWidget):
         orientation_layout.addWidget(self.mirror_y_button)
         orientation_layout.addStretch(1)
 
-        contrast_layout = QtWidgets.QHBoxLayout()
-        contrast_layout.addWidget(QtWidgets.QLabel("Color"))
-        contrast_layout.addWidget(self.colormap_combo)
-        contrast_layout.addSpacing(12)
-        contrast_layout.addWidget(QtWidgets.QLabel("Min"))
-        contrast_layout.addWidget(self.level_min)
-        contrast_layout.addWidget(QtWidgets.QLabel("Max"))
-        contrast_layout.addWidget(self.level_max)
-        contrast_layout.addWidget(self.quantile_check)
-        contrast_layout.addWidget(QtWidgets.QLabel("Low"))
-        contrast_layout.addWidget(self.quantile_low)
-        contrast_layout.addWidget(QtWidgets.QLabel("High"))
-        contrast_layout.addWidget(self.quantile_high)
-        contrast_layout.addWidget(self.auto_contrast_button)
-        contrast_layout.addSpacing(12)
-        contrast_layout.addWidget(QtWidgets.QLabel("View"))
-        contrast_layout.addWidget(self.zoom_in_button)
-        contrast_layout.addWidget(self.zoom_out_button)
-        contrast_layout.addWidget(self.zoom_fit_button)
-        contrast_layout.addWidget(self.pan_button)
-        contrast_layout.addStretch(1)
+        self.plot_toolbar = ImagePlotToolbar(
+            colormap_combo=self.colormap_combo,
+            level_min=self.level_min,
+            level_max=self.level_max,
+            quantile_check=self.quantile_check,
+            quantile_low=self.quantile_low,
+            quantile_high=self.quantile_high,
+            auto_contrast_button=self.auto_contrast_button,
+            zoom_in_button=self.zoom_in_button,
+            zoom_out_button=self.zoom_out_button,
+            autoscale_button=self.zoom_fit_button,
+            pan_button=self.pan_button,
+        )
 
         roi_layout = QtWidgets.QHBoxLayout()
         roi_layout.addWidget(self.box_button)
@@ -2083,7 +2132,7 @@ class DataViewerPane(QtWidgets.QWidget):
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.orientation_bar)
-        layout.addLayout(contrast_layout)
+        layout.addWidget(self.plot_toolbar)
         self.plot_splitter = QtWidgets.QSplitter(
             QtCore.Qt.Orientation.Horizontal
         )
