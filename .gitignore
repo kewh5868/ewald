@@ -28,7 +28,11 @@ MANIFEST
 **/*.DS_Store
 
 # Custom
-dep/
+/dep/
+/example/
+/example
+/output/
+/PROMPTS.txt
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
