@@ -1048,17 +1048,35 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             self._push_undo_state()
         records = self.peaks()
         used = {_peak_id(record) for record in records}
+        target = (
+            self._snap_target_near(qxy, qz)
+            if source == "manual" and self._coordinate_is_masked(qxy, qz)
+            else None
+        )
+        if target is not None:
+            qxy = float(target["qxy"])
+            qz = float(target["qz"])
+            intensity = float(target["intensity"])
+            source = str(target["source"])
+        else:
+            intensity = self._intensity_at(qxy, qz)
         record = self._peak_record(
             qxy,
             qz,
-            self._intensity_at(qxy, qz),
+            intensity,
             source=source,
             used_ids=used,
         )
+        if target is not None:
+            self._apply_peak_target_metadata(record, target)
         records.append(record)
         self._set_peaks(records)
         self.active_peak_id = _peak_id(record)
         self._sync_after_peak_change()
+        if target is not None and target.get("kind") == "masked-gap":
+            self.snap_feedback_label.setText(
+                "Placed masked-gap peak estimate from side maxima."
+            )
         return record
 
     def add_integration_markers(
@@ -1153,18 +1171,14 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         record = self._active_record()
         if record is None:
             return
-        maximum = self._local_maximum_near(
+        target = self._snap_target_near(
             _peak_qxy(record),
             _peak_qz(record),
         )
-        if maximum is None:
+        if target is None:
             return
         self._push_undo_state()
-        qxy, qz, intensity = maximum
-        record["qxy"] = qxy
-        record["qz"] = qz
-        record["intensity"] = intensity
-        record["source"] = "manual-local-maximum"
+        self._apply_peak_target_to_record(record, target)
         if record.get("roi"):
             self._apply_roi_to_record(record)
         self._sync_after_peak_change()
@@ -1175,23 +1189,20 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         records = self.peaks()
         if not records:
             return
-        updates: list[tuple[dict[str, Any], tuple[float, float, float]]] = []
+        updates: list[tuple[dict[str, Any], dict[str, Any]]] = []
         for record in records:
-            maximum = self._local_maximum_near(
+            target = self._snap_target_near(
                 _peak_qxy(record),
                 _peak_qz(record),
             )
-            if maximum is not None:
-                updates.append((record, maximum))
+            if target is not None:
+                updates.append((record, target))
         if not updates:
             self.snap_feedback_label.setText("No finite local maxima found.")
             return
         self._push_undo_state()
-        for record, (qxy, qz, intensity) in updates:
-            record["qxy"] = qxy
-            record["qz"] = qz
-            record["intensity"] = intensity
-            record["source"] = "manual-local-maximum"
+        for record, target in updates:
+            self._apply_peak_target_to_record(record, target)
             if record.get("roi"):
                 self._apply_roi_to_record(record)
         self._set_peaks(records)
@@ -3621,13 +3632,9 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         if record is None:
             return
         if self.snap_drag_check.isChecked():
-            maximum = self._local_maximum_near(float(qxy), float(qz))
-            if maximum is not None:
-                qxy, qz, intensity = maximum
-                record["qxy"] = qxy
-                record["qz"] = qz
-                record["intensity"] = intensity
-                record["source"] = "manual-local-maximum"
+            target = self._snap_target_near(float(qxy), float(qz))
+            if target is not None:
+                self._apply_peak_target_to_record(record, target)
         self._sync_after_peak_change()
 
     def _handle_peak_clicked(self, peak_id: str) -> None:
@@ -4139,6 +4146,418 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             store.pop("fit_2d", None)
         record.pop("fit_summary", None)
 
+    def _snap_target_near(
+        self,
+        qxy: float,
+        qz: float,
+    ) -> dict[str, Any] | None:
+        gap_estimate = self._masked_gap_peak_estimate(qxy, qz)
+        if gap_estimate is not None:
+            return gap_estimate
+        maximum = self._local_maximum_near(qxy, qz)
+        if maximum is None:
+            return None
+        peak_qxy, peak_qz, intensity = maximum
+        return {
+            "kind": "local-maximum",
+            "qxy": peak_qxy,
+            "qz": peak_qz,
+            "intensity": intensity,
+            "source": "manual-local-maximum",
+        }
+
+    def _apply_peak_target_to_record(
+        self,
+        record: dict[str, Any],
+        target: dict[str, Any],
+    ) -> None:
+        record["qxy"] = float(target["qxy"])
+        record["qz"] = float(target["qz"])
+        record["intensity"] = float(target["intensity"])
+        record["source"] = str(target["source"])
+        self._apply_peak_target_metadata(record, target)
+
+    def _apply_peak_target_metadata(
+        self,
+        record: dict[str, Any],
+        target: dict[str, Any],
+    ) -> None:
+        if target.get("kind") != "masked-gap":
+            return
+        record["point_kind"] = PEAK_POINT_KIND_GAP_ESTIMATED
+        record["gap_estimated"] = True
+        record["phase_tag"] = "gap-estimated"
+        record["metadata"] = dict(target.get("metadata", {}))
+
+    def _coordinate_is_masked(self, qxy: float, qz: float) -> bool:
+        if self.image_data is None:
+            return False
+        x_axis, y_axis = self._image_axes()
+        if not x_axis.size or not y_axis.size:
+            return False
+        x_index = int(np.argmin(np.abs(x_axis - qxy)))
+        y_index = int(np.argmin(np.abs(y_axis - qz)))
+        image = np.asarray(self.image_data, dtype=float)
+        qxy_gap = _masked_gap_line_mask(image[y_index, :])
+        qz_gap = _masked_gap_line_mask(image[:, x_index])
+        return bool(qxy_gap[x_index] or qz_gap[y_index])
+
+    def _masked_gap_peak_estimate(
+        self,
+        qxy: float,
+        qz: float,
+    ) -> dict[str, Any] | None:
+        if self.image_data is None:
+            return None
+        x_axis, y_axis = self._image_axes()
+        if not x_axis.size or not y_axis.size:
+            return None
+        x_index = int(np.argmin(np.abs(x_axis - qxy)))
+        y_index = int(np.argmin(np.abs(y_axis - qz)))
+
+        radius = max(
+            self.snap_window_px.value(),
+            self.min_distance_px.value(),
+            self.neighborhood_radius_px.value() * 4,
+            3,
+        )
+        candidates = [
+            candidate
+            for candidate in (
+                self._masked_gap_axis_estimate(
+                    x_index,
+                    y_index,
+                    axis="qxy",
+                    radius=radius,
+                    x_axis=x_axis,
+                    y_axis=y_axis,
+                ),
+                self._masked_gap_axis_estimate(
+                    x_index,
+                    y_index,
+                    axis="qz",
+                    radius=radius,
+                    x_axis=x_axis,
+                    y_axis=y_axis,
+                ),
+            )
+            if candidate is not None
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda candidate: float(candidate["score"]))
+
+    def _masked_gap_axis_estimate(
+        self,
+        x_index: int,
+        y_index: int,
+        *,
+        axis: str,
+        radius: int,
+        x_axis: np.ndarray,
+        y_axis: np.ndarray,
+    ) -> dict[str, Any] | None:
+        if self.image_data is None:
+            return None
+        image = np.asarray(self.image_data, dtype=float)
+        if axis == "qxy":
+            primary_values = x_axis
+            primary_index = x_index
+            masked_line = _masked_gap_line_mask(image[y_index, :])
+        else:
+            primary_values = y_axis
+            primary_index = y_index
+            masked_line = _masked_gap_line_mask(image[:, x_index])
+        if not masked_line[primary_index]:
+            return None
+        gap_start, gap_end = _contiguous_true_span(masked_line, primary_index)
+        minus_anchor = plus_anchor = None
+        side_radius = int(radius)
+        for scale in (1, 2, 4):
+            side_radius = int(radius * scale)
+            perp_radius = max(2, side_radius // 2)
+            minus_anchor, plus_anchor = self._masked_gap_side_anchors(
+                x_index,
+                y_index,
+                axis=axis,
+                gap_start=gap_start,
+                gap_end=gap_end,
+                side_radius=side_radius,
+                perp_radius=perp_radius,
+                x_axis=x_axis,
+                y_axis=y_axis,
+            )
+            if minus_anchor is not None and plus_anchor is not None:
+                break
+        if minus_anchor is None or plus_anchor is None:
+            return None
+
+        profile_values, profile = self._masked_gap_profile(
+            x_index,
+            y_index,
+            axis=axis,
+            gap_start=gap_start,
+            gap_end=gap_end,
+            side_radius=side_radius,
+            perp_radius=max(2, side_radius // 2),
+            x_axis=x_axis,
+            y_axis=y_axis,
+        )
+        if profile_values.size == 0:
+            return None
+        gap_min = float(
+            min(primary_values[gap_start], primary_values[gap_end])
+        )
+        gap_max = float(
+            max(primary_values[gap_start], primary_values[gap_end])
+        )
+        fit = self._fit_masked_gap_gaussian(
+            profile_values,
+            profile,
+            gap_min=gap_min,
+            gap_max=gap_max,
+            minus_anchor=minus_anchor,
+            plus_anchor=plus_anchor,
+            axis=axis,
+        )
+        if fit is None:
+            return None
+        center = float(fit["center"])
+        weights = [
+            max(float(minus_anchor["intensity"]), 1.0e-12),
+            max(float(plus_anchor["intensity"]), 1.0e-12),
+        ]
+        if axis == "qxy":
+            qxy = center
+            qz = float(
+                np.average(
+                    [minus_anchor["qz"], plus_anchor["qz"]],
+                    weights=weights,
+                )
+            )
+        else:
+            qxy = float(
+                np.average(
+                    [minus_anchor["qxy"], plus_anchor["qxy"]],
+                    weights=weights,
+                )
+            )
+            qz = center
+        metadata = {
+            "gap_estimate": True,
+            "estimate_method": "masked gap gaussian",
+            "masked_gap": True,
+            "gap_axis": axis,
+            f"gap_{axis}_min": gap_min,
+            f"gap_{axis}_max": gap_max,
+            "minus_anchor_qxy": float(minus_anchor["qxy"]),
+            "minus_anchor_qz": float(minus_anchor["qz"]),
+            "minus_anchor_intensity": float(minus_anchor["intensity"]),
+            "plus_anchor_qxy": float(plus_anchor["qxy"]),
+            "plus_anchor_qz": float(plus_anchor["qz"]),
+            "plus_anchor_intensity": float(plus_anchor["intensity"]),
+            "gaussian_fit": fit["fit_kind"],
+        }
+        return {
+            "kind": "masked-gap",
+            "qxy": qxy,
+            "qz": qz,
+            "intensity": float(fit["intensity"]),
+            "source": "gap estimate",
+            "score": float(fit["score"]),
+            "metadata": metadata,
+        }
+
+    def _masked_gap_side_anchors(
+        self,
+        x_index: int,
+        y_index: int,
+        *,
+        axis: str,
+        gap_start: int,
+        gap_end: int,
+        side_radius: int,
+        perp_radius: int,
+        x_axis: np.ndarray,
+        y_axis: np.ndarray,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        if self.image_data is None:
+            return None, None
+        height, width = self.image_data.shape
+        if axis == "qxy":
+            y0 = max(0, y_index - perp_radius)
+            y1 = min(height, y_index + perp_radius + 1)
+            minus = self._finite_window_max(
+                max(0, gap_start - side_radius),
+                gap_start,
+                y0,
+                y1,
+                x_axis=x_axis,
+                y_axis=y_axis,
+            )
+            plus = self._finite_window_max(
+                gap_end + 1,
+                min(width, gap_end + side_radius + 1),
+                y0,
+                y1,
+                x_axis=x_axis,
+                y_axis=y_axis,
+            )
+            return minus, plus
+
+        x0 = max(0, x_index - perp_radius)
+        x1 = min(width, x_index + perp_radius + 1)
+        minus = self._finite_window_max(
+            x0,
+            x1,
+            max(0, gap_start - side_radius),
+            gap_start,
+            x_axis=x_axis,
+            y_axis=y_axis,
+        )
+        plus = self._finite_window_max(
+            x0,
+            x1,
+            gap_end + 1,
+            min(height, gap_end + side_radius + 1),
+            x_axis=x_axis,
+            y_axis=y_axis,
+        )
+        return minus, plus
+
+    def _finite_window_max(
+        self,
+        x0: int,
+        x1: int,
+        y0: int,
+        y1: int,
+        *,
+        x_axis: np.ndarray,
+        y_axis: np.ndarray,
+    ) -> dict[str, Any] | None:
+        if self.image_data is None or x1 <= x0 or y1 <= y0:
+            return None
+        window = np.asarray(self.image_data[y0:y1, x0:x1], dtype=float)
+        finite = np.isfinite(window)
+        if not finite.any():
+            return None
+        filled = np.where(finite, window, -np.inf)
+        local = int(np.argmax(filled))
+        local_y, local_x = np.unravel_index(local, window.shape)
+        peak_x = x0 + int(local_x)
+        peak_y = y0 + int(local_y)
+        return {
+            "x_index": peak_x,
+            "y_index": peak_y,
+            "qxy": float(x_axis[peak_x]),
+            "qz": float(y_axis[peak_y]),
+            "intensity": float(self.image_data[peak_y, peak_x]),
+        }
+
+    def _masked_gap_profile(
+        self,
+        x_index: int,
+        y_index: int,
+        *,
+        axis: str,
+        gap_start: int,
+        gap_end: int,
+        side_radius: int,
+        perp_radius: int,
+        x_axis: np.ndarray,
+        y_axis: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if self.image_data is None:
+            return np.array([]), np.array([])
+        height, width = self.image_data.shape
+        if axis == "qxy":
+            x0 = max(0, gap_start - side_radius)
+            x1 = min(width, gap_end + side_radius + 1)
+            y0 = max(0, y_index - perp_radius)
+            y1 = min(height, y_index + perp_radius + 1)
+            values = np.asarray(self.image_data[y0:y1, x0:x1], dtype=float)
+            return x_axis[x0:x1], _nanmax_axis(values, axis=0)
+        x0 = max(0, x_index - perp_radius)
+        x1 = min(width, x_index + perp_radius + 1)
+        y0 = max(0, gap_start - side_radius)
+        y1 = min(height, gap_end + side_radius + 1)
+        values = np.asarray(self.image_data[y0:y1, x0:x1], dtype=float)
+        return y_axis[y0:y1], _nanmax_axis(values, axis=1)
+
+    def _fit_masked_gap_gaussian(
+        self,
+        primary_values: np.ndarray,
+        profile: np.ndarray,
+        *,
+        gap_min: float,
+        gap_max: float,
+        minus_anchor: dict[str, Any],
+        plus_anchor: dict[str, Any],
+        axis: str,
+    ) -> dict[str, Any] | None:
+        finite = np.isfinite(profile)
+        if not finite.any():
+            return None
+        finite_profile = profile[finite]
+        baseline = float(np.nanpercentile(finite_profile, 10.0))
+        signal = profile - baseline
+        finite_signal = signal[np.isfinite(signal)]
+        if not finite_signal.size:
+            return None
+        max_signal = float(np.nanmax(finite_signal))
+        threshold = max(max_signal * 0.03, 1.0e-12)
+        fit_mask = finite & (signal > threshold)
+        center = None
+        intensity = None
+        fit_kind = "anchor-weighted"
+        if np.count_nonzero(fit_mask) >= 3:
+            try:
+                coefficients = np.polyfit(
+                    primary_values[fit_mask],
+                    np.log(signal[fit_mask]),
+                    2,
+                )
+                curvature, slope, intercept = coefficients
+                if curvature < 0.0:
+                    fitted_center = -slope / (2.0 * curvature)
+                    if np.isfinite(fitted_center):
+                        center = float(
+                            np.clip(fitted_center, gap_min, gap_max)
+                        )
+                        log_signal = float(np.polyval(coefficients, center))
+                        intensity = baseline + float(np.exp(log_signal))
+                        fit_kind = "log-quadratic-gaussian"
+            except (FloatingPointError, ValueError, np.linalg.LinAlgError):
+                center = None
+        if center is None:
+            minus_value = float(minus_anchor[axis])
+            plus_value = float(plus_anchor[axis])
+            weights = [
+                max(float(minus_anchor["intensity"]) - baseline, 1.0e-12),
+                max(float(plus_anchor["intensity"]) - baseline, 1.0e-12),
+            ]
+            center = float(
+                np.clip(
+                    np.average([minus_value, plus_value], weights=weights),
+                    gap_min,
+                    gap_max,
+                )
+            )
+            intensity = max(
+                float(minus_anchor["intensity"]),
+                float(plus_anchor["intensity"]),
+            )
+        score = min(
+            max(float(minus_anchor["intensity"]) - baseline, 0.0),
+            max(float(plus_anchor["intensity"]) - baseline, 0.0),
+        )
+        return {
+            "center": center,
+            "intensity": float(intensity),
+            "score": score,
+            "fit_kind": fit_kind,
+        }
+
     def _local_maximum_near(
         self,
         qxy: float,
@@ -4570,6 +4989,40 @@ def _peak_qxy(record: dict[str, Any]) -> float:
 
 def _peak_qz(record: dict[str, Any]) -> float:
     return float(record.get("qz", record.get("y", 0.0)))
+
+
+def _contiguous_true_span(values: np.ndarray, index: int) -> tuple[int, int]:
+    start = int(index)
+    end = int(index)
+    while start > 0 and bool(values[start - 1]):
+        start -= 1
+    while end + 1 < values.size and bool(values[end + 1]):
+        end += 1
+    return start, end
+
+
+def _nanmax_axis(values: np.ndarray, *, axis: int) -> np.ndarray:
+    finite = np.isfinite(values)
+    if values.size == 0:
+        return np.array([])
+    has_finite = np.any(finite, axis=axis)
+    collapsed = np.max(np.where(finite, values, -np.inf), axis=axis)
+    return np.where(has_finite, collapsed, np.nan)
+
+
+def _masked_gap_line_mask(values: np.ndarray) -> np.ndarray:
+    line = np.asarray(values, dtype=float)
+    mask = ~np.isfinite(line)
+    finite = line[np.isfinite(line)]
+    if not finite.size:
+        return mask
+    floor = float(np.nanmin(finite))
+    ceiling = float(np.nanpercentile(finite, 99.0))
+    span = ceiling - floor
+    if span <= 0.0:
+        return mask
+    floor_tolerance = max(span * 1.0e-6, 1.0e-12)
+    return mask | (line <= floor + floor_tolerance)
 
 
 def _is_gap_estimated_peak(record: dict[str, Any]) -> bool:

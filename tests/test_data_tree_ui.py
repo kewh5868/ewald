@@ -1531,6 +1531,60 @@ def test_peak_finder_mirrors_selected_missing_peaks(qtbot):
     assert len(project.peak_sets["synthetic"]) == 3
 
 
+@pytest.mark.parametrize(
+    ("gap_axis", "center_qxy", "center_qz"),
+    [
+        ("qxy", 0.06, 0.24),
+        ("qz", 0.34, 0.16),
+    ],
+)
+def test_peak_finder_centers_masked_gap_click_from_side_maxima(
+    qtbot,
+    gap_axis,
+    center_qxy,
+    center_qz,
+):
+    from ewald.ui.peak_identification import PeakIdentificationPane
+
+    project = ProjectState()
+    pane = PeakIdentificationPane(project, "synthetic")
+    qtbot.addWidget(pane)
+
+    x_axis = np.linspace(-1.0, 1.0, 101)
+    y_axis = np.linspace(-1.0, 1.0, 101)
+    x_grid, y_grid = np.meshgrid(x_axis, y_axis)
+    image = 4.0 + 150.0 * np.exp(
+        -0.5
+        * (
+            ((x_grid - center_qxy) / 0.22) ** 2
+            + ((y_grid - center_qz) / 0.16) ** 2
+        )
+    )
+    if gap_axis == "qxy":
+        image[
+            :, (x_axis >= center_qxy - 0.08) & (x_axis <= center_qxy + 0.08)
+        ] = 0.0
+    else:
+        image[
+            (y_axis >= center_qz - 0.08) & (y_axis <= center_qz + 0.08), :
+        ] = 0.0
+    pane.image_data = image
+    pane.axis_ranges = (-1.0, 1.0, -1.0, 1.0)
+    pane.coordinate_space = "qspace"
+
+    record = pane.add_peak_at(center_qxy, center_qz)
+
+    assert record["qxy"] == pytest.approx(center_qxy, abs=0.035)
+    assert record["qz"] == pytest.approx(center_qz, abs=0.035)
+    assert record["source"] == "gap estimate"
+    assert record["point_kind"] == PEAK_POINT_KIND_GAP_ESTIMATED
+    assert record["gap_estimated"] is True
+    assert record["metadata"]["estimate_method"] == "masked gap gaussian"
+    assert record["metadata"]["gap_axis"] == gap_axis
+    assert np.isfinite(record["intensity"])
+    assert "masked-gap peak estimate" in pane.snap_feedback_label.text()
+
+
 def test_peak_fit_subtab_runs_roi_fit_workflow(qtbot):
     from ewald.ui.peak_identification import PeakIdentificationPane
 
