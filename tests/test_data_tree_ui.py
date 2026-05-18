@@ -1706,6 +1706,57 @@ def test_peak_fit_subtab_runs_roi_fit_workflow(qtbot):
     assert pane.fit_detail_tree.topLevelItem(0).text(0) == "Peak"
 
 
+def test_batch_peak_fit_flags_and_sorts_problem_fits(qtbot):
+    from ewald.ui.peak_identification import PeakIdentificationPane
+
+    project = ProjectState()
+    pane = PeakIdentificationPane(project, "synthetic")
+    qtbot.addWidget(pane)
+
+    qxy = np.linspace(-1.0, 1.0, 61)
+    qz = np.linspace(-1.0, 1.0, 61)
+    qxy_grid, qz_grid = np.meshgrid(qxy, qz)
+    image = 3.0 + 90.0 * np.exp(
+        -0.5
+        * (((qxy_grid + 0.45) / 0.08) ** 2 + ((qz_grid + 0.35) / 0.1) ** 2)
+    )
+    image[(qxy_grid > 0.35) & (qz_grid > 0.35)] = np.nan
+    pane.image_data = image
+    pane.axis_ranges = (-1.0, 1.0, -1.0, 1.0)
+    pane.coordinate_space = "qspace"
+
+    good = pane.add_peak_at(-0.45, -0.35)
+    pane.roi_width.setValue(0.45)
+    pane.roi_height.setValue(0.45)
+    pane.apply_roi_to_selected_peak()
+    bad = pane.add_peak_at(0.65, 0.65)
+    pane.apply_roi_to_selected_peak()
+
+    pane.batch_process_all_peak_fits()
+
+    stores = project.fits["synthetic"]["peak_fit"]
+    assert stores[good["peak_id"]]["fit_2d"]["status"] == "fit"
+    assert stores[bad["peak_id"]]["fit_2d_failure"]["status"] == "failed"
+    bad_row = next(
+        row
+        for row in range(pane.peak_table.rowCount())
+        if pane.peak_table.item(row, 0).data(QtCore.Qt.ItemDataRole.UserRole)
+        == bad["peak_id"]
+    )
+    assert pane.peak_table.item(
+        bad_row, 0
+    ).background().color() == QtGui.QColor("#fef3c7")
+    assert "No finite ROI pixels" in pane.peak_table.item(bad_row, 0).toolTip()
+
+    pane.fit_issues_first_button.click()
+
+    assert pane.fit_issues_first_button.isChecked()
+    assert (
+        pane.peak_table.item(0, 0).data(QtCore.Qt.ItemDataRole.UserRole)
+        == bad["peak_id"]
+    )
+
+
 def test_peak_identification_crystal_overlay_updates_project(qtbot, repo_root):
     path = next((repo_root / "example").glob("*.tiff"))
     group, _ = build_data_group_from_paths([path], group_name="Example")

@@ -34,7 +34,6 @@ from ewald.processing.peak_fitting import (
     compute_peak_fit_integrations,
     evaluate_peak_fit_2d,
     fit_peak_integration,
-    fit_peak_integrations,
     fit_peak_roi_2d,
     slice_peak_roi,
 )
@@ -91,6 +90,9 @@ PEAK_TABLE_HEADERS = [
 ]
 CRYSTAL_PEAK_TABLE_HEADERS = ["h", "k", "l", QXY_HTML, QZ_HTML]
 FIT_DETAIL_HEADERS = ["Quantity", "Value", "Status"]
+FIT_ISSUE_BRUSH = QtGui.QBrush(QtGui.QColor("#fef3c7"))
+FIT_ISSUE_FOREGROUND = QtGui.QBrush(QtGui.QColor("#78350f"))
+FIT_ISSUE_TOOLTIP_PREFIX = "Fit issue:"
 FIT_INTEGRATION_LABELS = {
     "qxy": QXY_HTML,
     "qz": QZ_HTML,
@@ -1571,6 +1573,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
                 "status": "failed",
                 "message": f"Could not fit {FIT_INTEGRATION_LABELS[name]} profile.",
             }
+            store["fit_attempted"] = True
             store["integrations"][name].pop("fit", None)
             self._set_fit_status(
                 f"Could not fit {FIT_INTEGRATION_LABELS[name]} profile."
@@ -1579,6 +1582,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             return
         store.setdefault("integration_fits", {})[name] = fit
         store.setdefault("fit_failures", {}).pop(name, None)
+        store["fit_attempted"] = True
         store["integrations"][name]["fit"] = fit
         self._set_fit_status(f"Fit {FIT_INTEGRATION_LABELS[name]} profile.")
         self._sync_after_fit_change(record)
@@ -1594,28 +1598,10 @@ class PeakIdentificationPane(QtWidgets.QWidget):
                 "Integrate the selected ROI before fitting integrated traces."
             )
             return
-        fits: dict[str, dict[str, Any]] = {}
-        failures: dict[str, dict[str, Any]] = {}
-        for name, integration in store.get("integrations", {}).items():
-            fit = fit_peak_integration(integration)
-            if fit is None:
-                failures[name] = {
-                    "status": "failed",
-                    "message": (
-                        f"Could not fit {FIT_INTEGRATION_LABELS.get(name, name)} "
-                        "profile."
-                    ),
-                }
-            else:
-                fits[name] = fit
-        store["integration_fits"] = fits
-        store["fit_failures"] = failures
-        for name, fit in fits.items():
-            store["integrations"][name]["fit"] = fit
-        for name in failures:
-            store["integrations"][name].pop("fit", None)
+        fits, failures = self._fit_integrations_for_store(store)
         self._set_fit_status(
-            f"Fit {len(fits)} currently integrated trace(s) for selected ROI."
+            f"Fit {len(fits)} currently integrated trace(s) for selected ROI; "
+            f"{len(failures)} need review."
         )
         self._sync_after_fit_change(record)
 
@@ -1629,13 +1615,54 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             self._sync_after_fit_change(record)
 
     def batch_process_all_peak_fits(self) -> None:
+        records = [record for record in self.peaks() if record.get("roi")]
+        if not records:
+            self._set_fit_status("No ROIs are available to fit.")
+            return
+        progress = QtWidgets.QProgressDialog(
+            "Fitting all ROI Gaussian models...",
+            "Cancel",
+            0,
+            len(records),
+            self,
+        )
+        progress.setWindowTitle("Fitting ROIs")
+        progress.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(True)
+        progress.setAutoReset(True)
+        progress.show()
+        QtWidgets.QApplication.processEvents()
+
         count = 0
-        for record in self.peaks():
+        warning_count = 0
+        canceled = False
+        for index, record in enumerate(records, start=1):
+            progress.setLabelText(
+                f"Fitting {record.get('label', _peak_id(record))} "
+                f"({index}/{len(records)})..."
+            )
+            QtWidgets.QApplication.processEvents()
+            if progress.wasCanceled():
+                canceled = True
+                break
             if self._fit_2d_for_record(record, prepare_missing=True):
                 count += 1
-        self._set_fit_status(
-            f"Completed full fit workflow for {count} ROI(s)."
-        )
+            if self._fit_issue_messages(record):
+                warning_count += 1
+            progress.setValue(index)
+        progress.setValue(len(records))
+        progress.close()
+        if canceled:
+            self._set_fit_status(
+                f"Canceled full fit workflow after {count}/{len(records)} ROI(s); "
+                f"{warning_count} need review."
+            )
+        else:
+            self._set_fit_status(
+                f"Completed full fit workflow for {count}/{len(records)} ROI(s); "
+                f"{warning_count} need review."
+            )
         self._sync_after_fit_change(self._active_record())
 
     def peaks(self) -> list[dict[str, Any]]:
@@ -2092,6 +2119,16 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.batch_fit_button = QtWidgets.QToolButton()
         self.batch_fit_button.setText("Fit All ROIs Full Workflow")
         self.batch_fit_button.clicked.connect(self.batch_process_all_peak_fits)
+        self.fit_issues_first_button = QtWidgets.QToolButton()
+        self.fit_issues_first_button.setText("Fit Issues First")
+        self.fit_issues_first_button.setCheckable(True)
+        self.fit_issues_first_button.setToolTip(
+            "<qt>Move peaks with failed, incomplete, or low-quality Gaussian "
+            "fits to the top of the peak table.</qt>"
+        )
+        self.fit_issues_first_button.toggled.connect(
+            self._handle_fit_issues_first_toggled
+        )
 
         self.fit_status_label = QtWidgets.QLabel("Select a peak with an ROI.")
         self.fit_status_label.setWordWrap(True)
@@ -2580,7 +2617,8 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         controls_layout.addWidget(self.fit_all_integrations_button, 5, 0, 1, 4)
         controls_layout.addWidget(self.run_2d_fit_button, 6, 0, 1, 2)
         controls_layout.addWidget(self.batch_fit_button, 6, 2, 1, 2)
-        controls_layout.addWidget(self.fit_status_label, 7, 0, 1, 4)
+        controls_layout.addWidget(self.fit_issues_first_button, 7, 0, 1, 4)
+        controls_layout.addWidget(self.fit_status_label, 8, 0, 1, 4)
         content_layout.addWidget(controls)
 
         content_layout.addWidget(self.fit_integration_stack)
@@ -3541,7 +3579,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.peakSetChanged.emit(self.data_id)
 
     def _sync_table(self) -> None:
-        records = self.peaks()
+        records = self._table_records()
         self.peak_table.setRowCount(len(records))
         selected_row = 0
         for row, record in enumerate(records):
@@ -3549,6 +3587,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             if peak_id == self.active_peak_id:
                 selected_row = row
             summary = self._fit_summary(record)
+            fit_issues = self._fit_issue_messages(record)
             values = [
                 record.get("label", peak_id),
                 record.get("source", ""),
@@ -3569,10 +3608,43 @@ class PeakIdentificationPane(QtWidgets.QWidget):
                 item = QtWidgets.QTableWidgetItem(str(value))
                 if column == 0:
                     item.setData(QtCore.Qt.ItemDataRole.UserRole, peak_id)
+                if fit_issues:
+                    item.setBackground(FIT_ISSUE_BRUSH)
+                    item.setForeground(FIT_ISSUE_FOREGROUND)
+                    item.setToolTip(
+                        f"{FIT_ISSUE_TOOLTIP_PREFIX} " + "\n".join(fit_issues)
+                    )
                 self.peak_table.setItem(row, column, item)
         self.peak_table.resizeColumnsToContents()
         if records and self.active_peak_id is not None:
             self.peak_table.selectRow(selected_row)
+
+    def _table_records(self) -> list[dict[str, Any]]:
+        records = self.peaks()
+        if not getattr(self, "fit_issues_first_button", None):
+            return records
+        if not self.fit_issues_first_button.isChecked():
+            return records
+        indexed = list(enumerate(records))
+        indexed.sort(
+            key=lambda item: (
+                0 if self._fit_issue_messages(item[1]) else 1,
+                item[0],
+            )
+        )
+        return [record for _, record in indexed]
+
+    def _handle_fit_issues_first_toggled(self, checked: bool) -> None:
+        self._sync_table()
+        if checked:
+            issue_count = sum(
+                1
+                for record in self.peaks()
+                if self._fit_issue_messages(record)
+            )
+            self._set_fit_status(
+                f"Moved {issue_count} peak(s) with fit issues to the top."
+            )
 
     def _sync_fit_peak_combo(self) -> None:
         current_peak_id = self.active_peak_id
@@ -3911,6 +3983,18 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             or roi.get("azimuthal_roi"),
         )
         if not integrations:
+            store = self._fit_record_for_peak(record, create=True)
+            store["roi"] = dict(roi)
+            store["integrations"] = {}
+            store["integration_fits"] = {}
+            store["fit_failures"] = {}
+            store["fit_attempted"] = True
+            store.pop("fit_2d", None)
+            store["fit_2d_failure"] = {
+                "status": "failed",
+                "message": "No finite ROI pixels were available.",
+            }
+            self._update_record_fit_summary(record)
             self._set_fit_status("No finite ROI pixels were available.")
             return False
         store = self._fit_record_for_peak(record, create=True)
@@ -3923,8 +4007,36 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         store["integration_fits"] = {}
         store["fit_failures"] = {}
         store.pop("fit_2d", None)
+        store.pop("fit_2d_failure", None)
         self._update_record_fit_summary(record)
         return True
+
+    def _fit_integrations_for_store(
+        self,
+        store: dict[str, Any],
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+        fits: dict[str, dict[str, Any]] = {}
+        failures: dict[str, dict[str, Any]] = {}
+        for name, integration in store.get("integrations", {}).items():
+            fit = fit_peak_integration(integration)
+            if fit is None:
+                failures[name] = {
+                    "status": "failed",
+                    "message": (
+                        f"Could not fit {FIT_INTEGRATION_LABELS.get(name, name)} "
+                        "profile."
+                    ),
+                }
+            else:
+                fits[name] = fit
+        store["integration_fits"] = fits
+        store["fit_failures"] = failures
+        store["fit_attempted"] = True
+        for name, fit in fits.items():
+            store["integrations"][name]["fit"] = fit
+        for name in failures:
+            store["integrations"][name].pop("fit", None)
+        return fits, failures
 
     def _fit_2d_for_record(
         self,
@@ -3935,15 +4047,13 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         if not record.get("roi"):
             return False
         store = self._fit_record_for_peak(record, create=True)
+        store["fit_attempted"] = True
         if prepare_missing and not store.get("integrations"):
             if not self._compute_integrations_for_record(record):
                 return False
             store = self._fit_record_for_peak(record, create=True)
         if prepare_missing and len(store.get("integration_fits", {})) < 3:
-            fits = fit_peak_integrations(store.get("integrations", {}))
-            store["integration_fits"] = fits
-            for name, fit in fits.items():
-                store["integrations"][name]["fit"] = fit
+            self._fit_integrations_for_store(store)
         fit = fit_peak_roi_2d(
             self.image_data,
             self.axis_ranges,
@@ -3957,6 +4067,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
                 "message": "The 2D fit could not be computed.",
             }
             self._set_fit_status("The 2D fit could not be computed.")
+            self._update_record_fit_summary(record)
             return False
         store["fit_2d"] = fit
         store.pop("fit_2d_failure", None)
@@ -4037,6 +4148,76 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             "center_qxy": fit_2d.get("center_qxy") if fit_2d else None,
             "center_qz": fit_2d.get("center_qz") if fit_2d else None,
         }
+
+    def _fit_issue_messages(self, record: dict[str, Any]) -> list[str]:
+        store = self._fit_record_for_peak(record, create=False)
+        if not store:
+            return []
+        messages: list[str] = []
+        for name, failure in sorted(store.get("fit_failures", {}).items()):
+            messages.append(
+                str(
+                    failure.get(
+                        "message",
+                        f"Could not fit {FIT_INTEGRATION_LABELS.get(name, name)} profile.",
+                    )
+                )
+            )
+        fit_2d_failure = store.get("fit_2d_failure")
+        if fit_2d_failure:
+            messages.append(
+                str(
+                    fit_2d_failure.get(
+                        "message",
+                        "The 2D fit could not be computed.",
+                    )
+                )
+            )
+        integrations = store.get("integrations", {})
+        fits = store.get("integration_fits", {})
+        fit_attempted = bool(
+            store.get("fit_attempted")
+            or store.get("fit_2d")
+            or store.get("fit_2d_failure")
+            or store.get("fit_failures")
+        )
+        if fit_attempted and integrations and len(fits) < len(integrations):
+            messages.append(
+                f"Only {len(fits)}/{len(integrations)} integrated traces fit."
+            )
+        for name, fit in sorted(fits.items()):
+            warning = self._fit_quality_warning(
+                fit,
+                FIT_INTEGRATION_LABELS.get(name, name),
+            )
+            if warning:
+                messages.append(warning)
+        fit_2d = store.get("fit_2d")
+        if fit_2d:
+            warning = self._fit_quality_warning(fit_2d, "2D Gaussian")
+            if warning:
+                messages.append(warning)
+        return list(dict.fromkeys(messages))
+
+    def _fit_quality_warning(
+        self,
+        fit: dict[str, Any],
+        label: str,
+    ) -> str | None:
+        status = str(fit.get("status", "")).lower()
+        if status and status != "fit":
+            return (
+                f"{label} used an estimated fit rather than a converged fit."
+            )
+        statistics = fit.get("statistics", {})
+        if isinstance(statistics, dict):
+            r_squared = statistics.get("r_squared")
+            if isinstance(r_squared, int | float) and r_squared < 0.5:
+                return f"{label} fit has low R^2 ({r_squared:.3g})."
+            r_w = statistics.get("r_w")
+            if isinstance(r_w, int | float) and r_w > 0.35:
+                return f"{label} fit has high weighted residual ({r_w:.3g})."
+        return None
 
     def _update_record_fit_summary(self, record: dict[str, Any]) -> None:
         record["fit_summary"] = self._fit_summary(record)
@@ -4215,6 +4396,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.fit_integration_combo.setEnabled(enabled and bool(integrations))
         self.run_all_integrations_button.setEnabled(enabled and has_any_roi)
         self.batch_fit_button.setEnabled(enabled and has_any_roi)
+        self.fit_issues_first_button.setEnabled(enabled)
 
     def _set_fit_status(self, message: str) -> None:
         self.fit_status_label.setText(message)
