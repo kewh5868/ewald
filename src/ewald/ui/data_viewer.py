@@ -620,6 +620,7 @@ class _MatplotlibIntegrationWidget(QtWidgets.QWidget):
         self.series: list[_IntegrationTrace] = []
         self.markers: list[IntegrationPeakMarker] = []
         self.mode: str | None = None
+        self.autosnap_enabled = True
         self._drag_marker_id: str | None = None
         self._drag_marker_roi_id: str | None = None
         self._drag_marker_moved = False
@@ -716,6 +717,9 @@ class _MatplotlibIntegrationWidget(QtWidgets.QWidget):
             self.axes.set_ylabel("Integrated intensity")
         self.axes.grid(True, alpha=0.25)
         self.canvas.draw_idle()
+
+    def set_autosnap_enabled(self, enabled: bool) -> None:
+        self.autosnap_enabled = bool(enabled)
 
     def _handle_mouse_press(self, event: Any) -> None:
         if self.axes is None or event.inaxes is not self.axes:
@@ -999,6 +1003,12 @@ class _MatplotlibIntegrationWidget(QtWidgets.QWidget):
         *,
         roi_id: str | None = None,
     ) -> tuple[_IntegrationTrace, float, float] | None:
+        if not self.autosnap_enabled:
+            return self._nearest_trace_sample(
+                x_value,
+                y_value,
+                roi_id=roi_id,
+            )
         nearest_peak = self._nearest_trace_local_maximum(
             x_value,
             y_value,
@@ -1228,6 +1238,7 @@ class _IntegrationChannelPanel(QtWidgets.QFrame):
     clearMarkersRequested = QtCore.Signal(int)
     pushMarkersRequested = QtCore.Signal(int)
     detectPeaksRequested = QtCore.Signal(int)
+    autoSnapToggled = QtCore.Signal(int, bool)
 
     def __init__(
         self,
@@ -1275,6 +1286,16 @@ class _IntegrationChannelPanel(QtWidgets.QFrame):
         self.detect_peaks_button.clicked.connect(
             lambda _checked=False: self.detectPeaksRequested.emit(self.channel)
         )
+        self.autosnap_button = QtWidgets.QToolButton()
+        self.autosnap_button.setText("Autosnap")
+        self.autosnap_button.setCheckable(True)
+        self.autosnap_button.setChecked(True)
+        self.autosnap_button.setToolTip(
+            "Snap clicked or dragged peaks to local maxima"
+        )
+        self.autosnap_button.toggled.connect(
+            lambda checked: self.autoSnapToggled.emit(self.channel, checked)
+        )
         self.push_markers_button = QtWidgets.QToolButton()
         self.push_markers_button.setText("Push Peaks")
         self.push_markers_button.clicked.connect(
@@ -1292,6 +1313,7 @@ class _IntegrationChannelPanel(QtWidgets.QFrame):
         header_layout.addWidget(self.coordinate_readout_label)
         header_layout.addWidget(self.clear_marks_button)
         header_layout.addWidget(self.detect_peaks_button)
+        header_layout.addWidget(self.autosnap_button)
         header_layout.addWidget(self.push_markers_button)
         header_layout.addWidget(self.clear_button)
         header_layout.addWidget(self.detach_button)
@@ -1361,6 +1383,14 @@ class _IntegrationChannelPanel(QtWidgets.QFrame):
     def set_peak_readout(self, text: str) -> None:
         self.coordinate_readout_label.setText(text)
 
+    def set_autosnap_enabled(self, enabled: bool) -> None:
+        self.plot_widget.set_autosnap_enabled(enabled)
+        previous = self.autosnap_button.blockSignals(True)
+        try:
+            self.autosnap_button.setChecked(bool(enabled))
+        finally:
+            self.autosnap_button.blockSignals(previous)
+
     def set_detached(self, detached: bool) -> None:
         self.detached = detached
         self.plot_widget.setVisible(not detached)
@@ -1409,6 +1439,7 @@ class _DetachedIntegrationWindow(QtWidgets.QDialog):
     clearMarkersRequested = QtCore.Signal(int)
     pushMarkersRequested = QtCore.Signal(int)
     detectPeaksRequested = QtCore.Signal(int)
+    autoSnapToggled = QtCore.Signal(int, bool)
 
     def __init__(
         self,
@@ -1451,6 +1482,16 @@ class _DetachedIntegrationWindow(QtWidgets.QDialog):
         self.detect_peaks_button.clicked.connect(
             lambda _checked=False: self.detectPeaksRequested.emit(self.channel)
         )
+        self.autosnap_button = QtWidgets.QToolButton()
+        self.autosnap_button.setText("Autosnap")
+        self.autosnap_button.setCheckable(True)
+        self.autosnap_button.setChecked(True)
+        self.autosnap_button.setToolTip(
+            "Snap clicked or dragged peaks to local maxima"
+        )
+        self.autosnap_button.toggled.connect(
+            lambda checked: self.autoSnapToggled.emit(self.channel, checked)
+        )
         self.push_markers_button = QtWidgets.QToolButton()
         self.push_markers_button.setText("Push Peaks")
         self.push_markers_button.clicked.connect(
@@ -1467,6 +1508,7 @@ class _DetachedIntegrationWindow(QtWidgets.QDialog):
         header_layout.addWidget(self.coordinate_readout_label)
         header_layout.addWidget(self.clear_marks_button)
         header_layout.addWidget(self.detect_peaks_button)
+        header_layout.addWidget(self.autosnap_button)
         header_layout.addWidget(self.push_markers_button)
         header_layout.addWidget(self.clear_button)
         header_layout.addWidget(self.return_button)
@@ -1528,6 +1570,14 @@ class _DetachedIntegrationWindow(QtWidgets.QDialog):
     def set_peak_readout(self, text: str) -> None:
         self.coordinate_readout_label.setText(text)
 
+    def set_autosnap_enabled(self, enabled: bool) -> None:
+        self.plot_widget.set_autosnap_enabled(enabled)
+        previous = self.autosnap_button.blockSignals(True)
+        try:
+            self.autosnap_button.setChecked(bool(enabled))
+        finally:
+            self.autosnap_button.blockSignals(previous)
+
     def close_from_viewer(self) -> None:
         self._closing_from_viewer = True
         self.close()
@@ -1574,6 +1624,10 @@ class DataViewerPane(QtWidgets.QWidget):
         self.low_q_graphics: list[Any] = []
         self.channel_assignments: dict[int, set[str]] = {1: set(), 2: set()}
         self.channel_modes: dict[int, str | None] = {1: None, 2: None}
+        self.channel_autosnap_enabled: dict[int, bool] = {
+            1: True,
+            2: True,
+        }
         self.channel_panels: dict[int, _IntegrationChannelPanel] = {}
         self.channel_windows: dict[int, _DetachedIntegrationWindow] = {}
         self.integration_peak_markers: dict[
@@ -1927,6 +1981,8 @@ class DataViewerPane(QtWidgets.QWidget):
             panel.clearMarkersRequested.connect(self._clear_channel_markers)
             panel.pushMarkersRequested.connect(self._push_channel_markers)
             panel.detectPeaksRequested.connect(self._detect_channel_peaks)
+            panel.autoSnapToggled.connect(self._set_channel_autosnap_enabled)
+            panel.set_autosnap_enabled(self.channel_autosnap_enabled[channel])
             self.channel_panels[channel] = panel
             layout.addWidget(panel, stretch=1)
 
@@ -2859,6 +2915,8 @@ class DataViewerPane(QtWidgets.QWidget):
         window.clearMarkersRequested.connect(self._clear_channel_markers)
         window.pushMarkersRequested.connect(self._push_channel_markers)
         window.detectPeaksRequested.connect(self._detect_channel_peaks)
+        window.autoSnapToggled.connect(self._set_channel_autosnap_enabled)
+        window.set_autosnap_enabled(self.channel_autosnap_enabled[channel])
         self.channel_windows[channel] = window
         self.channel_panels[channel].set_detached(True)
         self._refresh_channel(channel)
@@ -2998,6 +3056,21 @@ class DataViewerPane(QtWidgets.QWidget):
         self._refresh_channel(channel)
         suffix = "peak" if added == 1 else "peaks"
         self._set_roi_status(f"Detected {added} channel {channel} {suffix}.")
+
+    def _set_channel_autosnap_enabled(
+        self,
+        channel: int,
+        enabled: bool,
+    ) -> None:
+        self.channel_autosnap_enabled[channel] = bool(enabled)
+        panel = self.channel_panels.get(channel)
+        if panel is not None:
+            panel.set_autosnap_enabled(enabled)
+        window = self.channel_windows.get(channel)
+        if window is not None:
+            window.set_autosnap_enabled(enabled)
+        state = "enabled" if enabled else "disabled"
+        self._set_roi_status(f"Channel {channel} autosnap {state}.")
 
     def _move_channel_peak_marker(
         self,

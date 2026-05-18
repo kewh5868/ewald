@@ -2323,6 +2323,8 @@ def test_integration_channel_clicks_snap_and_detect_local_maxima(
     panel = viewer.channel_panels[1]
     assert panel.detect_peaks_button.text() == "Detect Peaks"
     assert panel.detect_peaks_button.isEnabled()
+    assert panel.autosnap_button.text() == "Autosnap"
+    assert panel.autosnap_button.isChecked()
     plot_widget = panel.plot_widget
     if plot_widget.axes is None or plot_widget.canvas is None:
         pytest.skip("matplotlib is unavailable")
@@ -2352,6 +2354,23 @@ def test_integration_channel_clicks_snap_and_detect_local_maxima(
     assert marker.integrated_intensity == pytest.approx(60.0)
 
     viewer._clear_channel_markers(1)
+    panel.autosnap_button.setChecked(False)
+
+    assert viewer.channel_autosnap_enabled[1] is False
+    assert plot_widget.autosnap_enabled is False
+
+    plot_widget._handle_mouse_press(mpl_event(5.1, 35.0))
+
+    marker = viewer.integration_peak_markers[1][0]
+    assert marker.integration_x == pytest.approx(5.0)
+    assert marker.integrated_intensity == pytest.approx(0.0)
+
+    viewer._clear_channel_markers(1)
+    panel.autosnap_button.setChecked(True)
+
+    assert viewer.channel_autosnap_enabled[1] is True
+    assert plot_widget.autosnap_enabled is True
+
     panel.detect_peaks_button.click()
 
     markers = viewer.integration_peak_markers[1]
@@ -2448,6 +2467,10 @@ def test_integration_channel_detaches_and_reattaches(qtbot, repo_root):
     panel = viewer.channel_panels[1]
     assert not panel.plot_widget.isHidden()
     assert panel.placeholder.isHidden()
+    panel.autosnap_button.setChecked(False)
+
+    assert viewer.channel_autosnap_enabled[1] is False
+    assert not panel.plot_widget.autosnap_enabled
 
     viewer._detach_channel(1)
     detached_window = viewer.channel_windows[1]
@@ -2458,6 +2481,14 @@ def test_integration_channel_detaches_and_reattaches(qtbot, repo_root):
     assert not panel.placeholder.isHidden()
     assert len(detached_window.plot_widget.series) == 1
     assert detached_window.drag_label.text() == "Channel 1 (Vertical Box)"
+    assert not detached_window.autosnap_button.isChecked()
+    assert not detached_window.plot_widget.autosnap_enabled
+
+    detached_window.autosnap_button.setChecked(True)
+
+    assert viewer.channel_autosnap_enabled[1] is True
+    assert panel.autosnap_button.isChecked()
+    assert panel.plot_widget.autosnap_enabled
 
     viewer._reattach_channel(1)
 
