@@ -46,6 +46,8 @@ COUPLED_ROI_IDS_METADATA_KEY = "coupled_roi_ids"
 COUPLED_ROI_ROLE_METADATA_KEY = "coupled_role"
 COUPLED_ROI_SHARED_CENTER_METADATA_KEY = "shared_center"
 CHANNEL_MIME_TYPE = "application/x-ewald-integration-channel"
+CHANNEL_DETECT_MAX_PEAKS_PER_TRACE = 12
+CHANNEL_DETECT_MIN_HEIGHT_FRACTION = 0.05
 ROI_COLOR_ARCH = "#f2a65a"
 ROI_COLOR_BOX_HORIZONTAL = "#3da5d9"
 ROI_COLOR_BOX_VERTICAL = "#2a9d8f"
@@ -880,26 +882,56 @@ class _MatplotlibIntegrationWidget(QtWidgets.QWidget):
         *,
         roi_id: str | None = None,
     ) -> tuple[_IntegrationTrace, float, float] | None:
+        nearest_peak = self._nearest_trace_local_maximum(
+            x_value,
+            y_value,
+            roi_id=roi_id,
+        )
+        if nearest_peak is not None:
+            return nearest_peak
+        return self._nearest_trace_sample(
+            x_value,
+            y_value,
+            roi_id=roi_id,
+        )
+
+    def _nearest_trace_local_maximum(
+        self,
+        x_value: float,
+        y_value: float,
+        *,
+        roi_id: str | None = None,
+    ) -> tuple[_IntegrationTrace, float, float] | None:
         nearest: tuple[_IntegrationTrace, float, float] | None = None
         nearest_distance = float("inf")
-        x_span = max(
-            (
-                float(np.nanmax(trace.x_values) - np.nanmin(trace.x_values))
-                for trace in self.series
-                if trace.x_values.size and np.isfinite(trace.x_values).any()
-            ),
-            default=1.0,
-        )
-        y_span = max(
-            (
-                float(np.nanmax(trace.y_values) - np.nanmin(trace.y_values))
-                for trace in self.series
-                if trace.y_values.size and np.isfinite(trace.y_values).any()
-            ),
-            default=1.0,
-        )
-        x_span = max(abs(x_span), 1.0e-12)
-        y_span = max(abs(y_span), 1.0e-12)
+        maxima_by_trace = [
+            (trace, _trace_local_maxima(trace))
+            for trace in self.series
+            if roi_id is None or trace.roi_id == roi_id
+        ]
+        if not any(maxima for _trace, maxima in maxima_by_trace):
+            return None
+        x_span, y_span = _trace_collection_spans(self.series)
+        for trace, maxima in maxima_by_trace:
+            for candidate_x, candidate_y, _index in maxima:
+                distance = ((candidate_x - x_value) / x_span) ** 2 + (
+                    (candidate_y - y_value) / y_span
+                ) ** 2
+                if distance < nearest_distance:
+                    nearest_distance = distance
+                    nearest = (trace, candidate_x, candidate_y)
+        return nearest
+
+    def _nearest_trace_sample(
+        self,
+        x_value: float,
+        y_value: float,
+        *,
+        roi_id: str | None = None,
+    ) -> tuple[_IntegrationTrace, float, float] | None:
+        nearest: tuple[_IntegrationTrace, float, float] | None = None
+        nearest_distance = float("inf")
+        x_span, y_span = _trace_collection_spans(self.series)
         for trace in self.series:
             if roi_id is not None and trace.roi_id != roi_id:
                 continue
@@ -922,6 +954,150 @@ class _MatplotlibIntegrationWidget(QtWidgets.QWidget):
         return nearest
 
 
+def _trace_collection_spans(
+    series: list[_IntegrationTrace],
+) -> tuple[float, float]:
+    x_span = max(
+        (
+            float(np.nanmax(trace.x_values) - np.nanmin(trace.x_values))
+            for trace in series
+            if trace.x_values.size and np.isfinite(trace.x_values).any()
+        ),
+        default=1.0,
+    )
+    y_span = max(
+        (
+            float(np.nanmax(trace.y_values) - np.nanmin(trace.y_values))
+            for trace in series
+            if trace.y_values.size and np.isfinite(trace.y_values).any()
+        ),
+        default=1.0,
+    )
+    return max(abs(x_span), 1.0e-12), max(abs(y_span), 1.0e-12)
+
+
+def _trace_local_maxima(
+    trace: _IntegrationTrace,
+    *,
+    include_edges: bool = False,
+) -> list[tuple[float, float, int]]:
+    x_values = np.asarray(trace.x_values, dtype=float)
+    y_values = np.asarray(trace.y_values, dtype=float)
+    valid = np.isfinite(x_values) & np.isfinite(y_values)
+    if not np.any(valid):
+        return []
+    compact_x = x_values[valid]
+    compact_y = y_values[valid]
+    indices = _local_maximum_indices(compact_y, include_edges=include_edges)
+    return [
+        (float(compact_x[index]), float(compact_y[index]), int(index))
+        for index in indices
+    ]
+
+
+def _local_maximum_indices(
+    values: np.ndarray,
+    *,
+    include_edges: bool = False,
+) -> np.ndarray:
+    array = np.asarray(values, dtype=float)
+    if array.size == 0:
+        return np.asarray([], dtype=int)
+    if array.size == 1:
+        return np.asarray([0], dtype=int) if include_edges else np.asarray([])
+    indices: list[int] = []
+    if include_edges and array[0] > array[1]:
+        indices.append(0)
+    if array.size > 2:
+        middle = array[1:-1]
+        left = array[:-2]
+        right = array[2:]
+        mask = (
+            (middle >= left)
+            & (middle >= right)
+            & ((middle > left) | (middle > right))
+        )
+        indices.extend((np.flatnonzero(mask) + 1).astype(int).tolist())
+    if include_edges and array[-1] > array[-2]:
+        indices.append(array.size - 1)
+    return np.asarray(indices, dtype=int)
+
+
+def _auto_detect_trace_peaks(
+    trace: _IntegrationTrace,
+    *,
+    max_peaks: int = CHANNEL_DETECT_MAX_PEAKS_PER_TRACE,
+) -> list[tuple[float, float]]:
+    x_values = np.asarray(trace.x_values, dtype=float)
+    y_values = np.asarray(trace.y_values, dtype=float)
+    valid = np.isfinite(x_values) & np.isfinite(y_values)
+    if not np.any(valid):
+        return []
+    compact_x = x_values[valid]
+    compact_y = y_values[valid]
+    maxima = _local_maximum_indices(compact_y, include_edges=False)
+    if maxima.size == 0:
+        return []
+    y_min = float(np.nanmin(compact_y))
+    y_max = float(np.nanmax(compact_y))
+    dynamic_range = max(y_max - y_min, 1.0e-12)
+    baseline = float(np.nanmedian(compact_y))
+    noise = _robust_trace_noise(compact_y - baseline)
+    min_height = max(
+        dynamic_range * CHANNEL_DETECT_MIN_HEIGHT_FRACTION,
+        min(noise * 3.0, dynamic_range * 0.25),
+    )
+    scored: list[tuple[float, int]] = []
+    for index in maxima:
+        height = float(compact_y[index] - baseline)
+        if height < min_height:
+            continue
+        scored.append((height, int(index)))
+    scored.sort(reverse=True)
+    selected: list[int] = []
+    min_separation = max(1, int(round(compact_x.size * 0.03)))
+    for _height, index in scored:
+        if len(selected) >= max(1, int(max_peaks)):
+            break
+        if any(abs(index - kept) < min_separation for kept in selected):
+            continue
+        selected.append(index)
+    selected.sort(key=lambda index: float(compact_x[index]))
+    return [
+        (float(compact_x[index]), float(compact_y[index]))
+        for index in selected
+    ]
+
+
+def _robust_trace_noise(values: np.ndarray) -> float:
+    finite = np.asarray(values, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        return 0.0
+    median = float(np.nanmedian(finite))
+    mad = float(np.nanmedian(np.abs(finite - median)))
+    noise = 1.4826 * mad
+    if not np.isfinite(noise) or noise <= 1.0e-12:
+        q25, q75 = np.nanpercentile(finite, [25.0, 75.0])
+        noise = float((q75 - q25) / 1.349)
+    if not np.isfinite(noise) or noise <= 1.0e-12:
+        noise = float(np.nanstd(finite))
+    return max(noise, 0.0)
+
+
+def _trace_x_tolerance(trace: _IntegrationTrace) -> float:
+    x_values = np.asarray(trace.x_values, dtype=float)
+    x_values = x_values[np.isfinite(x_values)]
+    if x_values.size < 2:
+        return 1.0e-9
+    diffs = np.diff(np.unique(np.sort(x_values)))
+    positive = diffs[diffs > 0.0]
+    if positive.size:
+        return max(float(np.nanmin(positive)) / 2.0, 1.0e-9)
+    span = float(np.nanmax(x_values) - np.nanmin(x_values))
+    return max(abs(span) * 1.0e-9, 1.0e-9)
+
+
 class _IntegrationChannelPanel(QtWidgets.QFrame):
     """Reserved home slot for one ROI integration channel."""
 
@@ -933,6 +1109,7 @@ class _IntegrationChannelPanel(QtWidgets.QFrame):
     markerDeleted = QtCore.Signal(int, str)
     clearMarkersRequested = QtCore.Signal(int)
     pushMarkersRequested = QtCore.Signal(int)
+    detectPeaksRequested = QtCore.Signal(int)
 
     def __init__(
         self,
@@ -971,6 +1148,12 @@ class _IntegrationChannelPanel(QtWidgets.QFrame):
                 self.channel
             )
         )
+        self.detect_peaks_button = QtWidgets.QToolButton()
+        self.detect_peaks_button.setText("Detect Peaks")
+        self.detect_peaks_button.setEnabled(False)
+        self.detect_peaks_button.clicked.connect(
+            lambda _checked=False: self.detectPeaksRequested.emit(self.channel)
+        )
         self.push_markers_button = QtWidgets.QToolButton()
         self.push_markers_button.setText("Push Peaks")
         self.push_markers_button.clicked.connect(
@@ -986,6 +1169,7 @@ class _IntegrationChannelPanel(QtWidgets.QFrame):
         header_layout.addStretch(1)
         header_layout.addWidget(self.marker_count_label)
         header_layout.addWidget(self.clear_marks_button)
+        header_layout.addWidget(self.detect_peaks_button)
         header_layout.addWidget(self.push_markers_button)
         header_layout.addWidget(self.clear_button)
         header_layout.addWidget(self.detach_button)
@@ -1034,6 +1218,7 @@ class _IntegrationChannelPanel(QtWidgets.QFrame):
         self.drag_label.setText(_channel_header_text(self.channel, mode))
         self.plot_widget.set_series(self.series, self.mode, markers)
         self.set_marker_count(len(markers or []))
+        self.detect_peaks_button.setEnabled(bool(self.series))
 
     def set_marker_count(self, count: int) -> None:
         suffix = "mark" if count == 1 else "marks"
@@ -1087,6 +1272,7 @@ class _DetachedIntegrationWindow(QtWidgets.QDialog):
     markerDeleted = QtCore.Signal(int, str)
     clearMarkersRequested = QtCore.Signal(int)
     pushMarkersRequested = QtCore.Signal(int)
+    detectPeaksRequested = QtCore.Signal(int)
 
     def __init__(
         self,
@@ -1120,6 +1306,12 @@ class _DetachedIntegrationWindow(QtWidgets.QDialog):
                 self.channel
             )
         )
+        self.detect_peaks_button = QtWidgets.QToolButton()
+        self.detect_peaks_button.setText("Detect Peaks")
+        self.detect_peaks_button.setEnabled(False)
+        self.detect_peaks_button.clicked.connect(
+            lambda _checked=False: self.detectPeaksRequested.emit(self.channel)
+        )
         self.push_markers_button = QtWidgets.QToolButton()
         self.push_markers_button.setText("Push Peaks")
         self.push_markers_button.clicked.connect(
@@ -1134,6 +1326,7 @@ class _DetachedIntegrationWindow(QtWidgets.QDialog):
         header_layout.addStretch(1)
         header_layout.addWidget(self.marker_count_label)
         header_layout.addWidget(self.clear_marks_button)
+        header_layout.addWidget(self.detect_peaks_button)
         header_layout.addWidget(self.push_markers_button)
         header_layout.addWidget(self.clear_button)
         header_layout.addWidget(self.return_button)
@@ -1174,6 +1367,7 @@ class _DetachedIntegrationWindow(QtWidgets.QDialog):
         self.drag_label.setText(_channel_header_text(self.channel, mode))
         self.plot_widget.set_series(series, mode, markers)
         self.set_marker_count(len(markers or []))
+        self.detect_peaks_button.setEnabled(bool(series))
 
     def set_marker_count(self, count: int) -> None:
         suffix = "mark" if count == 1 else "marks"
@@ -1576,6 +1770,7 @@ class DataViewerPane(QtWidgets.QWidget):
             panel.markerDeleted.connect(self._delete_channel_peak_marker)
             panel.clearMarkersRequested.connect(self._clear_channel_markers)
             panel.pushMarkersRequested.connect(self._push_channel_markers)
+            panel.detectPeaksRequested.connect(self._detect_channel_peaks)
             self.channel_panels[channel] = panel
             layout.addWidget(panel, stretch=1)
 
@@ -2503,6 +2698,7 @@ class DataViewerPane(QtWidgets.QWidget):
         window.markerDeleted.connect(self._delete_channel_peak_marker)
         window.clearMarkersRequested.connect(self._clear_channel_markers)
         window.pushMarkersRequested.connect(self._push_channel_markers)
+        window.detectPeaksRequested.connect(self._detect_channel_peaks)
         self.channel_windows[channel] = window
         self.channel_panels[channel].set_detached(True)
         self._refresh_channel(channel)
@@ -2578,6 +2774,45 @@ class DataViewerPane(QtWidgets.QWidget):
         self.integration_peak_markers[channel].append(marker)
         self._refresh_channel(channel)
 
+    def _detect_channel_peaks(self, channel: int) -> None:
+        traces = list(self.channel_panels[channel].series)
+        if not traces:
+            self._set_roi_status(f"Channel {channel} has no ROI trace.")
+            return
+        added = 0
+        existing_ids = {
+            marker.marker_id
+            for markers in self.integration_peak_markers.values()
+            for marker in markers
+        }
+        for trace in traces:
+            roi = self._roi_by_id(trace.roi_id)
+            if roi is None:
+                continue
+            tolerance = _trace_x_tolerance(trace)
+            for integration_x, intensity in _auto_detect_trace_peaks(trace):
+                if self._channel_has_marker_near(
+                    channel,
+                    trace.roi_id,
+                    integration_x,
+                    tolerance,
+                ):
+                    continue
+                marker = _integration_peak_marker(
+                    roi,
+                    channel,
+                    integration_x,
+                    intensity,
+                    existing_ids=existing_ids,
+                )
+                if marker is None:
+                    continue
+                self.integration_peak_markers[channel].append(marker)
+                added += 1
+        self._refresh_channel(channel)
+        suffix = "peak" if added == 1 else "peaks"
+        self._set_roi_status(f"Detected {added} channel {channel} {suffix}.")
+
     def _move_channel_peak_marker(
         self,
         channel: int,
@@ -2632,6 +2867,20 @@ class DataViewerPane(QtWidgets.QWidget):
         ]
         if len(self.integration_peak_markers[channel]) != before:
             self._refresh_channel(channel)
+
+    def _channel_has_marker_near(
+        self,
+        channel: int,
+        roi_id: str,
+        integration_x: float,
+        tolerance: float,
+    ) -> bool:
+        for marker in self.integration_peak_markers.get(channel, []):
+            if marker.roi_id != roi_id:
+                continue
+            if abs(marker.integration_x - integration_x) <= tolerance:
+                return True
+        return False
 
     def _markers_for_channel(
         self,

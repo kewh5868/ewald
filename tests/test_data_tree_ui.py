@@ -2280,6 +2280,82 @@ def test_integration_channel_peak_markers_push_to_peak_identification(
     )
 
 
+def test_integration_channel_clicks_snap_and_detect_local_maxima(
+    qtbot,
+    tmp_path,
+):
+    project = ProjectState()
+    data_file = project.add_data_file(tmp_path / "synthetic.tiff")
+    data_id = data_file.data_id
+    assert data_id is not None
+    project.set_image_corrections(
+        ImageCorrectionState(target_id=data_id, confirmed=True)
+    )
+    window = MainWindow(project=project)
+    qtbot.addWidget(window)
+
+    viewer = window.tabs.widget(0)
+    image = np.zeros((10, 10), dtype=float)
+    image[4, 2:5] = 20.0
+    image[6, 2:5] = 10.0
+    viewer.image_data = image
+    viewer.axis_ranges = (0.0, 9.0, 0.0, 9.0)
+    viewer.coordinate_space = "qspace"
+    viewer.roi_controls_enabled = True
+    viewer._set_roi_controls_enabled(True)
+
+    vertical = viewer.add_roi_from_bounds(2.0, 4.0, 3.0, 7.0)
+    assert vertical is not None
+    viewer._toggle_roi_channel(vertical.roi_id, 1, True)
+
+    panel = viewer.channel_panels[1]
+    assert panel.detect_peaks_button.text() == "Detect Peaks"
+    assert panel.detect_peaks_button.isEnabled()
+    plot_widget = panel.plot_widget
+    if plot_widget.axes is None or plot_widget.canvas is None:
+        pytest.skip("matplotlib is unavailable")
+    plot_widget.canvas.draw()
+
+    def mpl_event(x_value, y_value):
+        display_x, display_y = plot_widget.axes.transData.transform(
+            (x_value, y_value)
+        )
+        return type(
+            "MplEvent",
+            (),
+            {
+                "button": 1,
+                "xdata": x_value,
+                "ydata": y_value,
+                "x": display_x,
+                "y": display_y,
+                "inaxes": plot_widget.axes,
+            },
+        )()
+
+    plot_widget._handle_mouse_press(mpl_event(4.25, 35.0))
+
+    marker = viewer.integration_peak_markers[1][0]
+    assert marker.integration_x == pytest.approx(4.0)
+    assert marker.integrated_intensity == pytest.approx(60.0)
+
+    viewer._clear_channel_markers(1)
+    panel.detect_peaks_button.click()
+
+    markers = viewer.integration_peak_markers[1]
+    assert len(markers) == 2
+    assert [marker.integration_x for marker in markers] == pytest.approx(
+        [4.0, 6.0]
+    )
+    assert [
+        marker.integrated_intensity for marker in markers
+    ] == pytest.approx([60.0, 30.0])
+
+    panel.detect_peaks_button.click()
+
+    assert len(viewer.integration_peak_markers[1]) == 2
+
+
 def test_integration_peak_coordinate_conversion_covers_channel_modes():
     horizontal = ROIRegion(
         target_id="detector",
