@@ -2,8 +2,12 @@
 
 **Experimental WAXS Analysis for Lattice Determination**
 
-EWALD is a Qt6 desktop application for GIWAXS/WAXS data reduction, peak analysis,
-and GIWAXS simulation.
+EWALD is a Qt6 scientific software package for GIWAXS/WAXS analysis. It brings
+detector-image import, calibration-aware q-space correction, ROI and peak
+fitting workflows, lattice and structure-candidate ranking, and GIWAXS
+simulation into one project-based desktop interface. The simulation workflow is
+designed to compare experimental scattering targets against generated solved CIF
+structures, including residual difference maps for judging fit quality.
 
 ## Quick start
 

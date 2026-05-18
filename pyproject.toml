@@ -11,7 +11,7 @@ authors = [
 maintainers = [
   { name = "Keith White", email = "keith.white@colorado.edu" },
 ]
-description = "Qt6 application framework for experimental WAXS analysis and lattice determination."
+description = "Qt6 GIWAXS/WAXS analysis package for lattice determination, structure fitting, and simulation."
 keywords = [
   "WAXS",
   "GIWAXS",

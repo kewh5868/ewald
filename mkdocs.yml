@@ -1,5 +1,5 @@
 site_name: EWALD Documentation
-site_description: Experimental WAXS Analysis for Lattice Determination
+site_description: Qt6 GIWAXS/WAXS analysis package for lattice determination, structure fitting, and simulation
 site_url: https://kewh5868.github.io/ewald/
 repo_url: https://github.com/kewh5868/ewald
 repo_name: kewh5868/ewald
