@@ -2361,7 +2361,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.side_tabs.setMinimumWidth(420)
         self.side_tabs.setMaximumWidth(640)
         self.side_tabs.addTab(self._peak_finder_tab(), "Peak Finder")
-        self.side_tabs.addTab(self._crystal_overlay_tab(), "Crystal Overlay")
+        self.side_tabs.addTab(self._roi_selection_tab(), "ROI Selection")
         self.side_tabs.addTab(self._peak_fit_tab(), "Peak Fit")
 
         contrast_layout = QtWidgets.QHBoxLayout()
@@ -2400,6 +2400,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
     def _peak_finder_tab(self) -> QtWidgets.QWidget:
         tab = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(tab)
+
         self.peak_action_bar = QtWidgets.QWidget()
         peak_action_layout = QtWidgets.QHBoxLayout(self.peak_action_bar)
         peak_action_layout.setContentsMargins(0, 0, 0, 4)
@@ -2410,6 +2411,20 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         peak_action_layout.addWidget(self.clear_peaks_button)
         layout.addWidget(self.peak_action_bar)
 
+        self.peak_finder_subtabs = QtWidgets.QTabWidget()
+        self.peak_finder_subtabs.setObjectName("PeakFinderSubTabs")
+        self.peak_finder_subtabs.addTab(
+            self._peak_detection_tab(), "Peak Detection"
+        )
+        self.peak_finder_subtabs.addTab(
+            self._crystal_overlay_tab(), "Crystal Overlay"
+        )
+        layout.addWidget(self.peak_finder_subtabs, stretch=1)
+        return tab
+
+    def _peak_detection_tab(self) -> QtWidgets.QWidget:
+        tab = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(tab)
         scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
         content = QtWidgets.QWidget()
@@ -2482,7 +2497,36 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         edit_layout.addWidget(self.snap_feedback_label, 5, 0, 1, 2)
         content_layout.addWidget(edit_group)
 
-        roi_group = QtWidgets.QGroupBox("ROI Tools")
+        analysis_group = QtWidgets.QGroupBox("Symmetry & Gap Estimates")
+        analysis_layout = QtWidgets.QGridLayout(analysis_group)
+        analysis_layout.addWidget(self.gap_estimate_button, 0, 0)
+        analysis_layout.addWidget(self.tag_gap_button, 0, 1)
+        analysis_layout.addWidget(rich_label(f"{QXY_HTML} tol"), 1, 0)
+        analysis_layout.addWidget(self.symmetry_qxy_tolerance, 1, 1)
+        analysis_layout.addWidget(rich_label(f"{QZ_HTML} tol"), 2, 0)
+        analysis_layout.addWidget(self.symmetry_qz_tolerance, 2, 1)
+        analysis_layout.addWidget(QtWidgets.QLabel("Mirror source"), 3, 0)
+        analysis_layout.addWidget(self.mirror_source_combo, 3, 1)
+        analysis_layout.addWidget(self.mirror_missing_button, 4, 0, 1, 2)
+        analysis_layout.addWidget(self.symmetry_check_button, 5, 0, 1, 2)
+        analysis_layout.addWidget(self.symmetry_summary_label, 6, 0, 1, 2)
+        content_layout.addWidget(analysis_group)
+
+        content_layout.addStretch(1)
+        scroll.setWidget(content)
+        layout.addWidget(scroll, stretch=1)
+        return tab
+
+    def _roi_selection_tab(self) -> QtWidgets.QWidget:
+        tab = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(tab)
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QtWidgets.QWidget()
+        content_layout = QtWidgets.QVBoxLayout(content)
+
+        self.roi_tools_group = QtWidgets.QGroupBox("ROI Tools")
+        roi_group = self.roi_tools_group
         roi_group.setStyleSheet(
             "QGroupBox { font-weight: 600; border: 1px solid #9ca3af; "
             "border-radius: 4px; margin-top: 8px; padding-top: 8px; }"
@@ -2508,24 +2552,9 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         roi_layout.addWidget(self.active_roi_mesh_widget)
         content_layout.addWidget(roi_group)
 
-        analysis_group = QtWidgets.QGroupBox("Symmetry & Gap Estimates")
-        analysis_layout = QtWidgets.QGridLayout(analysis_group)
-        analysis_layout.addWidget(self.gap_estimate_button, 0, 0)
-        analysis_layout.addWidget(self.tag_gap_button, 0, 1)
-        analysis_layout.addWidget(rich_label(f"{QXY_HTML} tol"), 1, 0)
-        analysis_layout.addWidget(self.symmetry_qxy_tolerance, 1, 1)
-        analysis_layout.addWidget(rich_label(f"{QZ_HTML} tol"), 2, 0)
-        analysis_layout.addWidget(self.symmetry_qz_tolerance, 2, 1)
-        analysis_layout.addWidget(QtWidgets.QLabel("Mirror source"), 3, 0)
-        analysis_layout.addWidget(self.mirror_source_combo, 3, 1)
-        analysis_layout.addWidget(self.mirror_missing_button, 4, 0, 1, 2)
-        analysis_layout.addWidget(self.symmetry_check_button, 5, 0, 1, 2)
-        analysis_layout.addWidget(self.symmetry_summary_label, 6, 0, 1, 2)
-        content_layout.addWidget(analysis_group)
-
         content_layout.addStretch(1)
         scroll.setWidget(content)
-        layout.addWidget(scroll)
+        layout.addWidget(scroll, stretch=1)
         return tab
 
     def _peak_fit_tab(self) -> QtWidgets.QWidget:

@@ -1256,10 +1256,20 @@ def test_peak_identification_adds_detects_and_regions_peaks(qtbot, repo_root):
     structure_pane = window.tabs.widget(2)
     assert type(pane).__name__ == "PeakIdentificationPane"
     assert pane.side_tabs.tabText(0) == "Peak Finder"
-    assert pane.side_tabs.tabText(1) == "Crystal Overlay"
+    assert pane.side_tabs.tabText(1) == "ROI Selection"
     assert pane.side_tabs.tabText(2) == "Peak Fit"
     peak_finder_tab = pane.side_tabs.widget(0)
     assert peak_finder_tab.layout().itemAt(0).widget() is pane.peak_action_bar
+    assert (
+        peak_finder_tab.layout().itemAt(1).widget() is pane.peak_finder_subtabs
+    )
+    assert pane.peak_finder_subtabs.tabText(0) == "Peak Detection"
+    assert pane.peak_finder_subtabs.tabText(1) == "Crystal Overlay"
+    roi_groups = {
+        group.title()
+        for group in pane.side_tabs.widget(1).findChildren(QtWidgets.QGroupBox)
+    }
+    assert "ROI Tools" in roi_groups
     for button in (
         pane.undo_button,
         pane.redo_button,
@@ -1460,7 +1470,9 @@ def test_peak_finder_presets_update_detection_controls(qtbot):
     assert "weak peaks" in pane.sensitive_peak_preset_button.toolTip()
     finder_labels = [
         label
-        for label in pane.side_tabs.widget(0).findChildren(QtWidgets.QLabel)
+        for label in pane.peak_finder_subtabs.widget(0).findChildren(
+            QtWidgets.QLabel
+        )
         if label.toolTip().startswith("<qt>")
     ]
     assert len(finder_labels) >= 8
@@ -1729,7 +1741,9 @@ def test_peak_identification_crystal_overlay_updates_project(qtbot, repo_root):
     )
     crystal_groups = {
         group.title()
-        for group in pane.side_tabs.widget(1).findChildren(QtWidgets.QGroupBox)
+        for group in pane.peak_finder_subtabs.widget(1).findChildren(
+            QtWidgets.QGroupBox
+        )
     }
     assert "Lattice & Overlay Peaks" in crystal_groups
     assert "Overlay Peaks" not in crystal_groups
