@@ -522,6 +522,36 @@ def test_structure_analysis_table_imports_fit_centers_and_user_edits(qtbot):
     assert state["peaks"][0]["phase_tag"] == PHASE_SECONDARY
 
 
+def test_structure_approximation_tab_uses_top_actions_and_three_columns(qtbot):
+    project = ProjectState()
+    pane = StructureAnalysisPane(project, "synthetic")
+    qtbot.addWidget(pane)
+
+    tab = pane.analysis_tabs.widget(0)
+    layout = tab.layout()
+    buttons = layout.itemAt(0).layout()
+    grid = layout.itemAt(1).layout()
+
+    assert buttons.itemAt(0).widget() is pane.refine_button
+    assert buttons.itemAt(1).widget() is pane.guess_button
+    assert buttons.itemAt(2).widget() is pane.overlay_button
+    assert buttons.itemAt(3).widget() is pane.outliers_button
+    assert isinstance(grid, QtWidgets.QGridLayout)
+
+    assert grid.itemAtPosition(0, 1).widget() is pane.phase_filter_combo
+    assert grid.itemAtPosition(0, 3).widget() is pane.guess_system_combo
+    assert grid.itemAtPosition(0, 5).widget() is pane.hkl_max
+    assert grid.itemAtPosition(1, 1).widget() is pane.lattice_a
+    assert grid.itemAtPosition(1, 3).widget() is pane.lattice_b
+    assert grid.itemAtPosition(1, 5).widget() is pane.lattice_c
+    assert grid.itemAtPosition(2, 1).widget() is pane.lattice_alpha
+    assert grid.itemAtPosition(2, 3).widget() is pane.lattice_beta
+    assert grid.itemAtPosition(2, 5).widget() is pane.lattice_gamma
+    assert grid.itemAtPosition(3, 1).widget() is pane.q_tolerance
+    assert grid.itemAtPosition(3, 3).widget() is pane.relative_tolerance
+    assert grid.itemAtPosition(3, 5).widget() is pane.grid_points
+
+
 def test_structure_analysis_family_selection_highlights_plot_peaks(qtbot):
     project = ProjectState()
     project.peak_sets["synthetic"] = [

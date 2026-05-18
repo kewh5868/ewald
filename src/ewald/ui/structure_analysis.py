@@ -935,23 +935,6 @@ class StructureAnalysisPane(QtWidgets.QWidget):
     def _approximation_tab(self) -> QtWidgets.QWidget:
         tab = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(tab)
-        form = QtWidgets.QFormLayout()
-        form.addRow("Phase", self.phase_filter_combo)
-        form.addRow("Crystal system", self.guess_system_combo)
-        form.addRow("a", self.lattice_a)
-        form.addRow("b", self.lattice_b)
-        form.addRow("c", self.lattice_c)
-        form.addRow("alpha", self.lattice_alpha)
-        form.addRow("beta", self.lattice_beta)
-        form.addRow("gamma", self.lattice_gamma)
-        form.addRow("hkl max", self.hkl_max)
-        form.addRow(
-            rich_label(f"{QSPACE_UNITS_HTML} tolerance"),
-            self.q_tolerance,
-        )
-        form.addRow("Relative tolerance", self.relative_tolerance)
-        form.addRow("Grid points", self.grid_points)
-        layout.addLayout(form)
         buttons = QtWidgets.QHBoxLayout()
         buttons.addWidget(self.refine_button)
         buttons.addWidget(self.guess_button)
@@ -959,6 +942,48 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         buttons.addWidget(self.outliers_button)
         buttons.addStretch(1)
         layout.addLayout(buttons)
+
+        form = QtWidgets.QGridLayout()
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(6)
+
+        def add_field(
+            row: int,
+            column: int,
+            label: str | QtWidgets.QLabel,
+            widget: QtWidgets.QWidget,
+        ) -> None:
+            if isinstance(label, QtWidgets.QLabel):
+                label_widget = label
+            else:
+                label_widget = QtWidgets.QLabel(label)
+            label_widget.setAlignment(
+                QtCore.Qt.AlignmentFlag.AlignRight
+                | QtCore.Qt.AlignmentFlag.AlignVCenter
+            )
+            form.addWidget(label_widget, row, column * 2)
+            form.addWidget(widget, row, column * 2 + 1)
+
+        add_field(0, 0, "Phase", self.phase_filter_combo)
+        add_field(0, 1, "Crystal system", self.guess_system_combo)
+        add_field(0, 2, "hkl max", self.hkl_max)
+        add_field(1, 0, "a", self.lattice_a)
+        add_field(1, 1, "b", self.lattice_b)
+        add_field(1, 2, "c", self.lattice_c)
+        add_field(2, 0, "alpha", self.lattice_alpha)
+        add_field(2, 1, "beta", self.lattice_beta)
+        add_field(2, 2, "gamma", self.lattice_gamma)
+        add_field(
+            3,
+            0,
+            rich_label(f"{QSPACE_UNITS_HTML} tolerance"),
+            self.q_tolerance,
+        )
+        add_field(3, 1, "Relative tolerance", self.relative_tolerance)
+        add_field(3, 2, "Grid points", self.grid_points)
+        for column in (1, 3, 5):
+            form.setColumnStretch(column, 1)
+        layout.addLayout(form)
         layout.addWidget(self.candidate_table, stretch=1)
         return tab
 
