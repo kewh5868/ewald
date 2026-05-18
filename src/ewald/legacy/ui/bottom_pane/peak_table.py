@@ -1,9 +1,9 @@
 # File: ewald/ui/bottom_pane/peak_table.py
 """
 PeakTableView: tabbed widget for managing three sets of data:
- - Experimental: index, q_xy, q_z, intensity, region, h, k, l
- - Calculated:   index, q_xy, q_z, h, k, l
- - ROI:          ROI Index, ROI Type, ROI Center q_xy, ROI Center q_z, C1, C2, C3, C4, Linked (hkl)
+ - Experimental: index, q_{xy}, q_{z}, intensity, region, h, k, l
+ - Calculated:   index, q_{xy}, q_{z}, h, k, l
+ - ROI:          ROI Index, ROI Type, ROI Center q_{xy}, ROI Center q_{z}, C1, C2, C3, C4, Linked (hkl)
 """
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QTableView, QPushButton,
@@ -15,7 +15,7 @@ from PyQt6.QtCore    import Qt, QAbstractTableModel, QModelIndex, QVariant
 class ExperimentalPeakModel(QAbstractTableModel):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._headers = ["#","q_xy","q_z","Intensity","Region","h","k","l"]
+        self._headers = ["#","q_{xy}","q_{z}","Intensity","Region","h","k","l"]
         self._data = []  # list of tuples: (qxy, qz, intensity, region, h, k, l)
 
     def rowCount(self, parent=QModelIndex()):
@@ -54,7 +54,7 @@ class ExperimentalPeakModel(QAbstractTableModel):
 class CalculatedPeakModel(QAbstractTableModel):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._headers = ["#","q_xy","q_z","h","k","l"]
+        self._headers = ["#","q_{xy}","q_{z}","h","k","l"]
         self._data = []  # list of tuples: (qxy, qz, h, k, l)
 
     def rowCount(self, parent=QModelIndex()):
@@ -97,7 +97,7 @@ class ROITableModel(QAbstractTableModel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._headers = [
-            "ROI Index","ROI Type","ROI Center q_xy","ROI Center q_z",
+            "ROI Index","ROI Type","ROI Center q_{xy}","ROI Center q_{z}",
             "C1","C2","C3","C4","Linked (hkl)"
         ]
         self._data = []  # list of tuples: (roi_type, qxy, qz, c1, c2, c3, c4, linked_hkl)

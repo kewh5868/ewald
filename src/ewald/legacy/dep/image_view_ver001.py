@@ -1,0 +1,223 @@
+# File: ewald/ui/center_pane/image_view.py
+"""
+ImageCanvas: composite widget displaying a main 2D image frame with four subplots below.
+The main frame has default q_{xy} vs q_{z} axes; subplots:
+ - q_{xy} vs Intensity
+ - q_{z} vs Intensity
+ - q_r vs Intensity
+ - q_{xy} vs q_{z} (small)
+"""
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QComboBox
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+from matplotlib.gridspec import GridSpec
+import numpy as np
+import xarray as xr
+
+from ..dataclass.single_image import SingleImage
+
+class ImageCanvas(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        # Create figure & canvas
+        self.fig = Figure(facecolor='darkgray')
+        self.canvas = FigureCanvas(self.fig)
+
+        # --- add Matplotlib navigation toolbar ---
+        self.toolbar = NavigationToolbar(self.canvas, self)
+
+        # --- optional: axis‐selector combo box ---
+        self.ax_selector = QComboBox()
+        self.ax_selector.addItems(['q_{xy} vs q_{z}', 'pixel coords'])
+        self.ax_selector.currentTextChanged.connect(self.on_axis_change)
+
+        # Build layout: toolbar + selector in a row, then the canvas
+        topbar = QHBoxLayout()
+        topbar.addWidget(self.toolbar)
+        topbar.addWidget(self.ax_selector)
+
+        main_layout = QVBoxLayout()
+        main_layout.addLayout(topbar)
+        main_layout.addWidget(self.canvas)
+        self.setLayout(main_layout)
+
+        # # Create figure with dark gray background
+        # self.fig = Figure(facecolor='darkgray')
+        # self.canvas = FigureCanvas(self.fig)
+
+        # # Create gridspec: 2 rows, 4 cols; top row spans all columns
+        # # Increase height ratio for main image to make it larger
+        # gs = GridSpec(2, 4, figure=self.fig,
+        #               height_ratios=[4, 1],  # main 4:1 subplots
+        #               hspace=0.4, wspace=0.5)
+        # # Main large axis
+        # self.ax_main = self.fig.add_subplot(gs[0, :])
+        # # Four small subplots
+        # self.ax_qxy      = self.fig.add_subplot(gs[1, 0])
+        # self.ax_qz       = self.fig.add_subplot(gs[1, 1])
+        # self.ax_qr       = self.fig.add_subplot(gs[1, 2])
+        # self.ax_small2d  = self.fig.add_subplot(gs[1, 3])
+
+        # # Configure axes
+        # self._setup_main()
+        # self._setup_subplots()
+
+        # # Layout
+        # layout = QVBoxLayout(self)
+        # layout.addWidget(self.canvas)
+
+    def _setup_main(self):
+        ax = self.ax_main
+        ax.set_facecolor('darkgray')
+        ax.set_xlabel(r'$q_{xy}$ (Å$^{-1}$)')
+        ax.set_ylabel(r'$q_{z}$ (Å$^{-1}$)')
+        ax.set_xlim(0, 3)
+        ax.set_ylim(0, 3)
+
+    def _setup_subplots(self):
+        # q_{xy} vs Intensity
+        self.ax_qxy.set_facecolor('white')
+        self.ax_qxy.set_xlabel(r'$q_{xy}$ (Å$^{-1}$)')
+        self.ax_qxy.set_ylabel('Intensity')
+        # q_{z} vs Intensity
+        self.ax_qz.set_facecolor('white')
+        self.ax_qz.set_xlabel(r'$q_{z}$ (Å$^{-1}$)')
+        self.ax_qz.set_ylabel('Intensity')
+        # q_r vs Intensity
+        self.ax_qr.set_facecolor('white')
+        self.ax_qr.set_xlabel(r'$q_{r}$ (Å$^{-1}$)')
+        self.ax_qr.set_ylabel('Intensity')
+        # small 2D
+        self.ax_small2d.set_facecolor('darkgray')
+        self.ax_small2d.set_xlabel(r'$q_{xy}$ (Å$^{-1}$)')
+        self.ax_small2d.set_ylabel(r'$q_{z}$ (Å$^{-1}$)')
+        self.ax_small2d.set_xlim(0, 3)
+        self.ax_small2d.set_ylim(0, 3)
+
+    def clear(self):
+        """Clear all axes to initial state."""
+        self.ax_main.cla()
+        self._setup_main()
+        for ax in [self.ax_qxy, self.ax_qz, self.ax_qr, self.ax_small2d]:
+            ax.cla()
+        self._setup_subplots()
+        self.canvas.draw()
+
+    def displayImage(self, data, extent=None, cmap='viridis'):
+        """Display data on the main axis and reset limits."""
+        self.ax_main.cla()
+        self._setup_main()
+        if extent is None:
+            extent = [0, data.shape[1] * (3.0/data.shape[1]),
+                      0, data.shape[0] * (3.0/data.shape[0])]
+        self.ax_main.imshow(
+            data, origin='lower', extent=extent,
+            aspect='auto', cmap=cmap
+        )
+        self.ax_main.set_xlim(extent[0], extent[1])
+        self.ax_main.set_ylim(extent[2], extent[3])
+        self.canvas.draw()
+
+    def overlayPeaks(self, qxy, qz, **kwargs):
+        """Overlay Bragg peaks on the main axis."""
+        self.ax_main.scatter(qxy, qz, **kwargs)
+        self.canvas.draw()
+
+    def update1D(self, axis, x, y, **kwargs):
+        """Update one of the 1D subplots: 'qxy','qz','qr'."""
+        mapping = {
+            'qxy': self.ax_qxy,
+            'qz':  self.ax_qz,
+            'qr':  self.ax_qr
+        }
+        ax = mapping.get(axis)
+        if ax is None:
+            return
+        ax.cla()
+        if axis == 'qxy':
+            ax.set_xlabel(r'$q_{xy}$ (Å$^{-1}$)')
+        elif axis == 'qz':
+            ax.set_xlabel(r'$q_{z}$ (Å$^{-1}$)')
+        elif axis == 'qr':
+            ax.set_xlabel(r'$q_{r}$ (Å$^{-1}$)')
+        ax.set_ylabel('Intensity')
+        ax.plot(x, y, **kwargs)
+        self.canvas.draw()
+
+    def update2Dsmall(self, data, extent=None, cmap='viridis'):
+        """Display data on the small 2D subplot."""
+        self.ax_small2d.cla()
+        self.ax_small2d.set_facecolor('darkgray')
+        if extent is None:
+            extent = [0, data.shape[1] * (3.0/data.shape[1]),
+                      0, data.shape[0] * (3.0/data.shape[0])]
+        self.ax_small2d.imshow(
+            data, origin='lower', extent=extent,
+            aspect='auto', cmap=cmap
+        )
+        self.ax_small2d.set_xlim(extent[0], extent[1])
+        self.ax_small2d.set_ylim(extent[2], extent[3])
+        self.canvas.draw()
+
+    def on_axis_change(self, text: str):
+        """Switch main‐plot labels (and re‐draw if needed)."""
+        if text == 'q_{xy} vs q_{z}':
+            self.ax_main.set_xlabel(r'$q_{xy}$')
+            self.ax_main.set_ylabel(r'$q_{z}$')
+        else:
+            self.ax_main.set_xlabel('pixel x')
+            self.ax_main.set_ylabel('pixel y')
+        self.canvas.draw()
+
+    def displayReciprocal(self, recip_ds: xr.Dataset, cmap='viridis'):
+        """
+        Display a reciprocal‐space xarray Dataset on the main 2D axes,
+        plus its q_{xy} and q_{z} 1D projections on the subplots.
+        Recognizes multiple aliases for the two axes.
+        """
+        # 1) pick the DataArray
+        if isinstance(recip_ds, xr.Dataset):
+            var = list(recip_ds.data_vars)[0]
+            da = recip_ds[var]
+        else:
+            da = recip_ds
+
+        # 2) find axis names
+        qxy_aliases = {'qxy','q_xy','qip','QXY','Qip'}
+        qz_aliases  = {'qz','q_z','qoop','QZ','Qoop'}
+        # make lowercase lookup
+        coords_lc = {name.lower(): name for name in da.coords}
+        # pick
+        try:
+            qxy_key = coords_lc[next(a for a in qxy_aliases if a.lower() in coords_lc)]
+        except StopIteration:
+            raise KeyError(f"No qxy axis found among {list(coords_lc)}")
+        try:
+            qz_key  = coords_lc[next(a for a in qz_aliases  if a.lower() in coords_lc)]
+        except StopIteration:
+            raise KeyError(f"No qz axis found among {list(coords_lc)}")
+
+        # 3) extract data and coordinates
+        data = da.values
+        q_xy = da.coords[qxy_key].values
+        q_z  = da.coords[qz_key].values
+
+        # 4) compute extent in q-space
+        extent = [float(q_xy.min()), float(q_xy.max()),
+                  float(q_z.min()),  float(q_z.max())]
+
+        # 5) show on main axes
+        self.displayImage(data, extent=extent, cmap=cmap)
+
+        # 6) 1D cuts
+        I_qxy = da.sum(dim=qz_key).values
+        I_qz  = da.sum(dim=qxy_key).values
+        self.update1D('qxy', q_xy, I_qxy)
+        self.update1D('qz',  q_z,  I_qz)
+
+        self.canvas.draw()
+
+    def displaySingleImage(self, img: SingleImage, **kwargs):
+        self.displayReciprocal(img.recip_DS, **kwargs)

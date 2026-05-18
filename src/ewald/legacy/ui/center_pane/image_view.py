@@ -1,10 +1,10 @@
 """
 ImageCanvas: composite widget displaying a main 2D image frame with four subplots below.
-The main frame has default q_xy vs q_z axes; subplots:
- - q_xy vs Intensity
- - q_z vs Intensity
+The main frame has default q_{xy} vs q_{z} axes; subplots:
+ - q_{xy} vs Intensity
+ - q_{z} vs Intensity
  - q_r vs Intensity
- - q_xy vs q_z (small)
+ - q_{xy} vs q_{z} (small)
 """
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QComboBox
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar, FigureCanvasQTAgg as FigureCanvas
@@ -25,7 +25,7 @@ class ImageCanvas(QWidget):
 
         # --- Axis selector ---
         self.ax_selector = QComboBox()
-        self.ax_selector.addItems(['q_xy vs q_z', 'pixel coords'])
+        self.ax_selector.addItems(['q_{xy} vs q_{z}', 'pixel coords'])
         self.ax_selector.currentTextChanged.connect(self.on_axis_change)
 
         # --- Layout toolbar + selector ---
@@ -52,28 +52,28 @@ class ImageCanvas(QWidget):
     def _setup_main(self):
         ax = self.ax_main
         ax.set_facecolor('darkgray')
-        ax.set_xlabel(r'$q_{xy}\,\mathrm{(\AA^{-1})}$')
-        ax.set_ylabel(r'$q_{z}\,\mathrm{(\AA^{-1})}$')
+        ax.set_xlabel(r'$q_{xy}$ (Å$^{-1}$)')
+        ax.set_ylabel(r'$q_{z}$ (Å$^{-1}$)')
         ax.set_xlim(0, 3)
         ax.set_ylim(0, 3)
 
     def _setup_subplots(self):
-        # q_xy vs Intensity
+        # q_{xy} vs Intensity
         self.ax_qxy.set_facecolor('white')
-        self.ax_qxy.set_xlabel(r'$q_{xy}\,\mathrm{(\AA^{-1})}$')
+        self.ax_qxy.set_xlabel(r'$q_{xy}$ (Å$^{-1}$)')
         self.ax_qxy.set_ylabel('Intensity')
-        # q_z vs Intensity
+        # q_{z} vs Intensity
         self.ax_qz.set_facecolor('white')
-        self.ax_qz.set_xlabel(r'$q_{z}\,\mathrm{(\AA^{-1})}$')
+        self.ax_qz.set_xlabel(r'$q_{z}$ (Å$^{-1}$)')
         self.ax_qz.set_ylabel('Intensity')
         # q_r vs Intensity
         self.ax_qr.set_facecolor('white')
-        self.ax_qr.set_xlabel(r'$q_{r}\,\mathrm{(\AA^{-1})}$')
+        self.ax_qr.set_xlabel(r'$q_{r}$ (Å$^{-1}$)')
         self.ax_qr.set_ylabel('Intensity')
         # small 2D
         self.ax_small2d.set_facecolor('darkgray')
-        self.ax_small2d.set_xlabel(r'$q_{xy}\,\mathrm{(\AA^{-1})}$')
-        self.ax_small2d.set_ylabel(r'$q_{z}\,\mathrm{(\AA^{-1})}$')
+        self.ax_small2d.set_xlabel(r'$q_{xy}$ (Å$^{-1}$)')
+        self.ax_small2d.set_ylabel(r'$q_{z}$ (Å$^{-1}$)')
         self.ax_small2d.set_xlim(0, 3)
         self.ax_small2d.set_ylim(0, 3)
 
@@ -126,9 +126,9 @@ class ImageCanvas(QWidget):
 
     def on_axis_change(self, text: str):
         """Switch main‐plot labels (and re‐draw if needed)."""
-        if text == 'q_xy vs q_z':
-            self.ax_main.set_xlabel('q_xy')
-            self.ax_main.set_ylabel('q_z')
+        if text == 'q_{xy} vs q_{z}':
+            self.ax_main.set_xlabel(r'$q_{xy}$')
+            self.ax_main.set_ylabel(r'$q_{z}$')
         else:
             self.ax_main.set_xlabel('pixel x')
             self.ax_main.set_ylabel('pixel y')
@@ -137,7 +137,7 @@ class ImageCanvas(QWidget):
     def displayReciprocal(self, recip_ds: xr.Dataset, cmap='viridis'):
         """
         Display a reciprocal‐space xarray Dataset on the main 2D axes,
-        plus its q_xy and q_z 1D projections on the subplots.
+        plus its q_{xy} and q_{z} 1D projections on the subplots.
         """
         # choose DataArray
         da = recip_ds if not isinstance(recip_ds, xr.Dataset) else recip_ds[list(recip_ds.data_vars)[0]]

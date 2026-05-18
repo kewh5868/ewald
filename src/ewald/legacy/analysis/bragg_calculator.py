@@ -1,6 +1,6 @@
 # File: ewald/analysis/bragg_calculator.py
 """
-BraggCalculator: compute Bragg peak positions (q_xy, q_z) and Miller indices for a given unit cell and sample rotation.
+BraggCalculator: compute Bragg peak positions (q_{xy}, q_{z}) and Miller indices for a given unit cell and sample rotation.
 """
 import numpy as np
 import math
@@ -34,8 +34,8 @@ class BraggCalculator:
         Compute Bragg peak positions for Miller indices in [-h..h],[-k..k],[-l..l],
         applying sample rotations thetax (X-axis) and thetay (Y-axis) in degrees.
         Returns:
-          q_xy: numpy array of in-plane magnitudes
-          q_z : numpy array of out-of-plane components
+          q_{xy}: numpy array of in-plane magnitudes
+          q_{z} : numpy array of out-of-plane components
           hkl : numpy array of shape (N,3) of Miller indices
         """
         # Unpack
@@ -76,7 +76,7 @@ class BraggCalculator:
         G2 = H * b1[1] + K * b2[1] + L * b3[1]
         G3 = H * b1[2] + K * b2[2] + L * b3[2]
 
-        # Flatten and compute q_xy, q_z
+        # Flatten and compute q_{xy}, q_{z}
         q_xy = np.hypot(G1, G2).ravel()
         q_z  = G3.ravel()
         hkl  = np.vstack((H.ravel(), K.ravel(), L.ravel())).T

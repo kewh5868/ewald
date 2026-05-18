@@ -81,10 +81,27 @@ class ReciprocalViewer:
         # Plot GIWAXS image
         ax = fig.add_subplot(121)
         vmin, vmax = np.percentile(self.img_array, 1), np.percentile(self.img_array, 99.3)
-        ax.imshow(self.img_array,
-                  norm=matplotlib.colors.Normalize(vmin=vmin, vmax=vmax),
-                  cmap='turbo', extent=(self.qxy.min(), self.qxy.max(), self.qz.min(), self.qz.max()),
-                  origin='lower', aspect='auto')
+        # ax.imshow(self.img_array,
+        #           norm=matplotlib.colors.Normalize(vmin=vmin, vmax=vmax),
+        #           cmap='turbo', extent=(self.qxy.min(), self.qxy.max(), self.qz.min(), self.qz.max()),
+        #           origin='lower', aspect='auto')
+
+        # # simply flip the horizontal axis limits
+        # ax.set_xlim(ax.get_xlim()[::-1])
+
+        # flip left-right
+        mirrored = np.fliplr(self.img_array)
+
+        # swap the x-extent so +x→–x
+        extent = (-self.qxy.max(), -self.qxy.min(),
+                self.qz.min(),     self.qz.max())
+
+        ax.imshow(mirrored,
+                norm=matplotlib.colors.Normalize(vmin=vmin, vmax=vmax),
+                cmap='turbo',
+                extent=extent,
+                origin='lower',
+                aspect='auto')
 
         # Apply any preset limits
         if self.xlim is not None:
@@ -92,8 +109,8 @@ class ReciprocalViewer:
         if self.ylim is not None:
             ax.set_ylim(*self.ylim)
 
-        ax.set_xlabel('$q_{xy}$ (Å⁻¹)', size=12)
-        ax.set_ylabel('$q_{z}$ (Å⁻¹)', size=12)
+        ax.set_xlabel('$q_{xy}$ (Å$^{-1}$)', size=12)
+        ax.set_ylabel('$q_{z}$ (Å$^{-1}$)', size=12)
         ax.tick_params(axis='both', which='major', labelsize=10)
         ax.yaxis.set_major_locator(ticker.MaxNLocator(prune='both'))
 
@@ -148,14 +165,14 @@ class ReciprocalViewer:
                 continue
             h, k, l = hkl
             rows.append({
-                'q_xy': round(qxy_val, 2),
-                'q_z':  round(qz_val, 2),
+                'q_{xy}': round(qxy_val, 2),
+                'q_{z}':  round(qz_val, 2),
                 'h':     int(h),
                 'k':     int(k),
                 'l':     int(l),
                 'hkl':   f"{hkl}"
             })
-        df = pd.DataFrame(rows, columns=['q_xy', 'q_z', 'h', 'k', 'l', 'hkl'])
+        df = pd.DataFrame(rows, columns=['q_{xy}', 'q_{z}', 'h', 'k', 'l', 'hkl'])
 
         # Interactive table controls
         sort_dd = Dropdown(options=df.columns.tolist(), description='Sort by:')
