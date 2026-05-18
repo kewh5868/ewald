@@ -1913,12 +1913,24 @@ def _coordinate_families(
         if len(group) < 2:
             continue
         values = [abs(float(getattr(peak, key))) for peak in group]
+        reference = float(np.mean(values))
+        spread = max(values) - min(values)
+        tightness = max(0.0, 1.0 - spread / max(float(tolerance), 1.0e-9))
+        count_bonus = min(0.15, 0.05 * max(0, len(group) - 2))
+        confidence = min(1.0, 0.55 + 0.4 * tightness + count_bonus)
+        reason = (
+            f"{len(group)} peaks share similar |{key}| values near "
+            f"{reference:.4g}; spread {spread:.4g} within tolerance "
+            f"{tolerance:.4g}."
+        )
         families.append(
             {
                 "kind": label,
-                "reference": float(np.mean(values)),
+                "reference": reference,
                 "peak_ids": [peak.peak_id for peak in group],
                 "labels": [peak.label for peak in group],
+                "confidence": confidence,
+                "reason": reason,
                 "notes": "candidate family; similar coordinate within bin",
             }
         )
@@ -1940,6 +1952,7 @@ def _multiple_families(
         base_value = abs(float(getattr(base, key)))
         group = [base]
         ratios = ["1"]
+        ratio_errors = [0.0]
         for peak in positive:
             if peak.peak_id == base.peak_id:
                 continue
@@ -1948,13 +1961,28 @@ def _multiple_families(
             if nearest in {2, 3, 4} and abs(ratio - nearest) <= tolerance:
                 group.append(peak)
                 ratios.append(str(nearest))
+                ratio_errors.append(abs(ratio - nearest))
         if len(group) >= 2:
+            mean_error = float(np.mean(ratio_errors))
+            tightness = max(
+                0.0,
+                1.0 - mean_error / max(float(tolerance), 1.0e-9),
+            )
+            count_bonus = min(0.15, 0.05 * max(0, len(group) - 2))
+            confidence = min(1.0, 0.55 + 0.4 * tightness + count_bonus)
+            reason = (
+                f"{len(group)} peaks fit simple |{key}| multiples from "
+                f"{base.label}; mean ratio error {mean_error:.4g} "
+                f"within tolerance {tolerance:.4g}."
+            )
             families.append(
                 {
                     "kind": label,
                     "reference": base_value,
                     "peak_ids": [peak.peak_id for peak in group],
                     "labels": [peak.label for peak in group],
+                    "confidence": confidence,
+                    "reason": reason,
                     "notes": "candidate family; simple multiples "
                     + ", ".join(ratios),
                 }

@@ -102,7 +102,26 @@ CANDIDATE_COLUMNS = [
     "Outliers",
     "Method",
 ]
-FAMILY_COLUMNS = ["Family", "Type", "Phase", "Reference", "Peaks", "Notes"]
+FAMILY_COLUMNS = [
+    "Family",
+    "Flag",
+    "Confidence",
+    "Type",
+    "Phase",
+    "Reference",
+    "Peaks",
+    "Reason",
+    "Notes",
+]
+FAMILY_COL_ID = 0
+FAMILY_COL_FLAG = 1
+FAMILY_COL_CONFIDENCE = 2
+FAMILY_COL_TYPE = 3
+FAMILY_COL_PHASE = 4
+FAMILY_COL_REFERENCE = 5
+FAMILY_COL_PEAKS = 6
+FAMILY_COL_REASON = 7
+FAMILY_COL_NOTES = 8
 CIF_COLUMNS = ["Rank", "Candidate", "Score", "Composition", "Status"]
 WYCKOFF_SITE_COLUMNS = ["Site", "Multiplicity", "Free params", "Space group"]
 WYCKOFF_COMBINATION_COLUMNS = [
@@ -113,6 +132,9 @@ WYCKOFF_COMBINATION_COLUMNS = [
 ]
 STRUCTURE_PEAK_BRUSH = "#22c55e"
 STRUCTURE_ACTIVE_PEAK_BRUSH = "#2f80ed"
+FAMILY_FLAG_APPROPRIATE = "appropriate"
+FAMILY_FLAG_INAPPROPRIATE = "inappropriate"
+FAMILY_FLAG_CYCLE = ("", FAMILY_FLAG_APPROPRIATE, FAMILY_FLAG_INAPPROPRIATE)
 
 
 @dataclass(frozen=True)
@@ -353,9 +375,11 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.coordinate_space = coordinate_space
         self.image_style = image_style or ImageDisplayStyle()
         self.active_peak_id: str | None = None
+        self.active_family_peak_id: str | None = None
         self._syncing_table = False
         self._syncing_peak_selection = False
         self._phase_controls: list[QtWidgets.QComboBox] = []
+        self._family_shortcuts: list[QtGui.QShortcut] = []
         self.view_box: Any | None = None
         self.roi_overlay_items: list[Any] = []
         self.plot_frame: _ImageAspectPlotFrame | None = None
@@ -628,10 +652,18 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             candidate.as_dict() for candidate in unique
         ]
 
+    def _family_records(self) -> list[dict[str, Any]]:
+        return [
+            family
+            for family in self._analysis_state().get("families", [])
+            if isinstance(family, dict)
+        ]
+
     def _build_plot(self) -> None:
         if pg is None:
             self.plot_widget = QtWidgets.QLabel("Structure Analysis")
             self.plot_widget.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            self.plot_widget.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
             self.image_item = None
             self.peak_scatter = None
             self.family_highlight_scatter = None
@@ -639,6 +671,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             self.roi_overlay_items = []
             return
         self.plot_widget = pg.PlotWidget()
+        self.plot_widget.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         self.view_box = self.plot_widget.getViewBox()
         if self.coordinate_space == "qspace":
             set_qspace_axis_labels(self.plot_widget)
@@ -665,6 +698,9 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.family_highlight_scatter.setZValue(15)
         self.peak_scatter.setZValue(14)
         self.peak_scatter.sigClicked.connect(self._handle_peak_plot_clicked)
+        self.family_highlight_scatter.sigClicked.connect(
+            self._handle_family_plot_clicked
+        )
         self.plot_widget.addItem(self.peak_scatter)
         self.plot_widget.addItem(self.family_highlight_scatter)
 
@@ -786,21 +822,104 @@ class StructureAnalysisPane(QtWidgets.QWidget):
 
         self.family_tolerance = _double_spinbox(0.04, 0.001, 5.0, 0.01)
         self.family_ratio_tolerance = _double_spinbox(0.06, 0.001, 1.0, 0.01)
+        self.family_confidence_filter = _double_spinbox(
+            0.0,
+            0.0,
+            1.0,
+            0.05,
+            decimals=2,
+        )
+        self.family_confidence_filter.setToolTip(
+            qt_tooltip(
+                "Show only generated or edited families at or above this "
+                "confidence score."
+            )
+        )
+        self.family_confidence_filter.valueChanged.connect(
+            lambda _value: self._sync_families()
+        )
         self.family_button = QtWidgets.QToolButton()
         self.family_button.setText("Suggest Families")
         self.family_button.clicked.connect(self.suggest_peak_families)
+        self.family_flag_button = QtWidgets.QToolButton()
+        self.family_flag_button.setText("Flag (F)")
+        self.family_flag_button.setToolTip(
+            qt_tooltip(
+                "Cycle selected families through appropriate, "
+                "inappropriate, and unreviewed flags."
+            )
+        )
+        self.family_flag_button.clicked.connect(
+            self.toggle_selected_family_flags
+        )
+        self.family_appropriate_button = QtWidgets.QToolButton()
+        self.family_appropriate_button.setText("Appropriate")
+        self.family_appropriate_button.setToolTip(
+            qt_tooltip("Mark selected families as appropriate.")
+        )
+        self.family_appropriate_button.clicked.connect(
+            lambda: self.set_selected_family_flag(FAMILY_FLAG_APPROPRIATE)
+        )
+        self.family_inappropriate_button = QtWidgets.QToolButton()
+        self.family_inappropriate_button.setText("Inappropriate")
+        self.family_inappropriate_button.setToolTip(
+            qt_tooltip("Mark selected families as inappropriate.")
+        )
+        self.family_inappropriate_button.clicked.connect(
+            lambda: self.set_selected_family_flag(FAMILY_FLAG_INAPPROPRIATE)
+        )
+        self.family_delete_button = QtWidgets.QToolButton()
+        self.family_delete_button.setText("Delete (D)")
+        self.family_delete_button.setToolTip(
+            qt_tooltip("Delete the selected peak families.")
+        )
+        self.family_delete_button.clicked.connect(
+            self.delete_selected_families
+        )
+        self.family_remove_ring_button = QtWidgets.QToolButton()
+        self.family_remove_ring_button.setText("Remove Ring (R)")
+        self.family_remove_ring_button.setToolTip(
+            qt_tooltip(
+                "Remove the highlighted ring from the active peak family."
+            )
+        )
+        self.family_remove_ring_button.clicked.connect(
+            self.remove_active_family_ring
+        )
         self.family_table = QtWidgets.QTableWidget(0, len(FAMILY_COLUMNS))
         self.family_table.setHorizontalHeaderLabels(FAMILY_COLUMNS)
         enable_rich_text_items(self.family_table)
         self.family_table.setSelectionBehavior(
             QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
         )
+        self.family_table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         self.family_table.setEditTriggers(
             QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
         )
         self.family_table.itemSelectionChanged.connect(self._sync_peak_plot)
+        self._install_family_shortcuts()
 
         self._build_wyckoff_controls()
+
+    def _install_family_shortcuts(self) -> None:
+        targets = [self.family_table]
+        if isinstance(self.plot_widget, QtWidgets.QWidget):
+            targets.append(self.plot_widget)
+        shortcut_specs = [
+            ("F", self.toggle_selected_family_flags),
+            ("D", self.delete_selected_families),
+            ("R", self.remove_active_family_ring),
+        ]
+        for target in targets:
+            for key, callback in shortcut_specs:
+                shortcut = QtGui.QShortcut(QtGui.QKeySequence(key), target)
+                shortcut.setContext(
+                    QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut
+                )
+                shortcut.activated.connect(callback)
+                self._family_shortcuts.append(shortcut)
 
     def _build_wyckoff_controls(self) -> None:
         self.wyckoff_candidate_combo = QtWidgets.QComboBox()
@@ -888,11 +1007,14 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.analysis_tabs = QtWidgets.QTabWidget()
         self.analysis_tabs.setMinimumWidth(420)
         self.analysis_tabs.setMaximumWidth(640)
+        self.approximation_tab = self._approximation_tab()
+        self.family_tab = self._families_tab()
+        self.wyckoff_tab = self._wyckoff_tab()
         self.analysis_tabs.addTab(
-            self._approximation_tab(), "Structure Approximation"
+            self.approximation_tab, "Structure Approximation"
         )
-        self.analysis_tabs.addTab(self._families_tab(), "Peak Families")
-        self.analysis_tabs.addTab(self._wyckoff_tab(), "Wyckoff Setup")
+        self.analysis_tabs.addTab(self.family_tab, "Peak Families")
+        self.analysis_tabs.addTab(self.wyckoff_tab, "Wyckoff Setup")
 
         self.plot_toolbar = ImagePlotToolbar(
             colormap_combo=self.colormap_combo,
@@ -997,9 +1119,19 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         controls.addWidget(self.family_tolerance)
         controls.addWidget(QtWidgets.QLabel("Ratio tolerance"))
         controls.addWidget(self.family_ratio_tolerance)
+        controls.addWidget(QtWidgets.QLabel("Min confidence"))
+        controls.addWidget(self.family_confidence_filter)
         controls.addWidget(self.family_button)
         controls.addStretch(1)
+        review_controls = QtWidgets.QHBoxLayout()
+        review_controls.addWidget(self.family_flag_button)
+        review_controls.addWidget(self.family_appropriate_button)
+        review_controls.addWidget(self.family_inappropriate_button)
+        review_controls.addWidget(self.family_delete_button)
+        review_controls.addWidget(self.family_remove_ring_button)
+        review_controls.addStretch(1)
         layout.addLayout(controls)
+        layout.addLayout(review_controls)
         layout.addWidget(self.family_table, stretch=1)
         return tab
 
@@ -1299,6 +1431,8 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             self._clear_roi_overlays()
             return
         selected_family_peak_ids = self._selected_family_peak_ids()
+        if self.active_family_peak_id not in selected_family_peak_ids:
+            self.active_family_peak_id = None
         spots = []
         family_spots = []
         for peak in self._structure_peaks():
@@ -1321,10 +1455,18 @@ class StructureAnalysisPane(QtWidgets.QWidget):
                 }
             )
             if peak.peak_id in selected_family_peak_ids:
+                active_family_ring = peak.peak_id == self.active_family_peak_id
                 family_spots.append(
                     {
                         "pos": (peak.qxy, peak.qz),
                         "data": peak.as_dict(),
+                        "size": 22 if active_family_ring else 18,
+                        "symbol": "o",
+                        "brush": pg.mkBrush(255, 255, 255, 0),
+                        "pen": pg.mkPen(
+                            "#ef4444" if active_family_ring else "#facc15",
+                            width=3.0 if active_family_ring else 2.4,
+                        ),
                     }
                 )
         self.peak_scatter.setData(spots=spots)
@@ -1429,24 +1571,46 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.candidate_table.resizeColumnsToContents()
         self._sync_wyckoff_candidate_combo()
 
-    def _sync_families(self) -> None:
-        families = self._analysis_state().get("families", [])
+    def _sync_families(self, select_family_id: str | None = None) -> None:
+        if select_family_id is None:
+            select_family_id = self._selected_family_id()
+        min_confidence = self.family_confidence_filter.value()
+        families = [
+            family
+            for family in self._family_records()
+            if _family_confidence(family) >= min_confidence
+        ]
         self.family_table.setRowCount(len(families))
+        selected_row = -1
         for row, family in enumerate(families):
             peak_ids = [str(value) for value in family.get("peak_ids", [])]
+            family_id = str(family.get("family_id", ""))
+            if family_id == select_family_id:
+                selected_row = row
+            flag = _family_flag(family)
+            reason = str(family.get("reason", ""))
+            notes = str(family.get("notes", ""))
             values = [
-                family.get("family_id", ""),
+                family_id,
+                _family_flag_label(flag),
+                f"{_family_confidence(family):.2f}",
                 family.get("kind", ""),
                 family.get("phase_tag", ""),
                 _format_float(family.get("reference")),
                 ", ".join(family.get("labels", family.get("peak_ids", []))),
-                family.get("notes", ""),
+                reason,
+                notes,
             ]
             for column, value in enumerate(values):
                 item = QtWidgets.QTableWidgetItem(str(value))
                 item.setData(QtCore.Qt.ItemDataRole.UserRole, peak_ids)
+                item.setData(QtCore.Qt.ItemDataRole.UserRole + 1, family_id)
+                item.setToolTip(reason or notes)
+                self._style_family_item(item, flag)
                 self.family_table.setItem(row, column, item)
         self.family_table.resizeColumnsToContents()
+        if selected_row >= 0:
+            self.family_table.selectRow(selected_row)
         self._sync_peak_plot()
 
     def _selected_family_peak_ids(self) -> set[str]:
@@ -1458,6 +1622,198 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             if values:
                 peak_ids.update(str(value) for value in values)
         return peak_ids
+
+    def _selected_family_id(self) -> str | None:
+        if not hasattr(self, "family_table"):
+            return None
+        row = self.family_table.currentRow()
+        if row < 0:
+            return None
+        item = self.family_table.item(row, FAMILY_COL_ID)
+        if item is None:
+            return None
+        return str(
+            item.data(QtCore.Qt.ItemDataRole.UserRole + 1) or item.text()
+        )
+
+    def _selected_family_ids(self) -> list[str]:
+        if not hasattr(self, "family_table"):
+            return []
+        rows = sorted(
+            {index.row() for index in self.family_table.selectedIndexes()}
+        )
+        if not rows and self.family_table.currentRow() >= 0:
+            rows = [self.family_table.currentRow()]
+        family_ids: list[str] = []
+        for row in rows:
+            item = self.family_table.item(row, FAMILY_COL_ID)
+            if item is None:
+                continue
+            family_id = str(
+                item.data(QtCore.Qt.ItemDataRole.UserRole + 1) or item.text()
+            )
+            if family_id:
+                family_ids.append(family_id)
+        return family_ids
+
+    def _family_by_id(self, family_id: str | None) -> dict[str, Any] | None:
+        if not family_id:
+            return None
+        for family in self._family_records():
+            if str(family.get("family_id", "")) == str(family_id):
+                return family
+        return None
+
+    def _style_family_item(
+        self,
+        item: QtWidgets.QTableWidgetItem,
+        flag: str,
+    ) -> None:
+        if flag == FAMILY_FLAG_APPROPRIATE:
+            item.setBackground(QtGui.QColor("#dcfce7"))
+        elif flag == FAMILY_FLAG_INAPPROPRIATE:
+            item.setBackground(QtGui.QColor("#fee2e2"))
+
+    def toggle_selected_family_flags(self) -> None:
+        family_ids = self._selected_family_ids()
+        if not family_ids:
+            self._set_status("Select a peak family to flag.")
+            return
+        for family_id in family_ids:
+            family = self._family_by_id(family_id)
+            if family is None:
+                continue
+            flag = _family_flag(family)
+            next_index = (FAMILY_FLAG_CYCLE.index(flag) + 1) % len(
+                FAMILY_FLAG_CYCLE
+            )
+            family["user_flag"] = FAMILY_FLAG_CYCLE[next_index]
+        self._sync_families(select_family_id=family_ids[-1])
+        self._set_status(
+            f"Updated review flag for {len(family_ids)} family(s)."
+        )
+        self.structureAnalysisChanged.emit(self.data_id)
+
+    def set_selected_family_flag(self, flag: str) -> None:
+        family_ids = self._selected_family_ids()
+        if not family_ids:
+            self._set_status("Select a peak family to flag.")
+            return
+        normalized = _family_flag({"user_flag": flag})
+        for family_id in family_ids:
+            family = self._family_by_id(family_id)
+            if family is not None:
+                family["user_flag"] = normalized
+        self._sync_families(select_family_id=family_ids[-1])
+        label = _family_flag_label(normalized).lower()
+        self._set_status(f"Marked {len(family_ids)} family(s) as {label}.")
+        self.structureAnalysisChanged.emit(self.data_id)
+
+    def delete_selected_families(self) -> None:
+        family_ids = set(self._selected_family_ids())
+        if not family_ids:
+            self._set_status("Select a peak family to delete.")
+            return
+        state = self._analysis_state()
+        state["families"] = [
+            family
+            for family in self._family_records()
+            if str(family.get("family_id", "")) not in family_ids
+        ]
+        if self.active_family_peak_id is not None:
+            self.active_family_peak_id = None
+        self._sync_families()
+        self._set_status(f"Deleted {len(family_ids)} peak family record(s).")
+        self.structureAnalysisChanged.emit(self.data_id)
+
+    def add_peak_to_active_family(self, peak_id: str) -> bool:
+        family_id = self._selected_family_id()
+        family = self._family_by_id(family_id)
+        if family is None:
+            return False
+        peak = next(
+            (
+                peak
+                for peak in self._structure_peaks()
+                if peak.peak_id == str(peak_id)
+            ),
+            None,
+        )
+        if peak is None:
+            return False
+        peak_ids = [str(value) for value in family.get("peak_ids", [])]
+        labels = [str(value) for value in family.get("labels", [])]
+        added = False
+        if peak.peak_id not in peak_ids:
+            peak_ids.append(peak.peak_id)
+            labels.append(peak.label)
+            family["peak_ids"] = peak_ids
+            family["labels"] = labels
+            _append_family_note(family, f"manually added {peak.label}")
+            added = True
+        if added:
+            family["manual_edited"] = True
+        self.active_family_peak_id = peak.peak_id
+        self._sync_families(select_family_id=family_id)
+        action = "Added" if added else "Selected"
+        self._set_status(f"{action} {peak.label} in {family_id}.")
+        self.structureAnalysisChanged.emit(self.data_id)
+        return True
+
+    def remove_active_family_ring(self) -> None:
+        family_id = self._selected_family_id()
+        family = self._family_by_id(family_id)
+        if family is None:
+            self._set_status("Select a peak family before removing a ring.")
+            return
+        if not self.active_family_peak_id:
+            self._set_status(
+                "Click a highlighted family ring before removing it."
+            )
+            return
+        peak_ids = [str(value) for value in family.get("peak_ids", [])]
+        if self.active_family_peak_id not in peak_ids:
+            self._set_status(
+                "The highlighted ring is not in the active family."
+            )
+            return
+        peak_lookup = {
+            peak.peak_id: peak.label for peak in self._structure_peaks()
+        }
+        removed_label = peak_lookup.get(
+            self.active_family_peak_id,
+            self.active_family_peak_id,
+        )
+        remaining_ids = [
+            peak_id
+            for peak_id in peak_ids
+            if peak_id != self.active_family_peak_id
+        ]
+        if len(remaining_ids) < 2:
+            state = self._analysis_state()
+            state["families"] = [
+                item
+                for item in self._family_records()
+                if str(item.get("family_id", "")) != str(family_id)
+            ]
+            self.active_family_peak_id = None
+            self._sync_families()
+            self._set_status(
+                f"Removed {removed_label}; {family_id} was deleted because "
+                "fewer than two rings remained."
+            )
+            self.structureAnalysisChanged.emit(self.data_id)
+            return
+        family["peak_ids"] = remaining_ids
+        family["labels"] = [
+            peak_lookup.get(peak_id, peak_id) for peak_id in remaining_ids
+        ]
+        family["manual_edited"] = True
+        _append_family_note(family, f"manually removed {removed_label}")
+        self.active_family_peak_id = None
+        self._sync_families(select_family_id=family_id)
+        self._set_status(f"Removed {removed_label} from {family_id}.")
+        self.structureAnalysisChanged.emit(self.data_id)
 
     def _sync_molecule_table(self) -> None:
         molecules = self._wyckoff_state().get("molecules", [])
@@ -1798,7 +2154,42 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         else:
             peak_id = str(payload or "")
         if peak_id:
+            if isinstance(self.plot_widget, QtWidgets.QWidget):
+                self.plot_widget.setFocus()
+            if self._family_editing_active() and self._selected_family_id():
+                if self.add_peak_to_active_family(peak_id):
+                    return
             self._select_peak_by_id(peak_id, scroll_table=True)
+
+    def _handle_family_plot_clicked(
+        self,
+        _scatter: Any,
+        points: list[Any],
+        _event: Any,
+    ) -> None:
+        if not points:
+            return
+        payload = points[0].data()
+        if isinstance(payload, dict):
+            peak_id = str(payload.get("peak_id", ""))
+        else:
+            peak_id = str(payload or "")
+        if not peak_id:
+            return
+        if isinstance(self.plot_widget, QtWidgets.QWidget):
+            self.plot_widget.setFocus()
+        self.active_family_peak_id = peak_id
+        self._select_peak_by_id(peak_id, scroll_table=True)
+        self._set_status(
+            "Selected family ring. Press R to remove it from the active family."
+        )
+
+    def _family_editing_active(self) -> bool:
+        return (
+            hasattr(self, "analysis_tabs")
+            and hasattr(self, "family_tab")
+            and self.analysis_tabs.currentWidget() is self.family_tab
+        )
 
     def _select_peak_by_id(
         self,
@@ -1995,6 +2386,36 @@ def _lattice_spinbox(value: float) -> QtWidgets.QDoubleSpinBox:
 
 def _angle_spinbox(value: float) -> QtWidgets.QDoubleSpinBox:
     return _double_spinbox(value, 0.01, 179.99, 1.0, decimals=3)
+
+
+def _family_confidence(family: dict[str, Any]) -> float:
+    try:
+        value = float(family.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        value = 0.0
+    return max(0.0, min(1.0, value))
+
+
+def _family_flag(family: dict[str, Any]) -> str:
+    flag = str(family.get("user_flag", "")).strip().lower()
+    if flag in {FAMILY_FLAG_APPROPRIATE, FAMILY_FLAG_INAPPROPRIATE}:
+        return flag
+    return ""
+
+
+def _family_flag_label(flag: str) -> str:
+    if flag == FAMILY_FLAG_APPROPRIATE:
+        return "Appropriate"
+    if flag == FAMILY_FLAG_INAPPROPRIATE:
+        return "Inappropriate"
+    return "Unreviewed"
+
+
+def _append_family_note(family: dict[str, Any], note: str) -> None:
+    existing = str(family.get("notes", "")).strip()
+    if note in existing:
+        return
+    family["notes"] = f"{existing}; {note}" if existing else note
 
 
 def _double_spinbox(

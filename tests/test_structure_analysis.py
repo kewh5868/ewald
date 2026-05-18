@@ -213,6 +213,13 @@ def test_peak_family_grouping_respects_phase_tags():
         frozenset(family["peak_ids"]) for family in families
     }
     assert all("p3" not in family["peak_ids"] for family in families)
+    reviewed_family = next(
+        family
+        for family in families
+        if {"p1", "p2"} <= set(family["peak_ids"])
+    )
+    assert reviewed_family["confidence"] > 0.0
+    assert "within tolerance" in reviewed_family["reason"]
 
 
 def test_project_state_peak_helpers_sync_structure_analysis_state():
@@ -580,6 +587,102 @@ def test_structure_analysis_family_selection_highlights_plot_peaks(qtbot):
     x_data, y_data = pane.family_highlight_scatter.getData()
     assert len(x_data) == 0
     assert len(y_data) == 0
+
+
+def test_structure_analysis_family_review_flags_and_deletes(qtbot):
+    project = ProjectState()
+    project.peak_sets["synthetic"] = [
+        {"peak_id": "p1", "label": "P1", "qxy": 1.0, "qz": 0.2},
+        {"peak_id": "p2", "label": "P2", "qxy": 1.02, "qz": 0.6},
+    ]
+    pane = StructureAnalysisPane(project, "synthetic")
+    qtbot.addWidget(pane)
+
+    pane.suggest_peak_families()
+    assert pane.family_table.rowCount() > 0
+    low_confidence_family = pane._family_records()[0]
+    low_confidence_family["confidence"] = 0.25
+    pane._sync_families()
+    low_confidence_id = low_confidence_family["family_id"]
+
+    pane.family_confidence_filter.setValue(0.5)
+    displayed_ids = {
+        pane.family_table.item(row, 0).text()
+        for row in range(pane.family_table.rowCount())
+    }
+    assert low_confidence_id not in displayed_ids
+    pane.family_confidence_filter.setValue(0.0)
+
+    pane.family_table.selectRow(0)
+    family_id = pane.family_table.item(0, 0).text()
+
+    assert any(
+        shortcut.key().toString() == "F" for shortcut in pane._family_shortcuts
+    )
+    pane.toggle_selected_family_flags()
+    family = pane._family_by_id(family_id)
+    assert family["user_flag"] == "appropriate"
+    assert pane.family_table.item(0, 1).text() == "Appropriate"
+
+    pane.set_selected_family_flag("inappropriate")
+    assert family["user_flag"] == "inappropriate"
+    assert pane.family_table.item(0, 1).text() == "Inappropriate"
+
+    pane.delete_selected_families()
+    assert pane._family_by_id(family_id) is None
+
+
+def test_structure_analysis_family_plot_edits_members(qtbot):
+    class FakePoint:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def data(self):
+            return self._payload
+
+    project = ProjectState()
+    project.peak_sets["synthetic"] = [
+        {"peak_id": "p1", "label": "P1", "qxy": 1.0, "qz": 0.2},
+        {"peak_id": "p2", "label": "P2", "qxy": 1.02, "qz": 0.6},
+        {"peak_id": "p3", "label": "P3", "qxy": 1.8, "qz": 1.1},
+    ]
+    pane = StructureAnalysisPane(project, "synthetic")
+    qtbot.addWidget(pane)
+
+    pane.suggest_peak_families()
+    family_row = next(
+        row
+        for row in range(pane.family_table.rowCount())
+        if {"p1", "p2"}
+        <= set(
+            pane.family_table.item(row, 0).data(
+                QtCore.Qt.ItemDataRole.UserRole
+            )
+        )
+    )
+    pane.family_table.selectRow(family_row)
+    family_id = pane.family_table.item(family_row, 0).text()
+    pane.analysis_tabs.setCurrentIndex(1)
+
+    pane._handle_peak_plot_clicked(
+        None,
+        [FakePoint({"peak_id": "p3"})],
+        None,
+    )
+    family = pane._family_by_id(family_id)
+    assert "p3" in family["peak_ids"]
+    assert pane.active_family_peak_id == "p3"
+
+    pane._handle_family_plot_clicked(
+        None,
+        [FakePoint({"peak_id": "p3"})],
+        None,
+    )
+    pane.remove_active_family_ring()
+
+    family = pane._family_by_id(family_id)
+    assert "p3" not in family["peak_ids"]
+    assert family["manual_edited"] is True
 
 
 def test_structure_analysis_peak_plot_and_table_selection_sync(qtbot):
