@@ -37,6 +37,7 @@ from ewald.ui.peak_identification import (
     PeakIdentificationPane,
 )
 from ewald.ui.structure_analysis import (
+    COL_PEAK_ID,
     COL_PHASE,
     COL_QXY,
     StructureAnalysisPane,
@@ -549,6 +550,38 @@ def test_structure_analysis_family_selection_highlights_plot_peaks(qtbot):
     x_data, y_data = pane.family_highlight_scatter.getData()
     assert len(x_data) == 0
     assert len(y_data) == 0
+
+
+def test_structure_analysis_peak_plot_and_table_selection_sync(qtbot):
+    project = ProjectState()
+    project.peak_sets["synthetic"] = [
+        {"peak_id": "p1", "label": "P1", "qxy": 0.1, "qz": 0.2},
+        {"peak_id": "p2", "label": "P2", "qxy": 1.1, "qz": 1.2},
+    ]
+    pane = StructureAnalysisPane(project, "synthetic")
+    qtbot.addWidget(pane)
+    if pane.peak_scatter is None:
+        pytest.skip("pyqtgraph is unavailable")
+
+    p2_point = next(
+        point
+        for point in pane.peak_scatter.points()
+        if point.data()["peak_id"] == "p2"
+    )
+    pane._handle_peak_plot_clicked(pane.peak_scatter, [p2_point], None)
+
+    assert pane.active_peak_id == "p2"
+    assert (
+        pane.peak_table.item(
+            pane.peak_table.currentRow(),
+            COL_PEAK_ID,
+        ).data(QtCore.Qt.ItemDataRole.UserRole)
+        == "p2"
+    )
+
+    pane.peak_table.selectRow(0)
+
+    assert pane.active_peak_id == "p1"
 
 
 def test_structure_analysis_draws_peak_rois_on_plot(qtbot):

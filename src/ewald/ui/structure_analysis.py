@@ -352,6 +352,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.image_style = image_style or ImageDisplayStyle()
         self.active_peak_id: str | None = None
         self._syncing_table = False
+        self._syncing_peak_selection = False
         self._phase_controls: list[QtWidgets.QComboBox] = []
         self.view_box: Any | None = None
         self.roi_overlay_items: list[Any] = []
@@ -661,6 +662,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         )
         self.family_highlight_scatter.setZValue(15)
         self.peak_scatter.setZValue(14)
+        self.peak_scatter.sigClicked.connect(self._handle_peak_plot_clicked)
         self.plot_widget.addItem(self.peak_scatter)
         self.plot_widget.addItem(self.family_highlight_scatter)
 
@@ -1741,14 +1743,89 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.structureAnalysisChanged.emit(self.data_id)
 
     def _handle_peak_selection(self) -> None:
+        if self._syncing_peak_selection:
+            return
         row = self.peak_table.currentRow()
         if row < 0:
             return
         item = self.peak_table.item(row, COL_PEAK_ID)
         if item is None:
             return
-        self.active_peak_id = str(item.data(QtCore.Qt.ItemDataRole.UserRole))
+        peak_id = str(item.data(QtCore.Qt.ItemDataRole.UserRole))
+        self.active_peak_id = peak_id
         self._sync_peak_plot()
+        self._ensure_peak_visible(peak_id)
+
+    def _handle_peak_plot_clicked(
+        self,
+        _scatter: Any,
+        points: list[Any],
+        _event: Any,
+    ) -> None:
+        if not points:
+            return
+        payload = points[0].data()
+        if isinstance(payload, dict):
+            peak_id = str(payload.get("peak_id", ""))
+        else:
+            peak_id = str(payload or "")
+        if peak_id:
+            self._select_peak_by_id(peak_id, scroll_table=True)
+
+    def _select_peak_by_id(
+        self,
+        peak_id: str,
+        *,
+        scroll_table: bool,
+    ) -> bool:
+        for row in range(self.peak_table.rowCount()):
+            item = self.peak_table.item(row, COL_PEAK_ID)
+            if item is None:
+                continue
+            if str(item.data(QtCore.Qt.ItemDataRole.UserRole)) != peak_id:
+                continue
+            self._syncing_peak_selection = True
+            try:
+                self.peak_table.selectRow(row)
+                if scroll_table:
+                    self.peak_table.scrollToItem(
+                        item,
+                        QtWidgets.QAbstractItemView.ScrollHint.PositionAtCenter,
+                    )
+            finally:
+                self._syncing_peak_selection = False
+            self.active_peak_id = peak_id
+            self._sync_peak_plot()
+            self._ensure_peak_visible(peak_id)
+            return True
+        return False
+
+    def _ensure_peak_visible(self, peak_id: str) -> None:
+        if pg is None or self.plot_widget is None:
+            return
+        peak = next(
+            (
+                item
+                for item in self._structure_peaks()
+                if item.peak_id == peak_id
+            ),
+            None,
+        )
+        if peak is None:
+            return
+        try:
+            (x_min, x_max), (y_min, y_max) = self.plot_widget.viewRange()
+        except Exception:
+            return
+        if x_min <= peak.qxy <= x_max and y_min <= peak.qz <= y_max:
+            return
+        x_span = max(float(x_max - x_min), 1.0e-9)
+        y_span = max(float(y_max - y_min), 1.0e-9)
+        self.plot_widget.setRange(
+            xRange=(peak.qxy - x_span / 2.0, peak.qxy + x_span / 2.0),
+            yRange=(peak.qz - y_span / 2.0, peak.qz + y_span / 2.0),
+            padding=0.0,
+        )
 
     def _set_peak_phase(self, peak_id: str, phase_tag: str) -> None:
         if self._syncing_table:
