@@ -1,0 +1,10 @@
+[flake8]
+exclude =
+    .git,
+    __pycache__,
+    build,
+    dist,
+    docs/source/conf.py,
+    src/ewald/legacy
+max-line-length = 79
+extend-ignore = E203, E501, W503

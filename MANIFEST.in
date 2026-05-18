@@ -1,0 +1,6 @@
+include LICENSE
+include README.md
+include requirements/*.txt
+recursive-include example *.edf *.json *.md *.poni *.tiff
+recursive-include src/ewald *.ipynb *.md *.png *.py *.txt *.yml
+recursive-include docs *.md

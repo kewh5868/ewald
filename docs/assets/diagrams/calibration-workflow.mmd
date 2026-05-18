@@ -1,0 +1,8 @@
+flowchart TD
+    A[Load detector file] --> B[Load metadata + sidecar]
+    B --> C[Apply correction UI controls]
+    C --> D[Launch pyFAI-calib2]
+    D --> E[Refine/calibrate and save .poni]
+    E --> F[Load/select PONI in EWALD]
+    F --> G[Confirm correction state]
+    G --> H[Enable downstream workflows]

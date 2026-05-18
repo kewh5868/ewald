@@ -1,0 +1,20 @@
+{
+  "author_names": "Keith White",
+  "author_emails": "keith.white@colorado.edu",
+  "maintainer_names": "Keith White",
+  "maintainer_emails": "keith.white@colorado.edu",
+  "maintainer_github_usernames": "kewh5868",
+  "contributors": "Keith White",
+  "license_holders": "Keith White",
+  "project_name": "EWALD",
+  "github_username_or_orgname": "kewh5868",
+  "github_repo_name": "ewald",
+  "conda_pypi_package_dist_name": "ewald",
+  "package_dir_name": "ewald",
+  "project_short_description": "Qt6 application framework for Experimental WAXS Analysis for Lattice Determination.",
+  "project_keywords": "WAXS, GIWAXS, X-ray scattering, crystallography, Qt",
+  "minimum_supported_python_version": "3.11",
+  "maximum_supported_python_version": "3.14",
+  "project_needs_c_code_compiled": "No",
+  "project_has_gui_tests": "Yes"
+}

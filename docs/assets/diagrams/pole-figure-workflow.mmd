@@ -1,0 +1,15 @@
+flowchart TD
+    SelectROI[Select ROI]
+    Label[Attach hkl + labels]
+    Bg[Select background subtraction mode]
+    Generate[Generate pole figure]
+    Stale[ROI edit -> stale flag]
+    Export[Export CSV / PNG]
+    Store[Store ROI metadata]
+
+    SelectROI --> Label
+    Label --> Bg
+    Bg --> Generate
+    Generate --> Export
+    Export --> Store
+    Store --> Stale

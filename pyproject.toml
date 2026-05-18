@@ -1,0 +1,110 @@
+[build-system]
+requires = ["setuptools>=68", "setuptools-git-versioning>=2.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ewald"
+dynamic = ["version", "dependencies"]
+authors = [
+  { name = "Keith White", email = "keith.white@colorado.edu" },
+]
+maintainers = [
+  { name = "Keith White", email = "keith.white@colorado.edu" },
+]
+description = "Qt6 application framework for experimental WAXS analysis and lattice determination."
+keywords = [
+  "WAXS",
+  "GIWAXS",
+  "X-ray scattering",
+  "crystallography",
+  "Qt",
+]
+readme = "README.md"
+requires-python = ">=3.11, <3.14"
+license = { file = "LICENSE" }
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: X11 Applications :: Qt",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS :: MacOS X",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Chemistry",
+  "Topic :: Scientific/Engineering :: Physics",
+]
+
+[project.urls]
+Homepage = "https://github.com/kewh5868/ewald/"
+Issues = "https://github.com/kewh5868/ewald/issues/"
+
+[project.scripts]
+ewald = "ewald.app.cli:main"
+ewald-giwaxs-sim = "ewald.app.simulation:main"
+ewald-pole-figure = "ewald.app.pole_figure:main"
+
+[project.optional-dependencies]
+legacy = ["PyHyperScattering"]
+
+[tool.setuptools-git-versioning]
+enabled = true
+template = "{tag}"
+dev_template = "{tag}"
+dirty_template = "{tag}"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ewald*"]
+namespaces = false
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements/pip.txt"] }
+
+[tool.codespell]
+exclude-file = ".codespell/ignore_lines.txt"
+ignore-words = ".codespell/ignore_words.txt"
+skip = "*.cif,*.dat,*.edf,*.poni,*.tiff,*.tif"
+
+[tool.docformatter]
+recursive = true
+wrap-summaries = 72
+wrap-descriptions = 72
+
+[tool.black]
+line-length = 79
+target-version = ["py312"]
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | \.rst
+  | \.txt
+  | _build
+  | build
+  | dist
+  | src/ewald/legacy
+  | tests/data
+)/
+'''
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"
+
+[tool.setuptools.package-data]
+"ewald" = [
+  "legacy/**/*.ipynb",
+  "legacy/**/*.md",
+  "legacy/**/*.png",
+  "legacy/**/*.txt",
+  "legacy/**/*.yml",
+]
