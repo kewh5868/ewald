@@ -111,6 +111,8 @@ WYCKOFF_COMBINATION_COLUMNS = [
     "Free params",
     "Sites",
 ]
+STRUCTURE_PEAK_BRUSH = "#22c55e"
+STRUCTURE_ACTIVE_PEAK_BRUSH = "#2f80ed"
 
 
 @dataclass(frozen=True)
@@ -1275,12 +1277,13 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         spots = []
         family_spots = []
         for peak in self._structure_peaks():
-            color = _phase_color(peak.phase_tag)
             if peak.peak_id == self.active_peak_id:
                 size = 14
-                pen = pg.mkPen("#111827", width=1.6)
+                brush = pg.mkBrush(STRUCTURE_ACTIVE_PEAK_BRUSH)
+                pen = pg.mkPen("#ffffff", width=1.0)
             else:
                 size = 10
+                brush = pg.mkBrush(STRUCTURE_PEAK_BRUSH)
                 pen = pg.mkPen("#ffffff", width=0.8)
             spots.append(
                 {
@@ -1288,7 +1291,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
                     "data": peak.as_dict(),
                     "symbol": "o",
                     "size": size,
-                    "brush": pg.mkBrush(color),
+                    "brush": brush,
                     "pen": pen,
                 }
             )

@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from qtpy import QtCore, QtWidgets
+from qtpy import QtCore, QtGui, QtWidgets
 
 from ewald.analysis.structure import (
     CRYSTAL_SYSTEM_SPACE_GROUP_RANGES,
@@ -568,6 +568,7 @@ def test_structure_analysis_peak_plot_and_table_selection_sync(qtbot):
         for point in pane.peak_scatter.points()
         if point.data()["peak_id"] == "p2"
     )
+    assert p2_point.brush().color() == QtGui.QColor("#22c55e")
     pane._handle_peak_plot_clicked(pane.peak_scatter, [p2_point], None)
 
     assert pane.active_peak_id == "p2"
@@ -578,6 +579,12 @@ def test_structure_analysis_peak_plot_and_table_selection_sync(qtbot):
         ).data(QtCore.Qt.ItemDataRole.UserRole)
         == "p2"
     )
+    p2_point = next(
+        point
+        for point in pane.peak_scatter.points()
+        if point.data()["peak_id"] == "p2"
+    )
+    assert p2_point.brush().color() == QtGui.QColor("#2f80ed")
 
     pane.peak_table.selectRow(0)
 
