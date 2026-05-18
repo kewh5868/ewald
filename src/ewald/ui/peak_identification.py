@@ -114,6 +114,7 @@ FALLBACK_SCATTER_VECTOR = np.array((1.0, 0.0, 1.0), dtype=float)
 ORIENTATION_ANGLE_LIMITS_DEG = (-180.0, 180.0)
 ORIENTATION_SLIDER_SCALE = 10.0
 PEAK_UNDO_LIMIT = 50
+PEAK_ACTION_ICON_SIZE = QtCore.QSize(18, 18)
 ROI_RESIZE_SYMMETRIC = "symmetric"
 ROI_RESIZE_QZ = "qz"
 ROI_RESIZE_QXY = "qxy"
@@ -1626,15 +1627,30 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.delete_peak_button = QtWidgets.QToolButton()
         self.delete_peak_button.setText("Delete")
         self.delete_peak_button.clicked.connect(self.delete_selected_peak)
+        style = QtWidgets.QApplication.style()
         self.clear_peaks_button = QtWidgets.QToolButton()
-        self.clear_peaks_button.setText("Clear")
+        self._configure_peak_action_button(
+            self.clear_peaks_button,
+            style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_TrashIcon),
+            "Clear all peaks",
+        )
         self.clear_peaks_button.clicked.connect(self.clear_peaks)
         self.undo_button = QtWidgets.QToolButton()
-        self.undo_button.setText("Undo")
+        self._configure_peak_action_button(
+            self.undo_button,
+            style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowBack),
+            "Undo peak edit",
+        )
         self.undo_button.clicked.connect(self.undo_peak_action)
         self.undo_button.setShortcut(QtGui.QKeySequence.StandardKey.Undo)
         self.redo_button = QtWidgets.QToolButton()
-        self.redo_button.setText("Redo")
+        self._configure_peak_action_button(
+            self.redo_button,
+            style.standardIcon(
+                QtWidgets.QStyle.StandardPixmap.SP_ArrowForward
+            ),
+            "Redo peak edit",
+        )
         self.redo_button.clicked.connect(self.redo_peak_action)
         self.redo_button.setShortcut(QtGui.QKeySequence.StandardKey.Redo)
         self.snap_all_button = QtWidgets.QToolButton()
@@ -1723,6 +1739,19 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.symmetry_summary_label.setWordWrap(True)
         self._build_peak_fit_controls()
         self._build_crystal_overlay_controls()
+
+    @staticmethod
+    def _configure_peak_action_button(
+        button: QtWidgets.QToolButton,
+        icon: QtGui.QIcon,
+        tooltip: str,
+    ) -> None:
+        button.setIcon(icon)
+        button.setIconSize(PEAK_ACTION_ICON_SIZE)
+        button.setToolTip(tooltip)
+        button.setAccessibleName(tooltip)
+        button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly)
+        button.setAutoRaise(True)
 
     def _build_peak_fit_controls(self) -> None:
         self.fit_peak_combo = RichTextComboBox()
@@ -2095,6 +2124,16 @@ class PeakIdentificationPane(QtWidgets.QWidget):
     def _peak_finder_tab(self) -> QtWidgets.QWidget:
         tab = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(tab)
+        self.peak_action_bar = QtWidgets.QWidget()
+        peak_action_layout = QtWidgets.QHBoxLayout(self.peak_action_bar)
+        peak_action_layout.setContentsMargins(0, 0, 0, 4)
+        peak_action_layout.setSpacing(4)
+        peak_action_layout.addStretch(1)
+        peak_action_layout.addWidget(self.undo_button)
+        peak_action_layout.addWidget(self.redo_button)
+        peak_action_layout.addWidget(self.clear_peaks_button)
+        layout.addWidget(self.peak_action_bar)
+
         scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
         content = QtWidgets.QWidget()
@@ -2139,11 +2178,8 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         edit_layout.addWidget(self.snap_all_button, 2, 0, 1, 2)
         edit_layout.addWidget(QtWidgets.QLabel("Snap window px"), 3, 0)
         edit_layout.addWidget(self.snap_window_px, 3, 1)
-        edit_layout.addWidget(self.undo_button, 4, 0)
-        edit_layout.addWidget(self.redo_button, 4, 1)
-        edit_layout.addWidget(self.clear_peaks_button, 5, 0, 1, 2)
-        edit_layout.addWidget(self.cursor_coordinate_label, 6, 0, 1, 2)
-        edit_layout.addWidget(self.snap_feedback_label, 7, 0, 1, 2)
+        edit_layout.addWidget(self.cursor_coordinate_label, 4, 0, 1, 2)
+        edit_layout.addWidget(self.snap_feedback_label, 5, 0, 1, 2)
         content_layout.addWidget(edit_group)
 
         roi_group = QtWidgets.QGroupBox("ROI Tools")

@@ -1257,6 +1257,19 @@ def test_peak_identification_adds_detects_and_regions_peaks(qtbot, repo_root):
     assert pane.side_tabs.tabText(0) == "Peak Finder"
     assert pane.side_tabs.tabText(1) == "Crystal Overlay"
     assert pane.side_tabs.tabText(2) == "Peak Fit"
+    peak_finder_tab = pane.side_tabs.widget(0)
+    assert peak_finder_tab.layout().itemAt(0).widget() is pane.peak_action_bar
+    for button in (
+        pane.undo_button,
+        pane.redo_button,
+        pane.clear_peaks_button,
+    ):
+        assert button.parentWidget() is pane.peak_action_bar
+        assert not button.icon().isNull()
+        assert (
+            button.toolButtonStyle()
+            == QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly
+        )
     assert pane.image_style == viewer.image_display_style()
     assert structure_pane.image_style == viewer.image_display_style()
     assert pane.image_display_style() == viewer.image_display_style()
