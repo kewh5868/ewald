@@ -1,0 +1,9 @@
+flowchart LR
+    Beam[Incident X-ray beam] --> Diff[Scattering from lattice planes]
+    Diff --> ThetaX[theta_x]
+    Diff --> ThetaY[theta_y]
+    ThetaX --> Detector[Detector plane]
+    ThetaY --> Detector
+    Detector --> Pattern[Simulated pattern]
+    Pattern --> Preset[Orientation presets]
+    Pattern --> Sweep[Pattern / Ewald sphere sweep modes]

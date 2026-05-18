@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#f8fafc" stroke="#cbd5e1" stroke-width="4"/>
+  <rect x="40" y="40" width="1200" height="640" fill="none" stroke="#94a3b8" stroke-width="2" stroke-dasharray="10 8"/>
+  <text x="640" y="330" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="44" fill="#0f172a">EWALD Docs Placeholder</text>
+  <text x="640" y="390" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="32" fill="#334155">Image: corrections-workflow</text>
+  <text x="640" y="450" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="22" fill="#64748b">Replace with a screenshot when available.</text>
+</svg>

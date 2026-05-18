@@ -1,0 +1,99 @@
+site_name: EWALD Documentation
+site_description: Experimental WAXS Analysis for Lattice Determination
+site_url: https://kewh5868.github.io/ewald/
+repo_url: https://github.com/kewh5868/ewald
+repo_name: kewh5868/ewald
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+  - User Guide:
+      - User Interface Overview: user-interface/overview.md
+      - Data Loading: guides/data-loading.md
+      - Calibration: guides/calibration.md
+      - Detector Geometry and Corrections: guides/detector-geometry-and-corrections.md
+      - ROI Tools: guides/roi-tools.md
+      - Peak Identification: guides/peak-identification.md
+      - Peak Fitting: guides/peak-fitting.md
+      - Structure Analysis: guides/structure-analysis.md
+      - Pole Figure Generator: guides/pole-figure-generator.md
+      - Film Optics: guides/film-optics.md
+      - Simulation Tool: guides/simulation.md
+      - Outputs and Exports: guides/outputs-and-exports.md
+      - Assets and Diagrams: guides/assets-and-diagrams.md
+      - Troubleshooting: guides/troubleshooting.md
+      - FAQ: guides/faq.md
+  - Tutorials:
+      - Loading Data and Viewing a GIWAXS Image: tutorials/loading-data-and-viewing.md
+      - Creating and Editing ROIs: tutorials/create-edit-rois.md
+      - Identifying Peaks: tutorials/identifying-peaks.md
+      - Fitting q<sub>xy</sub> and q<sub>z</sub>: tutorials/fitting-traces.md
+      - Exporting Fitted Peaks: tutorials/export-fitted-peaks.md
+      - Using Structure Analysis: tutorials/structure-analysis.md
+      - Running a Basic Simulation: tutorials/run-simulation.md
+      - Using Film Optics Inputs: tutorials/film-optics.md
+      - Building Docs Locally: tutorials/build-docs-locally.md
+  - Developer:
+      - Notes: developer/notes.md
+      - Add a New Documentation Page: developer/add-new-documentation-page.md
+      - Documentation Style Guide: guides/style-guide.md
+      - Maintenance Checklist: developer/maintenance-checklist.md
+      - Repository Structure: development/repo-structure.md
+      - Feature Planning: development/feature-planning.md
+      - pyFAI Integration Notes: development/pyfai-integration.md
+      - INSIGHT Correction Workflow: development/insight-correction-workflow.md
+
+theme:
+  name: material
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mermaid2
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.emoji
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed
+  - pymdownx.tasklist
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/kewh5868/ewald

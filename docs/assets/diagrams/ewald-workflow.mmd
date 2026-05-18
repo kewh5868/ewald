@@ -1,0 +1,12 @@
+flowchart LR
+    Start[Open EWALD] --> Load[Import dataset]
+    Load --> Corr[Apply corrections]
+    Corr --> View[Data Viewer]
+    View --> ROI[Define ROI]
+    ROI --> ID[Peak Identification]
+    ID --> Fit[Peak Fit]
+    Fit --> Struct[Structure Analysis]
+    Struct --> Sim[GIWAXS simulation]
+    Struct --> Pole[Pole figure]
+    Sim --> Export[Export results]
+    Pole --> Export

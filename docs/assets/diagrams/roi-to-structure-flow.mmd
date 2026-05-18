@@ -1,0 +1,15 @@
+flowchart TD
+    ROI[ROI geometry/table]
+    Peaks[Peak Identification]
+    Fit[Peak Fit (q<sub>xy</sub>, q<sub>z</sub>, azimuthal)]
+    Struct[Structure Analysis import]
+
+    ROI --> Peaks
+    Peaks --> Fit
+    Fit --> Struct
+    Struct --> Rank[Candidate ranking]
+    Struct --> Refine[Lattice refinement]
+    Struct --> CIF[Ranked CIF generation]
+    Rank --> Export[Outputs]
+    Refine --> Export
+    CIF --> Export
