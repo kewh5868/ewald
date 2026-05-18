@@ -131,6 +131,11 @@ WYCKOFF_COMBINATION_COLUMNS = [
     "Free params",
     "Sites",
 ]
+ATOM_SPEC_COLUMNS = ["Element", "Stoich.", "Shared site", "Occupancy"]
+ATOM_COL_ELEMENT = 0
+ATOM_COL_STOICHIOMETRY = 1
+ATOM_COL_SHARED_SITE = 2
+ATOM_COL_OCCUPANCY = 3
 STRUCTURE_PEAK_BRUSH = "#22c55e"
 STRUCTURE_ACTIVE_PEAK_BRUSH = "#2f80ed"
 FAMILY_FLAG_APPROPRIATE = "appropriate"
@@ -387,6 +392,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.active_family_peak_id: str | None = None
         self._syncing_table = False
         self._syncing_peak_selection = False
+        self._syncing_atom_table = False
         self._phase_controls: list[QtWidgets.QComboBox] = []
         self._family_shortcuts: list[QtGui.QShortcut] = []
         self.view_box: Any | None = None
@@ -565,23 +571,20 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         if candidate is None:
             self._set_status("Select a candidate before generating CIFs.")
             return []
-        atoms = [
-            token.strip()
-            for token in self.free_atoms_edit.text()
-            .replace(";", ",")
-            .split(",")
-            if token.strip()
-        ]
+        atom_specs = self._free_atom_specs()
+        atoms = [spec["element"] for spec in atom_specs]
         density = self.density_spin.value()
+        self._wyckoff_state()["free_atoms"] = atom_specs
         records = generate_ranked_cif_records(
             candidate,
             atoms=atoms,
+            atom_specs=atom_specs,
             molecules=self._wyckoff_state().get("molecules", []),
             space_group_number=self._selected_space_group_number(),
             wyckoff_combinations=self._selected_wyckoff_combinations(),
             stoichiometry=self.stoichiometry_edit.text(),
             density_g_cm3=density if density > 0.0 else None,
-            occupancy_constraints=self.occupancy_edit.toPlainText(),
+            occupancy_constraints=_atom_occupancy_summary(atom_specs),
             limit=self.cif_count_spin.value(),
         )
         records = self._write_generated_cif_files(records)
@@ -983,7 +986,37 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.wyckoff_combination_table.setEditTriggers(
             QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
         )
-        self.free_atoms_edit = QtWidgets.QLineEdit("Pb, I")
+        self.atom_table = QtWidgets.QTableWidget(0, len(ATOM_SPEC_COLUMNS))
+        self.atom_table.setHorizontalHeaderLabels(ATOM_SPEC_COLUMNS)
+        self.atom_table.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.atom_table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.AllEditTriggers
+        )
+        self.atom_table.setMinimumHeight(116)
+        self.atom_table.horizontalHeader().setStretchLastSection(True)
+        self.atom_table.itemChanged.connect(
+            lambda _item: self._store_free_atom_specs()
+        )
+        self.add_atom_button = QtWidgets.QToolButton()
+        self.add_atom_button.setText("Add Atoms")
+        self.add_atom_button.setToolTip(
+            qt_tooltip(
+                "Add an optional free atom row with stoichiometry, shared-site, "
+                "and occupancy controls."
+            )
+        )
+        self.add_atom_button.clicked.connect(self.add_atom_spec_row)
+        self.remove_atom_button = QtWidgets.QToolButton()
+        self.remove_atom_button.setText("Remove Atoms")
+        self.remove_atom_button.setToolTip(
+            qt_tooltip("Remove the selected optional free atom row(s).")
+        )
+        self.remove_atom_button.clicked.connect(
+            self.remove_selected_atom_specs
+        )
+        self._sync_atom_table_from_state()
         self.molecule_combo = QtWidgets.QComboBox()
         for key, metadata in REFERENCE_MOLECULES.items():
             self.molecule_combo.addItem(
@@ -1011,8 +1044,6 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.stoichiometry_edit = QtWidgets.QLineEdit()
         self.density_spin = _double_spinbox(0.0, 0.0, 100.0, 0.1)
         self.density_spin.setSuffix(" g/cm3")
-        self.occupancy_edit = QtWidgets.QPlainTextEdit()
-        self.occupancy_edit.setMaximumHeight(72)
         self.cif_count_spin = _int_spinbox(5, 1, 50)
         self.generate_cif_button = QtWidgets.QToolButton()
         self.generate_cif_button.setText("Generate Ranked CIFs")
@@ -1041,6 +1072,122 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.cif_table.itemSelectionChanged.connect(self._sync_cif_visualizer)
         self.cif_visualizer = _GeneratedCifPreview()
         self._sync_space_group_combo()
+
+    def _sync_atom_table_from_state(self) -> None:
+        records = self._wyckoff_state().get("free_atoms")
+        if not isinstance(records, list) or not records:
+            records = [
+                {"element": "Pb", "stoichiometry": 1.0},
+                {"element": "I", "stoichiometry": 1.0},
+            ]
+        self._syncing_atom_table = True
+        try:
+            self.atom_table.setRowCount(0)
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                self.add_atom_spec_row(
+                    element=str(record.get("element") or ""),
+                    stoichiometry=_float_or_default(
+                        record.get("stoichiometry", record.get("count", 1.0)),
+                        1.0,
+                    ),
+                    shared_site=str(record.get("shared_site") or ""),
+                    occupancy=_float_or_default(
+                        record.get("occupancy", 1.0),
+                        1.0,
+                    ),
+                )
+        finally:
+            self._syncing_atom_table = False
+        self._store_free_atom_specs()
+
+    def add_atom_spec_row(
+        self,
+        *,
+        element: str = "X",
+        stoichiometry: float = 1.0,
+        shared_site: str = "",
+        occupancy: float = 1.0,
+    ) -> None:
+        row = self.atom_table.rowCount()
+        self.atom_table.insertRow(row)
+        element_item = QtWidgets.QTableWidgetItem(element)
+        shared_item = QtWidgets.QTableWidgetItem(shared_site)
+        self.atom_table.setItem(row, ATOM_COL_ELEMENT, element_item)
+        self.atom_table.setCellWidget(
+            row,
+            ATOM_COL_STOICHIOMETRY,
+            count_spinbox := _atom_count_spinbox(stoichiometry),
+        )
+        self.atom_table.setItem(row, ATOM_COL_SHARED_SITE, shared_item)
+        self.atom_table.setCellWidget(
+            row,
+            ATOM_COL_OCCUPANCY,
+            occupancy_spinbox := _occupancy_spinbox(occupancy),
+        )
+        count_spinbox.valueChanged.connect(
+            lambda _value: self._store_free_atom_specs()
+        )
+        occupancy_spinbox.valueChanged.connect(
+            lambda _value: self._store_free_atom_specs()
+        )
+        self.atom_table.resizeColumnsToContents()
+        self._store_free_atom_specs()
+
+    def remove_selected_atom_specs(self) -> None:
+        rows = sorted(
+            {index.row() for index in self.atom_table.selectedIndexes()},
+            reverse=True,
+        )
+        if not rows and self.atom_table.currentRow() >= 0:
+            rows = [self.atom_table.currentRow()]
+        for row in rows:
+            self.atom_table.removeRow(row)
+        self._store_free_atom_specs()
+
+    def _free_atom_specs(self) -> list[dict[str, Any]]:
+        specs: list[dict[str, Any]] = []
+        for row in range(self.atom_table.rowCount()):
+            element_item = self.atom_table.item(row, ATOM_COL_ELEMENT)
+            element = str(element_item.text() if element_item else "").strip()
+            if not element:
+                continue
+            shared_item = self.atom_table.item(row, ATOM_COL_SHARED_SITE)
+            count_widget = self.atom_table.cellWidget(
+                row,
+                ATOM_COL_STOICHIOMETRY,
+            )
+            occupancy_widget = self.atom_table.cellWidget(
+                row,
+                ATOM_COL_OCCUPANCY,
+            )
+            stoichiometry = (
+                count_widget.value()
+                if isinstance(count_widget, QtWidgets.QDoubleSpinBox)
+                else 1.0
+            )
+            occupancy = (
+                occupancy_widget.value()
+                if isinstance(occupancy_widget, QtWidgets.QDoubleSpinBox)
+                else 1.0
+            )
+            specs.append(
+                {
+                    "element": element,
+                    "stoichiometry": float(stoichiometry),
+                    "shared_site": str(
+                        shared_item.text() if shared_item else ""
+                    ).strip(),
+                    "occupancy": float(occupancy),
+                }
+            )
+        return specs
+
+    def _store_free_atom_specs(self) -> None:
+        if self._syncing_atom_table:
+            return
+        self._wyckoff_state()["free_atoms"] = self._free_atom_specs()
 
     def _build_layout(self) -> None:
         self.analysis_tabs = QtWidgets.QTabWidget()
@@ -1195,7 +1342,16 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         composition_group = QtWidgets.QGroupBox("Composition & Molecules")
         composition_layout = QtWidgets.QVBoxLayout(composition_group)
         composition_form = QtWidgets.QFormLayout()
-        composition_form.addRow("Free atoms", self.free_atoms_edit)
+        atom_widget = QtWidgets.QWidget()
+        atom_layout = QtWidgets.QVBoxLayout(atom_widget)
+        atom_layout.setContentsMargins(0, 0, 0, 0)
+        atom_button_row = QtWidgets.QHBoxLayout()
+        atom_button_row.addWidget(self.add_atom_button)
+        atom_button_row.addWidget(self.remove_atom_button)
+        atom_button_row.addStretch(1)
+        atom_layout.addLayout(atom_button_row)
+        atom_layout.addWidget(self.atom_table)
+        composition_form.addRow("Free atoms", atom_widget)
         molecule_row = QtWidgets.QWidget()
         molecule_layout = QtWidgets.QHBoxLayout(molecule_row)
         molecule_layout.setContentsMargins(0, 0, 0, 0)
@@ -1205,10 +1361,6 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         composition_form.addRow("Reference molecule", molecule_row)
         composition_form.addRow("Stoichiometry", self.stoichiometry_edit)
         composition_form.addRow("Density", self.density_spin)
-        composition_form.addRow(
-            "Occupancy constraints",
-            self.occupancy_edit,
-        )
         composition_layout.addLayout(composition_form)
         composition_layout.addWidget(self.molecule_table)
         setup_layout.addWidget(composition_group)
@@ -2458,6 +2610,28 @@ def _angle_spinbox(value: float) -> QtWidgets.QDoubleSpinBox:
     return _double_spinbox(value, 0.01, 179.99, 1.0, decimals=3)
 
 
+def _atom_count_spinbox(value: float) -> QtWidgets.QDoubleSpinBox:
+    spinbox = _double_spinbox(value, 0.0, 999.0, 1.0, decimals=4)
+    spinbox.setToolTip(
+        qt_tooltip(
+            "Optional stoichiometric amount for this free atom. Leave as 1 "
+            "for a simple one-site atom entry."
+        )
+    )
+    return spinbox
+
+
+def _occupancy_spinbox(value: float) -> QtWidgets.QDoubleSpinBox:
+    spinbox = _double_spinbox(value, 0.0, 1.0, 0.05, decimals=4)
+    spinbox.setToolTip(
+        qt_tooltip(
+            "Optional site occupancy fraction written to the CIF atom-site "
+            "occupancy column."
+        )
+    )
+    return spinbox
+
+
 def _family_confidence(family: dict[str, Any]) -> float:
     try:
         value = float(family.get("confidence", 0.0))
@@ -2503,6 +2677,31 @@ def _safe_generated_cif_filename(cif_id: str) -> str:
         for character in cif_id
     ).strip("._")
     return f"{safe or 'generated_cif'}.cif"
+
+
+def _float_or_default(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _atom_occupancy_summary(atom_specs: list[dict[str, Any]]) -> str:
+    pieces = []
+    for spec in atom_specs:
+        element = str(spec.get("element") or "").strip()
+        shared_site = str(spec.get("shared_site") or "").strip()
+        occupancy = _float_or_default(spec.get("occupancy", 1.0), 1.0)
+        if not element:
+            continue
+        details = []
+        if shared_site:
+            details.append(f"shared site {shared_site}")
+        if abs(occupancy - 1.0) > 1.0e-9:
+            details.append(f"occupancy {occupancy:g}")
+        if details:
+            pieces.append(f"{element}: " + ", ".join(details))
+    return "; ".join(pieces)
 
 
 def _double_spinbox(

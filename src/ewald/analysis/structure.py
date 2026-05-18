@@ -760,6 +760,7 @@ def generate_ranked_cif_records(
     candidate: LatticeCandidate | dict[str, Any],
     *,
     atoms: Iterable[str],
+    atom_specs: Iterable[dict[str, Any]] | None = None,
     molecules: Iterable[dict[str, Any]],
     space_group_number: int | None = None,
     wyckoff_combinations: Iterable[dict[str, Any]] | None = None,
@@ -778,13 +779,24 @@ def generate_ranked_cif_records(
         else candidate
     ).constrained()
     atom_list = [atom.strip() for atom in atoms if atom and atom.strip()]
+    normalized_atom_specs = _normalize_atom_specs(atom_specs, atom_list)
+    if normalized_atom_specs:
+        atom_list = []
+        for spec in normalized_atom_specs:
+            element = str(spec.get("element") or "").strip()
+            if element and element not in atom_list:
+                atom_list.append(element)
     molecule_list = [dict(item) for item in molecules]
     composition = _composition_from_inputs(
         atom_list,
+        normalized_atom_specs,
         molecule_list,
         stoichiometry,
     )
-    basis_labels = atom_list + [
+    basis_labels = _basis_labels_from_atom_specs(
+        normalized_atom_specs,
+        atom_list,
+    ) + [
         str(item.get("label") or item.get("name") or "molecule")
         for item in molecule_list
     ]
@@ -844,6 +856,7 @@ def generate_ranked_cif_records(
                 "density_g_cm3": density_g_cm3,
                 "occupancy_constraints": occupancy_constraints.strip(),
                 "atoms": atom_list,
+                "atom_specs": normalized_atom_specs,
                 "molecules": molecule_list,
                 "composition_elements": dict(composition),
                 "space_group": space_group.as_dict(include_sites=False),
@@ -869,6 +882,7 @@ def generate_ranked_cif_records(
                     wyckoff_combination=combination,
                     wyckoff_assignments=assignments,
                     composition=composition,
+                    atom_specs=normalized_atom_specs,
                 ),
             }
         )
@@ -2098,6 +2112,26 @@ def _basis_wyckoff_assignments(
     return assignments
 
 
+def _basis_labels_from_atom_specs(
+    atom_specs: list[dict[str, Any]],
+    fallback_atoms: list[str],
+) -> list[str]:
+    if not atom_specs:
+        return list(fallback_atoms)
+    labels: list[str] = []
+    seen_shared: set[str] = set()
+    for spec in atom_specs:
+        shared_site = str(spec.get("shared_site") or "").strip()
+        if shared_site:
+            if shared_site in seen_shared:
+                continue
+            seen_shared.add(shared_site)
+            labels.append(shared_site)
+        else:
+            labels.append(str(spec.get("element") or "X"))
+    return labels
+
+
 def _wyckoff_combination_penalty(
     combination: dict[str, Any],
     site_count: int,
@@ -2112,6 +2146,7 @@ def _wyckoff_combination_penalty(
 
 def _composition_from_inputs(
     atoms: list[str],
+    atom_specs: list[dict[str, Any]],
     molecules: list[dict[str, Any]],
     stoichiometry: str,
 ) -> dict[str, float]:
@@ -2136,9 +2171,19 @@ def _composition_from_inputs(
         if parsed:
             return parsed
     composition: dict[str, float] = {}
-    for atom in atoms:
-        element = _element_symbol(atom)
-        composition[element] = composition.get(element, 0.0) + 1.0
+    if atom_specs:
+        for spec in atom_specs:
+            element = _element_symbol(str(spec.get("element") or ""))
+            if not element:
+                continue
+            composition[element] = composition.get(element, 0.0) + max(
+                0.0,
+                float(spec.get("stoichiometry", 1.0) or 0.0),
+            )
+    else:
+        for atom in atoms:
+            element = _element_symbol(atom)
+            composition[element] = composition.get(element, 0.0) + 1.0
     for molecule in molecules:
         formula = str(molecule.get("formula") or "")
         for element, count in _parse_formula_composition(
@@ -2147,6 +2192,76 @@ def _composition_from_inputs(
         ).items():
             composition[element] = composition.get(element, 0.0) + count
     return composition or {"X": 1.0}
+
+
+def _normalize_atom_specs(
+    atom_specs: Iterable[dict[str, Any]] | None,
+    fallback_atoms: list[str],
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for index, spec in enumerate(atom_specs or [], start=1):
+        if not isinstance(spec, dict):
+            continue
+        element = _element_symbol(str(spec.get("element") or ""))
+        if not element:
+            continue
+        normalized.append(
+            {
+                "element": element,
+                "stoichiometry": _positive_float(
+                    spec.get("stoichiometry", spec.get("count", 1.0)),
+                    1.0,
+                ),
+                "shared_site": str(
+                    spec.get("shared_site")
+                    or spec.get("site_group")
+                    or spec.get("site")
+                    or ""
+                ).strip(),
+                "occupancy": _bounded_float(
+                    spec.get("occupancy", 1.0),
+                    1.0,
+                    minimum=0.0,
+                    maximum=1.0,
+                ),
+                "label": str(spec.get("label") or f"{element}{index}"),
+            }
+        )
+    if normalized:
+        return normalized
+    return [
+        {
+            "element": _element_symbol(atom),
+            "stoichiometry": 1.0,
+            "shared_site": "",
+            "occupancy": 1.0,
+            "label": f"{_element_symbol(atom)}{index}",
+        }
+        for index, atom in enumerate(fallback_atoms, start=1)
+        if _element_symbol(atom)
+    ]
+
+
+def _positive_float(value: Any, default: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0.0, parsed)
+
+
+def _bounded_float(
+    value: Any,
+    default: float,
+    *,
+    minimum: float,
+    maximum: float,
+) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return min(maximum, max(minimum, parsed))
 
 
 def _parse_formula_composition(
@@ -2315,11 +2430,66 @@ def _expanded_cif_element_rows(
     *,
     preferred_order: list[str],
     molecule_labels: list[str],
-) -> list[tuple[str, str, str]]:
-    rows: list[tuple[str, str, str]] = []
+    atom_specs: list[dict[str, Any]],
+) -> list[tuple[str, str, str, float, str]]:
+    rows: list[tuple[str, str, str, float, str]] = []
+    atom_specs_by_element = _atom_specs_by_element(atom_specs)
+    if atom_specs_by_element:
+        handled_elements: set[str] = set()
+        for raw_element in preferred_order:
+            element = _element_symbol(raw_element)
+            if (
+                element not in atom_specs_by_element
+                or element in handled_elements
+            ):
+                continue
+            handled_elements.add(element)
+            specs = atom_specs_by_element[element]
+            total_spec_count = sum(
+                max(float(spec.get("stoichiometry", 1.0) or 0.0), 0.0)
+                for spec in specs
+            )
+            composition_count = float(
+                composition.get(element, total_spec_count or len(specs))
+            )
+            for spec_index, spec in enumerate(specs, start=1):
+                spec_count = max(
+                    float(spec.get("stoichiometry", 1.0) or 0.0),
+                    0.0,
+                )
+                fraction = (
+                    spec_count / total_spec_count
+                    if total_spec_count > 0.0
+                    else 1.0 / max(1, len(specs))
+                )
+                row_count = max(1, int(round(composition_count * fraction)))
+                shared_site = str(spec.get("shared_site") or "").strip()
+                occupancy = _bounded_float(
+                    spec.get("occupancy", 1.0),
+                    1.0,
+                    minimum=0.0,
+                    maximum=1.0,
+                )
+                for copy_index in range(1, row_count + 1):
+                    label_suffix = (
+                        f"{spec_index}_{copy_index}"
+                        if row_count > 1 or len(specs) > 1
+                        else "1"
+                    )
+                    rows.append(
+                        (
+                            f"{element}{label_suffix}",
+                            element,
+                            shared_site or element,
+                            occupancy,
+                            shared_site,
+                        )
+                    )
     order = _composition_order(composition, preferred_order)
     preferred_elements = {_element_symbol(item) for item in preferred_order}
     for element in order:
+        if element in atom_specs_by_element:
+            continue
         count = max(1, int(round(float(composition[element]))))
         basis = element
         if element not in preferred_elements:
@@ -2327,8 +2497,48 @@ def _expanded_cif_element_rows(
                 (label for label in molecule_labels if label), element
             )
         for index in range(1, count + 1):
-            rows.append((f"{element}{index}", element, basis))
-    return rows or [("X1", "X", "X")]
+            rows.append((f"{element}{index}", element, basis, 1.0, ""))
+    return rows or [("X1", "X", "X", 1.0, "")]
+
+
+def _atom_specs_by_element(
+    atom_specs: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for spec in atom_specs:
+        element = _element_symbol(str(spec.get("element") or ""))
+        if not element:
+            continue
+        grouped.setdefault(element, []).append(spec)
+    return grouped
+
+
+def _occupancy_for_element(
+    element: str,
+    atom_specs: list[dict[str, Any]],
+) -> float:
+    specs = _atom_specs_by_element(atom_specs).get(
+        _element_symbol(element), []
+    )
+    if not specs:
+        return 1.0
+    occupancies = [
+        _bounded_float(
+            spec.get("occupancy", 1.0),
+            1.0,
+            minimum=0.0,
+            maximum=1.0,
+        )
+        for spec in specs
+    ]
+    return float(np.mean(occupancies)) if occupancies else 1.0
+
+
+def _format_occupancy(value: float) -> str:
+    value = _bounded_float(value, 1.0, minimum=0.0, maximum=1.0)
+    if abs(value - round(value)) <= 1.0e-9:
+        return f"{value:.1f}"
+    return f"{value:.6g}"
 
 
 def _composition_order(
@@ -2402,6 +2612,7 @@ def _draft_cif_text(
     wyckoff_combination: dict[str, Any],
     wyckoff_assignments: list[dict[str, Any]],
     composition: dict[str, float] | None = None,
+    atom_specs: list[dict[str, Any]] | None = None,
 ) -> str:
     params = candidate.as_parameters()
     site_labels = ", ".join(wyckoff_combination.get("site_labels", []))
@@ -2420,6 +2631,7 @@ def _draft_cif_text(
             wyckoff_site_labels=site_labels,
             molecules=molecules,
             rows=template_rows,
+            atom_specs=atom_specs or [],
         )
     lines = [
         f"data_{cif_id}",
@@ -2460,14 +2672,28 @@ def _draft_cif_text(
             str(item.get("label") or item.get("name") or "")
             for item in molecules
         ],
+        atom_specs=atom_specs or [],
     )
-    for index, (label, atom, basis) in enumerate(element_rows, start=1):
-        x_frac, y_frac, z_frac = _draft_fractional_coordinates(
-            index,
-            len(element_rows),
-        )
+    shared_coordinates: dict[str, tuple[float, float, float]] = {}
+    for index, row in enumerate(element_rows, start=1):
+        label, atom, basis, occupancy, shared_site = row
+        if shared_site:
+            if shared_site not in shared_coordinates:
+                shared_coordinates[shared_site] = (
+                    _draft_fractional_coordinates(
+                        index,
+                        len(element_rows),
+                    )
+                )
+            x_frac, y_frac, z_frac = shared_coordinates[shared_site]
+        else:
+            x_frac, y_frac, z_frac = _draft_fractional_coordinates(
+                index,
+                len(element_rows),
+            )
         lines.append(
-            f"{label} {atom} {x_frac:.6f} {y_frac:.6f} {z_frac:.6f} 1.0"
+            f"{label} {atom} {x_frac:.6f} {y_frac:.6f} {z_frac:.6f} "
+            f"{_format_occupancy(occupancy)}"
         )
     return "\n".join(lines) + "\n"
 
@@ -2481,6 +2707,7 @@ def _draft_explicit_template_cif_text(
     wyckoff_site_labels: str,
     molecules: list[dict[str, Any]],
     rows: list[tuple[str, str, float, float, float]],
+    atom_specs: list[dict[str, Any]] | None = None,
 ) -> str:
     """Write a full-cell draft to avoid accidental symmetry copies."""
 
@@ -2518,8 +2745,10 @@ def _draft_explicit_template_cif_text(
         "_atom_site_occupancy",
     ]
     for label, element, x_frac, y_frac, z_frac in rows:
+        occupancy = _occupancy_for_element(element, atom_specs or [])
         lines.append(
-            f"{label} {element} {x_frac:.6f} {y_frac:.6f} " f"{z_frac:.6f} 1.0"
+            f"{label} {element} {x_frac:.6f} {y_frac:.6f} "
+            f"{z_frac:.6f} {_format_occupancy(occupancy)}"
         )
     return "\n".join(lines) + "\n"
 

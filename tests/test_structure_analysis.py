@@ -390,6 +390,54 @@ def test_generated_cif_records_include_atoms_molecules_and_ranking():
     assert "_symmetry_space_group_name_H-M 'P1'" in records[0]["cif_text"]
 
 
+def test_generated_cif_records_use_optional_atom_site_occupancy_specs():
+    candidate = LatticeCandidate("candidate_001", "Cubic", 6.3, 6.3, 6.3)
+
+    records = generate_ranked_cif_records(
+        candidate,
+        atoms=["Pb", "Sn", "I"],
+        atom_specs=[
+            {
+                "element": "Pb",
+                "stoichiometry": 0.5,
+                "shared_site": "B",
+                "occupancy": 0.5,
+            },
+            {
+                "element": "Sn",
+                "stoichiometry": 0.5,
+                "shared_site": "B",
+                "occupancy": 0.5,
+            },
+            {"element": "I", "stoichiometry": 3.0},
+        ],
+        molecules=[],
+        limit=1,
+    )
+
+    record = records[0]
+    cif_text = record["cif_text"]
+    assert record["composition_elements"] == {
+        "Pb": 0.5,
+        "Sn": 0.5,
+        "I": 3.0,
+    }
+    assert record["atom_specs"][0]["shared_site"] == "B"
+    assert "_chemical_formula_sum 'I3 Pb0.5 Sn0.5'" in cif_text
+    assert "Pb1 Pb" in cif_text
+    assert "Sn1 Sn" in cif_text
+    assert " 0.5" in cif_text
+
+    rows = [
+        line.split()
+        for line in cif_text.splitlines()
+        if line.startswith(("Pb", "Sn"))
+    ]
+    assert rows[0][2:5] == rows[1][2:5]
+    assert rows[0][5] == "0.5"
+    assert rows[1][5] == "0.5"
+
+
 def test_generated_cif_fallback_writes_full_composition_parseable(tmp_path):
     candidate = LatticeCandidate("candidate_001", "Cubic", 6.3, 6.3, 6.3)
 
@@ -935,6 +983,14 @@ def test_structure_analysis_wyckoff_mapping_registers_ui_possibilities(
     )
     qtbot.addWidget(pane)
     assert pane.analysis_tabs.tabText(2) == "Wyckoff Mapping"
+    pane.atom_table.item(0, 2).setText("B")
+    pane.atom_table.cellWidget(0, 3).setValue(0.5)
+    pane.add_atom_spec_row(
+        element="Sn",
+        stoichiometry=0.5,
+        shared_site="B",
+        occupancy=0.5,
+    )
 
     pane.wyckoff_system_combo.setCurrentText("Cubic")
     assert pane.space_group_combo.count() == 36
@@ -958,6 +1014,11 @@ def test_structure_analysis_wyckoff_mapping_registers_ui_possibilities(
 
     records = pane.generate_candidate_cifs()
     assert records
+    assert records[0]["atom_specs"][0]["shared_site"] == "B"
+    assert records[0]["atom_specs"][0]["occupancy"] == 0.5
+    assert records[0]["atom_specs"][-1]["element"] == "Sn"
+    assert "Sn1 Sn" in records[0]["cif_text"]
+    assert records[0]["occupancy_constraints"]
     assert records[0]["space_group"]["number"] == 221
     generated_path = generated_dir / f"{records[0]['cif_id']}.cif"
     assert generated_path.exists()
@@ -971,8 +1032,8 @@ def test_structure_analysis_wyckoff_mapping_registers_ui_possibilities(
     )
     assert pane.open_cif_folder_button.isEnabled()
     assert pane.cif_visualizer.cif_id == records[0]["cif_id"]
-    assert pane.cif_visualizer.atom_count == 2
-    assert pane.cif_visualizer.species_text == "I, Pb"
+    assert pane.cif_visualizer.atom_count == 3
+    assert pane.cif_visualizer.species_text == "I, Pb, Sn"
     assert pane.cif_visualizer.plot_container.hasHeightForWidth()
     assert pane._selected_cif_record()["cif_id"] == records[0]["cif_id"]
 
