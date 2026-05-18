@@ -1,4 +1,4 @@
-"""Experimental WAXS Analysis for Lattice Determination."""
+"""Qt6 GIWAXS/WAXS tools for lattice analysis and simulation."""
 
 from ewald.version import __version__
 

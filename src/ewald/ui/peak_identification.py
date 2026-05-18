@@ -34,13 +34,13 @@ from ewald.processing.peak_fitting import (
     compute_peak_fit_integrations,
     evaluate_peak_fit_2d,
     fit_peak_integration,
-    fit_peak_integrations,
     fit_peak_roi_2d,
     slice_peak_roi,
 )
 from ewald.ui.data_viewer import (
     IMAGE_COLORMAPS,
     ImageDisplayStyle,
+    ImagePlotToolbar,
     _apply_image_orientation,
     _ImageAspectPlotFrame,
     _level_spinbox,
@@ -58,6 +58,7 @@ from ewald.ui.notation import (
     RichTextComboBox,
     data_image_rect,
     enable_rich_text_items,
+    qt_tooltip,
     rich_label,
     set_data_aspect_locked,
     set_data_image_plot_range,
@@ -89,6 +90,9 @@ PEAK_TABLE_HEADERS = [
 ]
 CRYSTAL_PEAK_TABLE_HEADERS = ["h", "k", "l", QXY_HTML, QZ_HTML]
 FIT_DETAIL_HEADERS = ["Quantity", "Value", "Status"]
+FIT_ISSUE_BRUSH = QtGui.QBrush(QtGui.QColor("#fef3c7"))
+FIT_ISSUE_FOREGROUND = QtGui.QBrush(QtGui.QColor("#78350f"))
+FIT_ISSUE_TOOLTIP_PREFIX = "Fit issue:"
 FIT_INTEGRATION_LABELS = {
     "qxy": QXY_HTML,
     "qz": QZ_HTML,
@@ -114,6 +118,10 @@ FALLBACK_SCATTER_VECTOR = np.array((1.0, 0.0, 1.0), dtype=float)
 ORIENTATION_ANGLE_LIMITS_DEG = (-180.0, 180.0)
 ORIENTATION_SLIDER_SCALE = 10.0
 PEAK_UNDO_LIMIT = 50
+PEAK_ACTION_ICON_SIZE = QtCore.QSize(18, 18)
+MIRROR_SOURCE_SELECTED = "selected"
+MIRROR_SOURCE_POSITIVE_QXY = "positive-qxy"
+MIRROR_SOURCE_NEGATIVE_QXY = "negative-qxy"
 ROI_RESIZE_SYMMETRIC = "symmetric"
 ROI_RESIZE_QZ = "qz"
 ROI_RESIZE_QXY = "qxy"
@@ -153,6 +161,67 @@ PEAK_FINDER_PRESETS: dict[str, dict[str, float | int | bool]] = {
         "min_distance_px": 8,
         "neighborhood_radius_px": 2,
     },
+}
+PEAK_FINDER_PRESET_TOOLTIPS = {
+    "global": (
+        "Use one image-wide intensity cutoff. Best when the background is "
+        "fairly uniform and only the strongest, clearest peaks are needed."
+    ),
+    "adaptive": (
+        "Use local background and noise estimates so peaks can be accepted "
+        "even when the detector background changes across the image."
+    ),
+    "sensitive": (
+        "Lower the adaptive SNR requirement and allow more candidates. Useful "
+        "for weak peaks, but expect more false positives to review."
+    ),
+}
+PEAK_FINDER_SETTING_TOOLTIPS = {
+    "threshold": (
+        "Global percentile cutoff for candidate peak intensity. Higher values "
+        "keep only brighter pixels; lower values admit more candidates."
+    ),
+    "adaptive": (
+        "Use local background and noise estimates so weaker real peaks can "
+        "pass even when global intensity changes."
+    ),
+    "adaptive_floor": (
+        "Lowest percentile allowed as the adaptive local floor. Raising this "
+        "makes the adaptive detector more selective in noisy backgrounds."
+    ),
+    "min_snr": (
+        "Minimum signal-to-noise ratio above the local background for adaptive "
+        "peak acceptance."
+    ),
+    "background_px": (
+        "Pixel radius used to estimate the local background and noise around "
+        "each candidate."
+    ),
+    "max_peaks": (
+        "Maximum number of peaks to add or consolidate from one Find Peaks run."
+    ),
+    "distance_px": (
+        "Minimum pixel spacing between accepted candidates. Increase this to "
+        "avoid multiple points on the same broad peak."
+    ),
+    "window_px": (
+        "Neighborhood radius used to decide whether a pixel is a local maximum."
+    ),
+    "min_qz": (
+        f"Reject candidates below this {QZ_HTML} value. Useful for excluding "
+        "beamstop and low-q artifacts."
+    ),
+    "ignore_nonpositive": (
+        "Ignore zero and negative intensity pixels during peak detection."
+    ),
+    "consolidate": (
+        "Move compatible manual or channel-derived peaks onto detected local "
+        "maxima instead of creating duplicates nearby."
+    ),
+    "find_peaks": (
+        "Run peak detection using the current settings and update the peak "
+        "table."
+    ),
 }
 
 
@@ -1044,17 +1113,35 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             self._push_undo_state()
         records = self.peaks()
         used = {_peak_id(record) for record in records}
+        target = (
+            self._snap_target_near(qxy, qz)
+            if source == "manual" and self._coordinate_is_masked(qxy, qz)
+            else None
+        )
+        if target is not None:
+            qxy = float(target["qxy"])
+            qz = float(target["qz"])
+            intensity = float(target["intensity"])
+            source = str(target["source"])
+        else:
+            intensity = self._intensity_at(qxy, qz)
         record = self._peak_record(
             qxy,
             qz,
-            self._intensity_at(qxy, qz),
+            intensity,
             source=source,
             used_ids=used,
         )
+        if target is not None:
+            self._apply_peak_target_metadata(record, target)
         records.append(record)
         self._set_peaks(records)
         self.active_peak_id = _peak_id(record)
         self._sync_after_peak_change()
+        if target is not None and target.get("kind") == "masked-gap":
+            self.snap_feedback_label.setText(
+                "Placed masked-gap peak estimate from side maxima."
+            )
         return record
 
     def add_integration_markers(
@@ -1149,18 +1236,14 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         record = self._active_record()
         if record is None:
             return
-        maximum = self._local_maximum_near(
+        target = self._snap_target_near(
             _peak_qxy(record),
             _peak_qz(record),
         )
-        if maximum is None:
+        if target is None:
             return
         self._push_undo_state()
-        qxy, qz, intensity = maximum
-        record["qxy"] = qxy
-        record["qz"] = qz
-        record["intensity"] = intensity
-        record["source"] = "manual-local-maximum"
+        self._apply_peak_target_to_record(record, target)
         if record.get("roi"):
             self._apply_roi_to_record(record)
         self._sync_after_peak_change()
@@ -1171,23 +1254,20 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         records = self.peaks()
         if not records:
             return
-        updates: list[tuple[dict[str, Any], tuple[float, float, float]]] = []
+        updates: list[tuple[dict[str, Any], dict[str, Any]]] = []
         for record in records:
-            maximum = self._local_maximum_near(
+            target = self._snap_target_near(
                 _peak_qxy(record),
                 _peak_qz(record),
             )
-            if maximum is not None:
-                updates.append((record, maximum))
+            if target is not None:
+                updates.append((record, target))
         if not updates:
             self.snap_feedback_label.setText("No finite local maxima found.")
             return
         self._push_undo_state()
-        for record, (qxy, qz, intensity) in updates:
-            record["qxy"] = qxy
-            record["qz"] = qz
-            record["intensity"] = intensity
-            record["source"] = "manual-local-maximum"
+        for record, target in updates:
+            self._apply_peak_target_to_record(record, target)
             if record.get("roi"):
                 self._apply_roi_to_record(record)
         self._set_peaks(records)
@@ -1272,6 +1352,154 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             f"{matched}/{len(records)} peak(s) have a mirrored partner."
         )
 
+    def mirror_missing_peaks(self) -> None:
+        """Add gap-estimated mirror partners across the qz axis."""
+
+        records = self.peaks()
+        if not records:
+            self.symmetry_summary_label.setText("No peaks to mirror.")
+            return
+        qxy_tolerance = self.symmetry_qxy_tolerance.value()
+        qz_tolerance = self.symmetry_qz_tolerance.value()
+        source_records = self._mirror_source_peak_records(
+            records,
+            qxy_tolerance=qxy_tolerance,
+        )
+        if not source_records:
+            self.symmetry_summary_label.setText(
+                "Select peaks or choose a populated qxy side to mirror."
+            )
+            return
+
+        used = {_peak_id(record) for record in records}
+        updated_records = copy.deepcopy(records)
+        added: list[dict[str, Any]] = []
+        skipped_existing = 0
+        skipped_axis = 0
+        for source in source_records:
+            source_qxy = _peak_qxy(source)
+            if abs(source_qxy) <= qxy_tolerance:
+                skipped_axis += 1
+                continue
+            target_qxy = -source_qxy
+            target_qz = _peak_qz(source)
+            if self._has_peak_near(
+                updated_records,
+                target_qxy,
+                target_qz,
+                qxy_tolerance=qxy_tolerance,
+                qz_tolerance=qz_tolerance,
+            ):
+                skipped_existing += 1
+                continue
+            mirrored = self._mirrored_gap_peak_record(
+                source,
+                target_qxy,
+                target_qz,
+                used_ids=used,
+            )
+            updated_records.append(mirrored)
+            added.append(mirrored)
+
+        if not added:
+            self.symmetry_summary_label.setText(
+                "No missing mirrored partners found "
+                f"({skipped_existing} already matched, "
+                f"{skipped_axis} near the qz axis)."
+            )
+            return
+
+        self._push_undo_state()
+        self._set_peaks(updated_records)
+        self.active_peak_id = _peak_id(added[0])
+        self._sync_after_peak_change()
+        self.symmetry_summary_label.setText(
+            f"Added {len(added)} mirrored gap estimate(s); "
+            f"skipped {skipped_existing} existing partner(s)."
+        )
+
+    def _mirror_source_peak_records(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        qxy_tolerance: float,
+    ) -> list[dict[str, Any]]:
+        mode = str(
+            self.mirror_source_combo.currentData() or MIRROR_SOURCE_SELECTED
+        )
+        if mode == MIRROR_SOURCE_POSITIVE_QXY:
+            return [
+                record
+                for record in records
+                if _peak_qxy(record) > qxy_tolerance
+            ]
+        if mode == MIRROR_SOURCE_NEGATIVE_QXY:
+            return [
+                record
+                for record in records
+                if _peak_qxy(record) < -qxy_tolerance
+            ]
+        selected = self._selected_peak_records(records)
+        if selected:
+            return selected
+        active = self._active_record()
+        return [active] if active is not None else []
+
+    def _selected_peak_records(
+        self,
+        records: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        selection_model = self.peak_table.selectionModel()
+        if selection_model is None:
+            return []
+        rows = sorted(
+            {index.row() for index in selection_model.selectedRows()}
+        )
+        return [records[row] for row in rows if 0 <= row < len(records)]
+
+    def _has_peak_near(
+        self,
+        records: list[dict[str, Any]],
+        qxy: float,
+        qz: float,
+        *,
+        qxy_tolerance: float,
+        qz_tolerance: float,
+    ) -> bool:
+        return any(
+            abs(_peak_qxy(record) - qxy) <= qxy_tolerance
+            and abs(_peak_qz(record) - qz) <= qz_tolerance
+            for record in records
+        )
+
+    def _mirrored_gap_peak_record(
+        self,
+        source: dict[str, Any],
+        qxy: float,
+        qz: float,
+        *,
+        used_ids: set[str],
+    ) -> dict[str, Any]:
+        record = self._peak_record(
+            qxy,
+            qz,
+            self._intensity_at(qxy, qz),
+            source="gap estimate",
+            used_ids=used_ids,
+        )
+        record["point_kind"] = PEAK_POINT_KIND_GAP_ESTIMATED
+        record["gap_estimated"] = True
+        record["phase_tag"] = "gap-estimated"
+        record["metadata"] = {
+            "gap_estimate": True,
+            "estimate_method": "mirror across qz axis",
+            "mirror_axis": "qz",
+            "mirror_source_peak_id": _peak_id(source),
+            "mirror_source_qxy": _peak_qxy(source),
+            "mirror_source_qz": _peak_qz(source),
+        }
+        return record
+
     def apply_roi_to_selected_peak(self) -> None:
         record = self._active_record()
         if record is None:
@@ -1345,6 +1573,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
                 "status": "failed",
                 "message": f"Could not fit {FIT_INTEGRATION_LABELS[name]} profile.",
             }
+            store["fit_attempted"] = True
             store["integrations"][name].pop("fit", None)
             self._set_fit_status(
                 f"Could not fit {FIT_INTEGRATION_LABELS[name]} profile."
@@ -1353,6 +1582,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             return
         store.setdefault("integration_fits", {})[name] = fit
         store.setdefault("fit_failures", {}).pop(name, None)
+        store["fit_attempted"] = True
         store["integrations"][name]["fit"] = fit
         self._set_fit_status(f"Fit {FIT_INTEGRATION_LABELS[name]} profile.")
         self._sync_after_fit_change(record)
@@ -1368,28 +1598,10 @@ class PeakIdentificationPane(QtWidgets.QWidget):
                 "Integrate the selected ROI before fitting integrated traces."
             )
             return
-        fits: dict[str, dict[str, Any]] = {}
-        failures: dict[str, dict[str, Any]] = {}
-        for name, integration in store.get("integrations", {}).items():
-            fit = fit_peak_integration(integration)
-            if fit is None:
-                failures[name] = {
-                    "status": "failed",
-                    "message": (
-                        f"Could not fit {FIT_INTEGRATION_LABELS.get(name, name)} "
-                        "profile."
-                    ),
-                }
-            else:
-                fits[name] = fit
-        store["integration_fits"] = fits
-        store["fit_failures"] = failures
-        for name, fit in fits.items():
-            store["integrations"][name]["fit"] = fit
-        for name in failures:
-            store["integrations"][name].pop("fit", None)
+        fits, failures = self._fit_integrations_for_store(store)
         self._set_fit_status(
-            f"Fit {len(fits)} currently integrated trace(s) for selected ROI."
+            f"Fit {len(fits)} currently integrated trace(s) for selected ROI; "
+            f"{len(failures)} need review."
         )
         self._sync_after_fit_change(record)
 
@@ -1403,13 +1615,54 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             self._sync_after_fit_change(record)
 
     def batch_process_all_peak_fits(self) -> None:
+        records = [record for record in self.peaks() if record.get("roi")]
+        if not records:
+            self._set_fit_status("No ROIs are available to fit.")
+            return
+        progress = QtWidgets.QProgressDialog(
+            "Fitting all ROI Gaussian models...",
+            "Cancel",
+            0,
+            len(records),
+            self,
+        )
+        progress.setWindowTitle("Fitting ROIs")
+        progress.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(True)
+        progress.setAutoReset(True)
+        progress.show()
+        QtWidgets.QApplication.processEvents()
+
         count = 0
-        for record in self.peaks():
+        warning_count = 0
+        canceled = False
+        for index, record in enumerate(records, start=1):
+            progress.setLabelText(
+                f"Fitting {record.get('label', _peak_id(record))} "
+                f"({index}/{len(records)})..."
+            )
+            QtWidgets.QApplication.processEvents()
+            if progress.wasCanceled():
+                canceled = True
+                break
             if self._fit_2d_for_record(record, prepare_missing=True):
                 count += 1
-        self._set_fit_status(
-            f"Completed full fit workflow for {count} ROI(s)."
-        )
+            if self._fit_issue_messages(record):
+                warning_count += 1
+            progress.setValue(index)
+        progress.setValue(len(records))
+        progress.close()
+        if canceled:
+            self._set_fit_status(
+                f"Canceled full fit workflow after {count}/{len(records)} ROI(s); "
+                f"{warning_count} need review."
+            )
+        else:
+            self._set_fit_status(
+                f"Completed full fit workflow for {count}/{len(records)} ROI(s); "
+                f"{warning_count} need review."
+            )
         self._sync_after_fit_change(self._active_record())
 
     def peaks(self) -> list[dict[str, Any]]:
@@ -1515,10 +1768,6 @@ class PeakIdentificationPane(QtWidgets.QWidget):
 
         self.adaptive_peak_threshold_check = QtWidgets.QCheckBox("Adaptive")
         self.adaptive_peak_threshold_check.setChecked(False)
-        self.adaptive_peak_threshold_check.setToolTip(
-            "Use local background and noise estimates so weaker real peaks "
-            "can pass even when global intensity changes."
-        )
 
         self.adaptive_floor_percentile = QtWidgets.QDoubleSpinBox()
         self.adaptive_floor_percentile.setRange(0.0, 100.0)
@@ -1590,6 +1839,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.sensitive_peak_preset_button.clicked.connect(
             lambda: self._apply_peak_finder_preset("sensitive")
         )
+        self._set_peak_finder_tooltips()
         self.peak_finder_status_label = QtWidgets.QLabel("Ready.")
         self.peak_finder_status_label.setWordWrap(True)
         self.zoom_in_button = QtWidgets.QToolButton()
@@ -1599,7 +1849,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.zoom_out_button.setText("Zoom Out")
         self.zoom_out_button.clicked.connect(lambda: self._zoom_image(1.35))
         self.zoom_fit_button = QtWidgets.QToolButton()
-        self.zoom_fit_button.setText("Fit")
+        self.zoom_fit_button.setText("Autoscale")
         self.zoom_fit_button.clicked.connect(self._reset_image_zoom)
         self.pan_button = QtWidgets.QToolButton()
         self.pan_button.setText("Pan")
@@ -1626,15 +1876,30 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.delete_peak_button = QtWidgets.QToolButton()
         self.delete_peak_button.setText("Delete")
         self.delete_peak_button.clicked.connect(self.delete_selected_peak)
+        style = QtWidgets.QApplication.style()
         self.clear_peaks_button = QtWidgets.QToolButton()
-        self.clear_peaks_button.setText("Clear")
+        self._configure_peak_action_button(
+            self.clear_peaks_button,
+            style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_TrashIcon),
+            "Clear all peaks",
+        )
         self.clear_peaks_button.clicked.connect(self.clear_peaks)
         self.undo_button = QtWidgets.QToolButton()
-        self.undo_button.setText("Undo")
+        self._configure_peak_action_button(
+            self.undo_button,
+            style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowBack),
+            "Undo peak edit",
+        )
         self.undo_button.clicked.connect(self.undo_peak_action)
         self.undo_button.setShortcut(QtGui.QKeySequence.StandardKey.Undo)
         self.redo_button = QtWidgets.QToolButton()
-        self.redo_button.setText("Redo")
+        self._configure_peak_action_button(
+            self.redo_button,
+            style.standardIcon(
+                QtWidgets.QStyle.StandardPixmap.SP_ArrowForward
+            ),
+            "Redo peak edit",
+        )
         self.redo_button.clicked.connect(self.redo_peak_action)
         self.redo_button.setShortcut(QtGui.QKeySequence.StandardKey.Redo)
         self.snap_all_button = QtWidgets.QToolButton()
@@ -1716,6 +1981,26 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.symmetry_qxy_tolerance.setValue(0.03)
         self.symmetry_qz_tolerance = _roi_size_spinbox()
         self.symmetry_qz_tolerance.setValue(0.03)
+        self.mirror_source_combo = RichTextComboBox()
+        self.mirror_source_combo.addItem(
+            "Selected peaks",
+            MIRROR_SOURCE_SELECTED,
+        )
+        self.mirror_source_combo.addItem(
+            f"{QXY_HTML} > 0",
+            MIRROR_SOURCE_POSITIVE_QXY,
+        )
+        self.mirror_source_combo.addItem(
+            f"{QXY_HTML} < 0",
+            MIRROR_SOURCE_NEGATIVE_QXY,
+        )
+        self.mirror_missing_button = QtWidgets.QToolButton()
+        self.mirror_missing_button.setText("Mirror Missing")
+        self.mirror_missing_button.setToolTip(
+            "<qt>Add gap-estimated mirror partners across the "
+            f"{QZ_HTML} axis when no matching peak exists.</qt>"
+        )
+        self.mirror_missing_button.clicked.connect(self.mirror_missing_peaks)
         self.symmetry_check_button = QtWidgets.QToolButton()
         self.symmetry_check_button.setText("Check Symmetry")
         self.symmetry_check_button.clicked.connect(self.check_peak_symmetry)
@@ -1723,6 +2008,51 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.symmetry_summary_label.setWordWrap(True)
         self._build_peak_fit_controls()
         self._build_crystal_overlay_controls()
+
+    def _set_peak_finder_tooltips(self) -> None:
+        controls = {
+            self.threshold_percentile: "threshold",
+            self.adaptive_peak_threshold_check: "adaptive",
+            self.adaptive_floor_percentile: "adaptive_floor",
+            self.min_snr: "min_snr",
+            self.background_radius_px: "background_px",
+            self.max_peaks: "max_peaks",
+            self.min_distance_px: "distance_px",
+            self.neighborhood_radius_px: "window_px",
+            self.min_qz: "min_qz",
+            self.ignore_nonpositive_check: "ignore_nonpositive",
+            self.consolidate_peaks_check: "consolidate",
+            self.find_peaks_button: "find_peaks",
+        }
+        for widget, key in controls.items():
+            widget.setToolTip(qt_tooltip(PEAK_FINDER_SETTING_TOOLTIPS[key]))
+
+        presets = {
+            self.global_peak_preset_button: "global",
+            self.adaptive_peak_preset_button: "adaptive",
+            self.sensitive_peak_preset_button: "sensitive",
+        }
+        for widget, key in presets.items():
+            widget.setToolTip(qt_tooltip(PEAK_FINDER_PRESET_TOOLTIPS[key]))
+
+    @staticmethod
+    def _peak_finder_label(text: str, tooltip_key: str) -> QtWidgets.QLabel:
+        label = rich_label(text)
+        label.setToolTip(qt_tooltip(PEAK_FINDER_SETTING_TOOLTIPS[tooltip_key]))
+        return label
+
+    @staticmethod
+    def _configure_peak_action_button(
+        button: QtWidgets.QToolButton,
+        icon: QtGui.QIcon,
+        tooltip: str,
+    ) -> None:
+        button.setIcon(icon)
+        button.setIconSize(PEAK_ACTION_ICON_SIZE)
+        button.setToolTip(tooltip)
+        button.setAccessibleName(tooltip)
+        button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly)
+        button.setAutoRaise(True)
 
     def _build_peak_fit_controls(self) -> None:
         self.fit_peak_combo = RichTextComboBox()
@@ -1789,6 +2119,16 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.batch_fit_button = QtWidgets.QToolButton()
         self.batch_fit_button.setText("Fit All ROIs Full Workflow")
         self.batch_fit_button.clicked.connect(self.batch_process_all_peak_fits)
+        self.fit_issues_first_button = QtWidgets.QToolButton()
+        self.fit_issues_first_button.setText("Fit Issues First")
+        self.fit_issues_first_button.setCheckable(True)
+        self.fit_issues_first_button.setToolTip(
+            "<qt>Move peaks with failed, incomplete, or low-quality Gaussian "
+            "fits to the top of the peak table.</qt>"
+        )
+        self.fit_issues_first_button.toggled.connect(
+            self._handle_fit_issues_first_toggled
+        )
 
         self.fit_status_label = QtWidgets.QLabel("Select a peak with an ROI.")
         self.fit_status_label.setWordWrap(True)
@@ -2043,6 +2383,9 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.peak_table.setSelectionBehavior(
             QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
         )
+        self.peak_table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         self.peak_table.setEditTriggers(
             QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
         )
@@ -2056,24 +2399,22 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.side_tabs.setMinimumWidth(420)
         self.side_tabs.setMaximumWidth(640)
         self.side_tabs.addTab(self._peak_finder_tab(), "Peak Finder")
-        self.side_tabs.addTab(self._crystal_overlay_tab(), "Crystal Overlay")
+        self.side_tabs.addTab(self._roi_selection_tab(), "ROI Selection")
         self.side_tabs.addTab(self._peak_fit_tab(), "Peak Fit")
 
-        contrast_layout = QtWidgets.QHBoxLayout()
-        contrast_layout.addWidget(QtWidgets.QLabel("Color"))
-        contrast_layout.addWidget(self.colormap_combo)
-        contrast_layout.addSpacing(12)
-        contrast_layout.addWidget(QtWidgets.QLabel("Min"))
-        contrast_layout.addWidget(self.level_min)
-        contrast_layout.addWidget(QtWidgets.QLabel("Max"))
-        contrast_layout.addWidget(self.level_max)
-        contrast_layout.addWidget(self.quantile_check)
-        contrast_layout.addWidget(QtWidgets.QLabel("Low"))
-        contrast_layout.addWidget(self.quantile_low)
-        contrast_layout.addWidget(QtWidgets.QLabel("High"))
-        contrast_layout.addWidget(self.quantile_high)
-        contrast_layout.addWidget(self.auto_contrast_button)
-        contrast_layout.addStretch(1)
+        self.plot_toolbar = ImagePlotToolbar(
+            colormap_combo=self.colormap_combo,
+            level_min=self.level_min,
+            level_max=self.level_max,
+            quantile_check=self.quantile_check,
+            quantile_low=self.quantile_low,
+            quantile_high=self.quantile_high,
+            auto_contrast_button=self.auto_contrast_button,
+            zoom_in_button=self.zoom_in_button,
+            zoom_out_button=self.zoom_out_button,
+            autoscale_button=self.zoom_fit_button,
+            pan_button=self.pan_button,
+        )
 
         plot_area = self.plot_widget
         if pg is not None and self.image_item is not None:
@@ -2081,7 +2422,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             plot_area = self.plot_frame
 
         image_layout = QtWidgets.QVBoxLayout()
-        image_layout.addLayout(contrast_layout)
+        image_layout.addWidget(self.plot_toolbar)
         image_layout.addWidget(plot_area, stretch=1)
 
         plot_layout = QtWidgets.QHBoxLayout()
@@ -2095,6 +2436,31 @@ class PeakIdentificationPane(QtWidgets.QWidget):
     def _peak_finder_tab(self) -> QtWidgets.QWidget:
         tab = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(tab)
+
+        self.peak_action_bar = QtWidgets.QWidget()
+        peak_action_layout = QtWidgets.QHBoxLayout(self.peak_action_bar)
+        peak_action_layout.setContentsMargins(0, 0, 0, 4)
+        peak_action_layout.setSpacing(4)
+        peak_action_layout.addStretch(1)
+        peak_action_layout.addWidget(self.undo_button)
+        peak_action_layout.addWidget(self.redo_button)
+        peak_action_layout.addWidget(self.clear_peaks_button)
+        layout.addWidget(self.peak_action_bar)
+
+        self.peak_finder_subtabs = QtWidgets.QTabWidget()
+        self.peak_finder_subtabs.setObjectName("PeakFinderSubTabs")
+        self.peak_finder_subtabs.addTab(
+            self._peak_detection_tab(), "Peak Detection"
+        )
+        self.peak_finder_subtabs.addTab(
+            self._crystal_overlay_tab(), "Crystal Overlay"
+        )
+        layout.addWidget(self.peak_finder_subtabs, stretch=1)
+        return tab
+
+    def _peak_detection_tab(self) -> QtWidgets.QWidget:
+        tab = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(tab)
         scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
         content = QtWidgets.QWidget()
@@ -2102,15 +2468,39 @@ class PeakIdentificationPane(QtWidgets.QWidget):
 
         finder_group = QtWidgets.QGroupBox("Find Peaks")
         finder_form = QtWidgets.QFormLayout()
-        finder_form.addRow("Threshold", self.threshold_percentile)
+        finder_form.addRow(
+            self._peak_finder_label("Threshold", "threshold"),
+            self.threshold_percentile,
+        )
         finder_form.addRow(self.adaptive_peak_threshold_check)
-        finder_form.addRow("Adaptive floor", self.adaptive_floor_percentile)
-        finder_form.addRow("Min SNR", self.min_snr)
-        finder_form.addRow("Background px", self.background_radius_px)
-        finder_form.addRow("Max peaks", self.max_peaks)
-        finder_form.addRow("Distance px", self.min_distance_px)
-        finder_form.addRow("Window px", self.neighborhood_radius_px)
-        finder_form.addRow(rich_label(f"Min {QZ_HTML}"), self.min_qz)
+        finder_form.addRow(
+            self._peak_finder_label("Adaptive floor", "adaptive_floor"),
+            self.adaptive_floor_percentile,
+        )
+        finder_form.addRow(
+            self._peak_finder_label("Min SNR", "min_snr"),
+            self.min_snr,
+        )
+        finder_form.addRow(
+            self._peak_finder_label("Background px", "background_px"),
+            self.background_radius_px,
+        )
+        finder_form.addRow(
+            self._peak_finder_label("Max peaks", "max_peaks"),
+            self.max_peaks,
+        )
+        finder_form.addRow(
+            self._peak_finder_label("Distance px", "distance_px"),
+            self.min_distance_px,
+        )
+        finder_form.addRow(
+            self._peak_finder_label("Window px", "window_px"),
+            self.neighborhood_radius_px,
+        )
+        finder_form.addRow(
+            self._peak_finder_label(f"Min {QZ_HTML}", "min_qz"),
+            self.min_qz,
+        )
         finder_form.addRow(self.ignore_nonpositive_check)
         finder_form.addRow(self.consolidate_peaks_check)
         finder_layout = QtWidgets.QVBoxLayout(finder_group)
@@ -2122,12 +2512,6 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         finder_layout.addLayout(finder_form)
         finder_layout.addWidget(self.find_peaks_button)
         finder_layout.addWidget(self.peak_finder_status_label)
-        zoom_row = QtWidgets.QHBoxLayout()
-        zoom_row.addWidget(self.zoom_in_button)
-        zoom_row.addWidget(self.zoom_out_button)
-        zoom_row.addWidget(self.zoom_fit_button)
-        zoom_row.addWidget(self.pan_button)
-        finder_layout.addLayout(zoom_row)
         content_layout.addWidget(finder_group)
 
         edit_group = QtWidgets.QGroupBox("Manual Peaks")
@@ -2139,14 +2523,40 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         edit_layout.addWidget(self.snap_all_button, 2, 0, 1, 2)
         edit_layout.addWidget(QtWidgets.QLabel("Snap window px"), 3, 0)
         edit_layout.addWidget(self.snap_window_px, 3, 1)
-        edit_layout.addWidget(self.undo_button, 4, 0)
-        edit_layout.addWidget(self.redo_button, 4, 1)
-        edit_layout.addWidget(self.clear_peaks_button, 5, 0, 1, 2)
-        edit_layout.addWidget(self.cursor_coordinate_label, 6, 0, 1, 2)
-        edit_layout.addWidget(self.snap_feedback_label, 7, 0, 1, 2)
+        edit_layout.addWidget(self.cursor_coordinate_label, 4, 0, 1, 2)
+        edit_layout.addWidget(self.snap_feedback_label, 5, 0, 1, 2)
         content_layout.addWidget(edit_group)
 
-        roi_group = QtWidgets.QGroupBox("ROI Tools")
+        analysis_group = QtWidgets.QGroupBox("Symmetry & Gap Estimates")
+        analysis_layout = QtWidgets.QGridLayout(analysis_group)
+        analysis_layout.addWidget(self.gap_estimate_button, 0, 0)
+        analysis_layout.addWidget(self.tag_gap_button, 0, 1)
+        analysis_layout.addWidget(rich_label(f"{QXY_HTML} tol"), 1, 0)
+        analysis_layout.addWidget(self.symmetry_qxy_tolerance, 1, 1)
+        analysis_layout.addWidget(rich_label(f"{QZ_HTML} tol"), 2, 0)
+        analysis_layout.addWidget(self.symmetry_qz_tolerance, 2, 1)
+        analysis_layout.addWidget(QtWidgets.QLabel("Mirror source"), 3, 0)
+        analysis_layout.addWidget(self.mirror_source_combo, 3, 1)
+        analysis_layout.addWidget(self.mirror_missing_button, 4, 0, 1, 2)
+        analysis_layout.addWidget(self.symmetry_check_button, 5, 0, 1, 2)
+        analysis_layout.addWidget(self.symmetry_summary_label, 6, 0, 1, 2)
+        content_layout.addWidget(analysis_group)
+
+        content_layout.addStretch(1)
+        scroll.setWidget(content)
+        layout.addWidget(scroll, stretch=1)
+        return tab
+
+    def _roi_selection_tab(self) -> QtWidgets.QWidget:
+        tab = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(tab)
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QtWidgets.QWidget()
+        content_layout = QtWidgets.QVBoxLayout(content)
+
+        self.roi_tools_group = QtWidgets.QGroupBox("ROI Tools")
+        roi_group = self.roi_tools_group
         roi_group.setStyleSheet(
             "QGroupBox { font-weight: 600; border: 1px solid #9ca3af; "
             "border-radius: 4px; margin-top: 8px; padding-top: 8px; }"
@@ -2172,21 +2582,9 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         roi_layout.addWidget(self.active_roi_mesh_widget)
         content_layout.addWidget(roi_group)
 
-        analysis_group = QtWidgets.QGroupBox("Symmetry & Gap Estimates")
-        analysis_layout = QtWidgets.QGridLayout(analysis_group)
-        analysis_layout.addWidget(self.gap_estimate_button, 0, 0)
-        analysis_layout.addWidget(self.tag_gap_button, 0, 1)
-        analysis_layout.addWidget(rich_label(f"{QXY_HTML} tol"), 1, 0)
-        analysis_layout.addWidget(self.symmetry_qxy_tolerance, 1, 1)
-        analysis_layout.addWidget(rich_label(f"{QZ_HTML} tol"), 2, 0)
-        analysis_layout.addWidget(self.symmetry_qz_tolerance, 2, 1)
-        analysis_layout.addWidget(self.symmetry_check_button, 3, 0, 1, 2)
-        analysis_layout.addWidget(self.symmetry_summary_label, 4, 0, 1, 2)
-        content_layout.addWidget(analysis_group)
-
         content_layout.addStretch(1)
         scroll.setWidget(content)
-        layout.addWidget(scroll)
+        layout.addWidget(scroll, stretch=1)
         return tab
 
     def _peak_fit_tab(self) -> QtWidgets.QWidget:
@@ -2219,7 +2617,8 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         controls_layout.addWidget(self.fit_all_integrations_button, 5, 0, 1, 4)
         controls_layout.addWidget(self.run_2d_fit_button, 6, 0, 1, 2)
         controls_layout.addWidget(self.batch_fit_button, 6, 2, 1, 2)
-        controls_layout.addWidget(self.fit_status_label, 7, 0, 1, 4)
+        controls_layout.addWidget(self.fit_issues_first_button, 7, 0, 1, 4)
+        controls_layout.addWidget(self.fit_status_label, 8, 0, 1, 4)
         content_layout.addWidget(controls)
 
         content_layout.addWidget(self.fit_integration_stack)
@@ -3180,7 +3579,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.peakSetChanged.emit(self.data_id)
 
     def _sync_table(self) -> None:
-        records = self.peaks()
+        records = self._table_records()
         self.peak_table.setRowCount(len(records))
         selected_row = 0
         for row, record in enumerate(records):
@@ -3188,6 +3587,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             if peak_id == self.active_peak_id:
                 selected_row = row
             summary = self._fit_summary(record)
+            fit_issues = self._fit_issue_messages(record)
             values = [
                 record.get("label", peak_id),
                 record.get("source", ""),
@@ -3208,10 +3608,43 @@ class PeakIdentificationPane(QtWidgets.QWidget):
                 item = QtWidgets.QTableWidgetItem(str(value))
                 if column == 0:
                     item.setData(QtCore.Qt.ItemDataRole.UserRole, peak_id)
+                if fit_issues:
+                    item.setBackground(FIT_ISSUE_BRUSH)
+                    item.setForeground(FIT_ISSUE_FOREGROUND)
+                    item.setToolTip(
+                        f"{FIT_ISSUE_TOOLTIP_PREFIX} " + "\n".join(fit_issues)
+                    )
                 self.peak_table.setItem(row, column, item)
         self.peak_table.resizeColumnsToContents()
         if records and self.active_peak_id is not None:
             self.peak_table.selectRow(selected_row)
+
+    def _table_records(self) -> list[dict[str, Any]]:
+        records = self.peaks()
+        if not getattr(self, "fit_issues_first_button", None):
+            return records
+        if not self.fit_issues_first_button.isChecked():
+            return records
+        indexed = list(enumerate(records))
+        indexed.sort(
+            key=lambda item: (
+                0 if self._fit_issue_messages(item[1]) else 1,
+                item[0],
+            )
+        )
+        return [record for _, record in indexed]
+
+    def _handle_fit_issues_first_toggled(self, checked: bool) -> None:
+        self._sync_table()
+        if checked:
+            issue_count = sum(
+                1
+                for record in self.peaks()
+                if self._fit_issue_messages(record)
+            )
+            self._set_fit_status(
+                f"Moved {issue_count} peak(s) with fit issues to the top."
+            )
 
     def _sync_fit_peak_combo(self) -> None:
         current_peak_id = self.active_peak_id
@@ -3408,13 +3841,9 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         if record is None:
             return
         if self.snap_drag_check.isChecked():
-            maximum = self._local_maximum_near(float(qxy), float(qz))
-            if maximum is not None:
-                qxy, qz, intensity = maximum
-                record["qxy"] = qxy
-                record["qz"] = qz
-                record["intensity"] = intensity
-                record["source"] = "manual-local-maximum"
+            target = self._snap_target_near(float(qxy), float(qz))
+            if target is not None:
+                self._apply_peak_target_to_record(record, target)
         self._sync_after_peak_change()
 
     def _handle_peak_clicked(self, peak_id: str) -> None:
@@ -3554,6 +3983,18 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             or roi.get("azimuthal_roi"),
         )
         if not integrations:
+            store = self._fit_record_for_peak(record, create=True)
+            store["roi"] = dict(roi)
+            store["integrations"] = {}
+            store["integration_fits"] = {}
+            store["fit_failures"] = {}
+            store["fit_attempted"] = True
+            store.pop("fit_2d", None)
+            store["fit_2d_failure"] = {
+                "status": "failed",
+                "message": "No finite ROI pixels were available.",
+            }
+            self._update_record_fit_summary(record)
             self._set_fit_status("No finite ROI pixels were available.")
             return False
         store = self._fit_record_for_peak(record, create=True)
@@ -3566,8 +4007,36 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         store["integration_fits"] = {}
         store["fit_failures"] = {}
         store.pop("fit_2d", None)
+        store.pop("fit_2d_failure", None)
         self._update_record_fit_summary(record)
         return True
+
+    def _fit_integrations_for_store(
+        self,
+        store: dict[str, Any],
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+        fits: dict[str, dict[str, Any]] = {}
+        failures: dict[str, dict[str, Any]] = {}
+        for name, integration in store.get("integrations", {}).items():
+            fit = fit_peak_integration(integration)
+            if fit is None:
+                failures[name] = {
+                    "status": "failed",
+                    "message": (
+                        f"Could not fit {FIT_INTEGRATION_LABELS.get(name, name)} "
+                        "profile."
+                    ),
+                }
+            else:
+                fits[name] = fit
+        store["integration_fits"] = fits
+        store["fit_failures"] = failures
+        store["fit_attempted"] = True
+        for name, fit in fits.items():
+            store["integrations"][name]["fit"] = fit
+        for name in failures:
+            store["integrations"][name].pop("fit", None)
+        return fits, failures
 
     def _fit_2d_for_record(
         self,
@@ -3578,15 +4047,13 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         if not record.get("roi"):
             return False
         store = self._fit_record_for_peak(record, create=True)
+        store["fit_attempted"] = True
         if prepare_missing and not store.get("integrations"):
             if not self._compute_integrations_for_record(record):
                 return False
             store = self._fit_record_for_peak(record, create=True)
         if prepare_missing and len(store.get("integration_fits", {})) < 3:
-            fits = fit_peak_integrations(store.get("integrations", {}))
-            store["integration_fits"] = fits
-            for name, fit in fits.items():
-                store["integrations"][name]["fit"] = fit
+            self._fit_integrations_for_store(store)
         fit = fit_peak_roi_2d(
             self.image_data,
             self.axis_ranges,
@@ -3600,6 +4067,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
                 "message": "The 2D fit could not be computed.",
             }
             self._set_fit_status("The 2D fit could not be computed.")
+            self._update_record_fit_summary(record)
             return False
         store["fit_2d"] = fit
         store.pop("fit_2d_failure", None)
@@ -3680,6 +4148,76 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             "center_qxy": fit_2d.get("center_qxy") if fit_2d else None,
             "center_qz": fit_2d.get("center_qz") if fit_2d else None,
         }
+
+    def _fit_issue_messages(self, record: dict[str, Any]) -> list[str]:
+        store = self._fit_record_for_peak(record, create=False)
+        if not store:
+            return []
+        messages: list[str] = []
+        for name, failure in sorted(store.get("fit_failures", {}).items()):
+            messages.append(
+                str(
+                    failure.get(
+                        "message",
+                        f"Could not fit {FIT_INTEGRATION_LABELS.get(name, name)} profile.",
+                    )
+                )
+            )
+        fit_2d_failure = store.get("fit_2d_failure")
+        if fit_2d_failure:
+            messages.append(
+                str(
+                    fit_2d_failure.get(
+                        "message",
+                        "The 2D fit could not be computed.",
+                    )
+                )
+            )
+        integrations = store.get("integrations", {})
+        fits = store.get("integration_fits", {})
+        fit_attempted = bool(
+            store.get("fit_attempted")
+            or store.get("fit_2d")
+            or store.get("fit_2d_failure")
+            or store.get("fit_failures")
+        )
+        if fit_attempted and integrations and len(fits) < len(integrations):
+            messages.append(
+                f"Only {len(fits)}/{len(integrations)} integrated traces fit."
+            )
+        for name, fit in sorted(fits.items()):
+            warning = self._fit_quality_warning(
+                fit,
+                FIT_INTEGRATION_LABELS.get(name, name),
+            )
+            if warning:
+                messages.append(warning)
+        fit_2d = store.get("fit_2d")
+        if fit_2d:
+            warning = self._fit_quality_warning(fit_2d, "2D Gaussian")
+            if warning:
+                messages.append(warning)
+        return list(dict.fromkeys(messages))
+
+    def _fit_quality_warning(
+        self,
+        fit: dict[str, Any],
+        label: str,
+    ) -> str | None:
+        status = str(fit.get("status", "")).lower()
+        if status and status != "fit":
+            return (
+                f"{label} used an estimated fit rather than a converged fit."
+            )
+        statistics = fit.get("statistics", {})
+        if isinstance(statistics, dict):
+            r_squared = statistics.get("r_squared")
+            if isinstance(r_squared, int | float) and r_squared < 0.5:
+                return f"{label} fit has low R^2 ({r_squared:.3g})."
+            r_w = statistics.get("r_w")
+            if isinstance(r_w, int | float) and r_w > 0.35:
+                return f"{label} fit has high weighted residual ({r_w:.3g})."
+        return None
 
     def _update_record_fit_summary(self, record: dict[str, Any]) -> None:
         record["fit_summary"] = self._fit_summary(record)
@@ -3858,6 +4396,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.fit_integration_combo.setEnabled(enabled and bool(integrations))
         self.run_all_integrations_button.setEnabled(enabled and has_any_roi)
         self.batch_fit_button.setEnabled(enabled and has_any_roi)
+        self.fit_issues_first_button.setEnabled(enabled)
 
     def _set_fit_status(self, message: str) -> None:
         self.fit_status_label.setText(message)
@@ -3925,6 +4464,418 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             store.pop("integration_fits", None)
             store.pop("fit_2d", None)
         record.pop("fit_summary", None)
+
+    def _snap_target_near(
+        self,
+        qxy: float,
+        qz: float,
+    ) -> dict[str, Any] | None:
+        gap_estimate = self._masked_gap_peak_estimate(qxy, qz)
+        if gap_estimate is not None:
+            return gap_estimate
+        maximum = self._local_maximum_near(qxy, qz)
+        if maximum is None:
+            return None
+        peak_qxy, peak_qz, intensity = maximum
+        return {
+            "kind": "local-maximum",
+            "qxy": peak_qxy,
+            "qz": peak_qz,
+            "intensity": intensity,
+            "source": "manual-local-maximum",
+        }
+
+    def _apply_peak_target_to_record(
+        self,
+        record: dict[str, Any],
+        target: dict[str, Any],
+    ) -> None:
+        record["qxy"] = float(target["qxy"])
+        record["qz"] = float(target["qz"])
+        record["intensity"] = float(target["intensity"])
+        record["source"] = str(target["source"])
+        self._apply_peak_target_metadata(record, target)
+
+    def _apply_peak_target_metadata(
+        self,
+        record: dict[str, Any],
+        target: dict[str, Any],
+    ) -> None:
+        if target.get("kind") != "masked-gap":
+            return
+        record["point_kind"] = PEAK_POINT_KIND_GAP_ESTIMATED
+        record["gap_estimated"] = True
+        record["phase_tag"] = "gap-estimated"
+        record["metadata"] = dict(target.get("metadata", {}))
+
+    def _coordinate_is_masked(self, qxy: float, qz: float) -> bool:
+        if self.image_data is None:
+            return False
+        x_axis, y_axis = self._image_axes()
+        if not x_axis.size or not y_axis.size:
+            return False
+        x_index = int(np.argmin(np.abs(x_axis - qxy)))
+        y_index = int(np.argmin(np.abs(y_axis - qz)))
+        image = np.asarray(self.image_data, dtype=float)
+        qxy_gap = _masked_gap_line_mask(image[y_index, :])
+        qz_gap = _masked_gap_line_mask(image[:, x_index])
+        return bool(qxy_gap[x_index] or qz_gap[y_index])
+
+    def _masked_gap_peak_estimate(
+        self,
+        qxy: float,
+        qz: float,
+    ) -> dict[str, Any] | None:
+        if self.image_data is None:
+            return None
+        x_axis, y_axis = self._image_axes()
+        if not x_axis.size or not y_axis.size:
+            return None
+        x_index = int(np.argmin(np.abs(x_axis - qxy)))
+        y_index = int(np.argmin(np.abs(y_axis - qz)))
+
+        radius = max(
+            self.snap_window_px.value(),
+            self.min_distance_px.value(),
+            self.neighborhood_radius_px.value() * 4,
+            3,
+        )
+        candidates = [
+            candidate
+            for candidate in (
+                self._masked_gap_axis_estimate(
+                    x_index,
+                    y_index,
+                    axis="qxy",
+                    radius=radius,
+                    x_axis=x_axis,
+                    y_axis=y_axis,
+                ),
+                self._masked_gap_axis_estimate(
+                    x_index,
+                    y_index,
+                    axis="qz",
+                    radius=radius,
+                    x_axis=x_axis,
+                    y_axis=y_axis,
+                ),
+            )
+            if candidate is not None
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda candidate: float(candidate["score"]))
+
+    def _masked_gap_axis_estimate(
+        self,
+        x_index: int,
+        y_index: int,
+        *,
+        axis: str,
+        radius: int,
+        x_axis: np.ndarray,
+        y_axis: np.ndarray,
+    ) -> dict[str, Any] | None:
+        if self.image_data is None:
+            return None
+        image = np.asarray(self.image_data, dtype=float)
+        if axis == "qxy":
+            primary_values = x_axis
+            primary_index = x_index
+            masked_line = _masked_gap_line_mask(image[y_index, :])
+        else:
+            primary_values = y_axis
+            primary_index = y_index
+            masked_line = _masked_gap_line_mask(image[:, x_index])
+        if not masked_line[primary_index]:
+            return None
+        gap_start, gap_end = _contiguous_true_span(masked_line, primary_index)
+        minus_anchor = plus_anchor = None
+        side_radius = int(radius)
+        for scale in (1, 2, 4):
+            side_radius = int(radius * scale)
+            perp_radius = max(2, side_radius // 2)
+            minus_anchor, plus_anchor = self._masked_gap_side_anchors(
+                x_index,
+                y_index,
+                axis=axis,
+                gap_start=gap_start,
+                gap_end=gap_end,
+                side_radius=side_radius,
+                perp_radius=perp_radius,
+                x_axis=x_axis,
+                y_axis=y_axis,
+            )
+            if minus_anchor is not None and plus_anchor is not None:
+                break
+        if minus_anchor is None or plus_anchor is None:
+            return None
+
+        profile_values, profile = self._masked_gap_profile(
+            x_index,
+            y_index,
+            axis=axis,
+            gap_start=gap_start,
+            gap_end=gap_end,
+            side_radius=side_radius,
+            perp_radius=max(2, side_radius // 2),
+            x_axis=x_axis,
+            y_axis=y_axis,
+        )
+        if profile_values.size == 0:
+            return None
+        gap_min = float(
+            min(primary_values[gap_start], primary_values[gap_end])
+        )
+        gap_max = float(
+            max(primary_values[gap_start], primary_values[gap_end])
+        )
+        fit = self._fit_masked_gap_gaussian(
+            profile_values,
+            profile,
+            gap_min=gap_min,
+            gap_max=gap_max,
+            minus_anchor=minus_anchor,
+            plus_anchor=plus_anchor,
+            axis=axis,
+        )
+        if fit is None:
+            return None
+        center = float(fit["center"])
+        weights = [
+            max(float(minus_anchor["intensity"]), 1.0e-12),
+            max(float(plus_anchor["intensity"]), 1.0e-12),
+        ]
+        if axis == "qxy":
+            qxy = center
+            qz = float(
+                np.average(
+                    [minus_anchor["qz"], plus_anchor["qz"]],
+                    weights=weights,
+                )
+            )
+        else:
+            qxy = float(
+                np.average(
+                    [minus_anchor["qxy"], plus_anchor["qxy"]],
+                    weights=weights,
+                )
+            )
+            qz = center
+        metadata = {
+            "gap_estimate": True,
+            "estimate_method": "masked gap gaussian",
+            "masked_gap": True,
+            "gap_axis": axis,
+            f"gap_{axis}_min": gap_min,
+            f"gap_{axis}_max": gap_max,
+            "minus_anchor_qxy": float(minus_anchor["qxy"]),
+            "minus_anchor_qz": float(minus_anchor["qz"]),
+            "minus_anchor_intensity": float(minus_anchor["intensity"]),
+            "plus_anchor_qxy": float(plus_anchor["qxy"]),
+            "plus_anchor_qz": float(plus_anchor["qz"]),
+            "plus_anchor_intensity": float(plus_anchor["intensity"]),
+            "gaussian_fit": fit["fit_kind"],
+        }
+        return {
+            "kind": "masked-gap",
+            "qxy": qxy,
+            "qz": qz,
+            "intensity": float(fit["intensity"]),
+            "source": "gap estimate",
+            "score": float(fit["score"]),
+            "metadata": metadata,
+        }
+
+    def _masked_gap_side_anchors(
+        self,
+        x_index: int,
+        y_index: int,
+        *,
+        axis: str,
+        gap_start: int,
+        gap_end: int,
+        side_radius: int,
+        perp_radius: int,
+        x_axis: np.ndarray,
+        y_axis: np.ndarray,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        if self.image_data is None:
+            return None, None
+        height, width = self.image_data.shape
+        if axis == "qxy":
+            y0 = max(0, y_index - perp_radius)
+            y1 = min(height, y_index + perp_radius + 1)
+            minus = self._finite_window_max(
+                max(0, gap_start - side_radius),
+                gap_start,
+                y0,
+                y1,
+                x_axis=x_axis,
+                y_axis=y_axis,
+            )
+            plus = self._finite_window_max(
+                gap_end + 1,
+                min(width, gap_end + side_radius + 1),
+                y0,
+                y1,
+                x_axis=x_axis,
+                y_axis=y_axis,
+            )
+            return minus, plus
+
+        x0 = max(0, x_index - perp_radius)
+        x1 = min(width, x_index + perp_radius + 1)
+        minus = self._finite_window_max(
+            x0,
+            x1,
+            max(0, gap_start - side_radius),
+            gap_start,
+            x_axis=x_axis,
+            y_axis=y_axis,
+        )
+        plus = self._finite_window_max(
+            x0,
+            x1,
+            gap_end + 1,
+            min(height, gap_end + side_radius + 1),
+            x_axis=x_axis,
+            y_axis=y_axis,
+        )
+        return minus, plus
+
+    def _finite_window_max(
+        self,
+        x0: int,
+        x1: int,
+        y0: int,
+        y1: int,
+        *,
+        x_axis: np.ndarray,
+        y_axis: np.ndarray,
+    ) -> dict[str, Any] | None:
+        if self.image_data is None or x1 <= x0 or y1 <= y0:
+            return None
+        window = np.asarray(self.image_data[y0:y1, x0:x1], dtype=float)
+        finite = np.isfinite(window)
+        if not finite.any():
+            return None
+        filled = np.where(finite, window, -np.inf)
+        local = int(np.argmax(filled))
+        local_y, local_x = np.unravel_index(local, window.shape)
+        peak_x = x0 + int(local_x)
+        peak_y = y0 + int(local_y)
+        return {
+            "x_index": peak_x,
+            "y_index": peak_y,
+            "qxy": float(x_axis[peak_x]),
+            "qz": float(y_axis[peak_y]),
+            "intensity": float(self.image_data[peak_y, peak_x]),
+        }
+
+    def _masked_gap_profile(
+        self,
+        x_index: int,
+        y_index: int,
+        *,
+        axis: str,
+        gap_start: int,
+        gap_end: int,
+        side_radius: int,
+        perp_radius: int,
+        x_axis: np.ndarray,
+        y_axis: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if self.image_data is None:
+            return np.array([]), np.array([])
+        height, width = self.image_data.shape
+        if axis == "qxy":
+            x0 = max(0, gap_start - side_radius)
+            x1 = min(width, gap_end + side_radius + 1)
+            y0 = max(0, y_index - perp_radius)
+            y1 = min(height, y_index + perp_radius + 1)
+            values = np.asarray(self.image_data[y0:y1, x0:x1], dtype=float)
+            return x_axis[x0:x1], _nanmax_axis(values, axis=0)
+        x0 = max(0, x_index - perp_radius)
+        x1 = min(width, x_index + perp_radius + 1)
+        y0 = max(0, gap_start - side_radius)
+        y1 = min(height, gap_end + side_radius + 1)
+        values = np.asarray(self.image_data[y0:y1, x0:x1], dtype=float)
+        return y_axis[y0:y1], _nanmax_axis(values, axis=1)
+
+    def _fit_masked_gap_gaussian(
+        self,
+        primary_values: np.ndarray,
+        profile: np.ndarray,
+        *,
+        gap_min: float,
+        gap_max: float,
+        minus_anchor: dict[str, Any],
+        plus_anchor: dict[str, Any],
+        axis: str,
+    ) -> dict[str, Any] | None:
+        finite = np.isfinite(profile)
+        if not finite.any():
+            return None
+        finite_profile = profile[finite]
+        baseline = float(np.nanpercentile(finite_profile, 10.0))
+        signal = profile - baseline
+        finite_signal = signal[np.isfinite(signal)]
+        if not finite_signal.size:
+            return None
+        max_signal = float(np.nanmax(finite_signal))
+        threshold = max(max_signal * 0.03, 1.0e-12)
+        fit_mask = finite & (signal > threshold)
+        center = None
+        intensity = None
+        fit_kind = "anchor-weighted"
+        if np.count_nonzero(fit_mask) >= 3:
+            try:
+                coefficients = np.polyfit(
+                    primary_values[fit_mask],
+                    np.log(signal[fit_mask]),
+                    2,
+                )
+                curvature, slope, intercept = coefficients
+                if curvature < 0.0:
+                    fitted_center = -slope / (2.0 * curvature)
+                    if np.isfinite(fitted_center):
+                        center = float(
+                            np.clip(fitted_center, gap_min, gap_max)
+                        )
+                        log_signal = float(np.polyval(coefficients, center))
+                        intensity = baseline + float(np.exp(log_signal))
+                        fit_kind = "log-quadratic-gaussian"
+            except (FloatingPointError, ValueError, np.linalg.LinAlgError):
+                center = None
+        if center is None:
+            minus_value = float(minus_anchor[axis])
+            plus_value = float(plus_anchor[axis])
+            weights = [
+                max(float(minus_anchor["intensity"]) - baseline, 1.0e-12),
+                max(float(plus_anchor["intensity"]) - baseline, 1.0e-12),
+            ]
+            center = float(
+                np.clip(
+                    np.average([minus_value, plus_value], weights=weights),
+                    gap_min,
+                    gap_max,
+                )
+            )
+            intensity = max(
+                float(minus_anchor["intensity"]),
+                float(plus_anchor["intensity"]),
+            )
+        score = min(
+            max(float(minus_anchor["intensity"]) - baseline, 0.0),
+            max(float(plus_anchor["intensity"]) - baseline, 0.0),
+        )
+        return {
+            "center": center,
+            "intensity": float(intensity),
+            "score": score,
+            "fit_kind": fit_kind,
+        }
 
     def _local_maximum_near(
         self,
@@ -4357,6 +5308,40 @@ def _peak_qxy(record: dict[str, Any]) -> float:
 
 def _peak_qz(record: dict[str, Any]) -> float:
     return float(record.get("qz", record.get("y", 0.0)))
+
+
+def _contiguous_true_span(values: np.ndarray, index: int) -> tuple[int, int]:
+    start = int(index)
+    end = int(index)
+    while start > 0 and bool(values[start - 1]):
+        start -= 1
+    while end + 1 < values.size and bool(values[end + 1]):
+        end += 1
+    return start, end
+
+
+def _nanmax_axis(values: np.ndarray, *, axis: int) -> np.ndarray:
+    finite = np.isfinite(values)
+    if values.size == 0:
+        return np.array([])
+    has_finite = np.any(finite, axis=axis)
+    collapsed = np.max(np.where(finite, values, -np.inf), axis=axis)
+    return np.where(has_finite, collapsed, np.nan)
+
+
+def _masked_gap_line_mask(values: np.ndarray) -> np.ndarray:
+    line = np.asarray(values, dtype=float)
+    mask = ~np.isfinite(line)
+    finite = line[np.isfinite(line)]
+    if not finite.size:
+        return mask
+    floor = float(np.nanmin(finite))
+    ceiling = float(np.nanpercentile(finite, 99.0))
+    span = ceiling - floor
+    if span <= 0.0:
+        return mask
+    floor_tolerance = max(span * 1.0e-6, 1.0e-12)
+    return mask | (line <= floor + floor_tolerance)
 
 
 def _is_gap_estimated_peak(record: dict[str, Any]) -> bool:

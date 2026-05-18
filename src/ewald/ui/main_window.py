@@ -845,8 +845,10 @@ class MainWindow(QtWidgets.QMainWindow):
             axis_ranges=viewer.axis_ranges,
             coordinate_space=viewer.coordinate_space,
             image_style=viewer.image_display_style(),
+            project_path=self.project_path,
         )
         viewer.imageStyleChanged.connect(structure_pane.apply_image_style)
+        viewer.roiRegionsChanged.connect(structure_pane.refresh_roi_overlays)
         peak_pane.peakSetChanged.connect(structure_pane.refresh_from_peak_fit)
         structure_pane.structureAnalysisChanged.connect(
             self._handle_structure_analysis_changed

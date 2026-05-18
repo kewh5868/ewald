@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import shlex
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -42,6 +43,7 @@ from ewald.data.models import ProjectState
 from ewald.ui.data_viewer import (
     IMAGE_COLORMAPS,
     ImageDisplayStyle,
+    ImagePlotToolbar,
     _ImageAspectPlotFrame,
     _level_spinbox,
     _quantile_spinbox,
@@ -101,7 +103,26 @@ CANDIDATE_COLUMNS = [
     "Outliers",
     "Method",
 ]
-FAMILY_COLUMNS = ["Family", "Type", "Phase", "Reference", "Peaks", "Notes"]
+FAMILY_COLUMNS = [
+    "Family",
+    "Flag",
+    "Confidence",
+    "Type",
+    "Phase",
+    "Reference",
+    "Peaks",
+    "Reason",
+    "Notes",
+]
+FAMILY_COL_ID = 0
+FAMILY_COL_FLAG = 1
+FAMILY_COL_CONFIDENCE = 2
+FAMILY_COL_TYPE = 3
+FAMILY_COL_PHASE = 4
+FAMILY_COL_REFERENCE = 5
+FAMILY_COL_PEAKS = 6
+FAMILY_COL_REASON = 7
+FAMILY_COL_NOTES = 8
 CIF_COLUMNS = ["Rank", "Candidate", "Score", "Composition", "Status"]
 WYCKOFF_SITE_COLUMNS = ["Site", "Multiplicity", "Free params", "Space group"]
 WYCKOFF_COMBINATION_COLUMNS = [
@@ -110,6 +131,16 @@ WYCKOFF_COMBINATION_COLUMNS = [
     "Free params",
     "Sites",
 ]
+ATOM_SPEC_COLUMNS = ["Element", "Stoich.", "Shared site", "Occupancy"]
+ATOM_COL_ELEMENT = 0
+ATOM_COL_STOICHIOMETRY = 1
+ATOM_COL_SHARED_SITE = 2
+ATOM_COL_OCCUPANCY = 3
+STRUCTURE_PEAK_BRUSH = "#22c55e"
+STRUCTURE_ACTIVE_PEAK_BRUSH = "#2f80ed"
+FAMILY_FLAG_APPROPRIATE = "appropriate"
+FAMILY_FLAG_INAPPROPRIATE = "inappropriate"
+FAMILY_FLAG_CYCLE = ("", FAMILY_FLAG_APPROPRIATE, FAMILY_FLAG_INAPPROPRIATE)
 
 
 @dataclass(frozen=True)
@@ -340,6 +371,8 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         axis_ranges: tuple[float, float, float, float] | None = None,
         coordinate_space: str = "qspace",
         image_style: ImageDisplayStyle | None = None,
+        project_path: Path | None = None,
+        generated_cif_directory: Path | None = None,
         parent: QtWidgets.QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -349,9 +382,21 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.axis_ranges = axis_ranges
         self.coordinate_space = coordinate_space
         self.image_style = image_style or ImageDisplayStyle()
+        self.project_path = Path(project_path) if project_path else None
+        self.generated_cif_directory = (
+            Path(generated_cif_directory)
+            if generated_cif_directory is not None
+            else _default_generated_cif_directory(self.project_path)
+        )
         self.active_peak_id: str | None = None
+        self.active_family_peak_id: str | None = None
         self._syncing_table = False
+        self._syncing_peak_selection = False
+        self._syncing_atom_table = False
         self._phase_controls: list[QtWidgets.QComboBox] = []
+        self._family_shortcuts: list[QtGui.QShortcut] = []
+        self.view_box: Any | None = None
+        self.roi_overlay_items: list[Any] = []
         self.plot_frame: _ImageAspectPlotFrame | None = None
         self._analysis_state()
         self._refresh_imported_peaks(preserve_user_edits=True)
@@ -526,31 +571,46 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         if candidate is None:
             self._set_status("Select a candidate before generating CIFs.")
             return []
-        atoms = [
-            token.strip()
-            for token in self.free_atoms_edit.text()
-            .replace(";", ",")
-            .split(",")
-            if token.strip()
-        ]
+        atom_specs = self._free_atom_specs()
+        atoms = [spec["element"] for spec in atom_specs]
         density = self.density_spin.value()
+        self._wyckoff_state()["free_atoms"] = atom_specs
         records = generate_ranked_cif_records(
             candidate,
             atoms=atoms,
+            atom_specs=atom_specs,
             molecules=self._wyckoff_state().get("molecules", []),
             space_group_number=self._selected_space_group_number(),
             wyckoff_combinations=self._selected_wyckoff_combinations(),
             stoichiometry=self.stoichiometry_edit.text(),
             density_g_cm3=density if density > 0.0 else None,
-            occupancy_constraints=self.occupancy_edit.toPlainText(),
+            occupancy_constraints=_atom_occupancy_summary(atom_specs),
             limit=self.cif_count_spin.value(),
         )
+        records = self._write_generated_cif_files(records)
         self._wyckoff_state()["generated_cifs"] = records
         self._publish_generated_cifs(records)
         self._sync_cif_table()
-        self._set_status(f"Generated {len(records)} ranked draft CIF file(s).")
+        self._set_status(
+            f"Generated {len(records)} ranked draft CIF file(s) in "
+            f"{self.generated_cif_directory}."
+        )
         self.structureAnalysisChanged.emit(self.data_id)
         return records
+
+    def open_generated_cif_folder(self) -> Path | None:
+        directory = self.generated_cif_directory
+        if not directory.exists():
+            self._set_status("Generate CIFs before opening the output folder.")
+            return None
+        opened = QtGui.QDesktopServices.openUrl(
+            QtCore.QUrl.fromLocalFile(str(directory))
+        )
+        if opened:
+            self._set_status(f"Opened generated CIF folder: {directory}")
+            return directory
+        self._set_status(f"Could not open generated CIF folder: {directory}")
+        return None
 
     def _analysis_state(self) -> dict[str, Any]:
         analyses = self.project.analysis_results.setdefault(
@@ -622,15 +682,27 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             candidate.as_dict() for candidate in unique
         ]
 
+    def _family_records(self) -> list[dict[str, Any]]:
+        return [
+            family
+            for family in self._analysis_state().get("families", [])
+            if isinstance(family, dict)
+        ]
+
     def _build_plot(self) -> None:
         if pg is None:
             self.plot_widget = QtWidgets.QLabel("Structure Analysis")
             self.plot_widget.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            self.plot_widget.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
             self.image_item = None
             self.peak_scatter = None
             self.family_highlight_scatter = None
+            self.view_box = None
+            self.roi_overlay_items = []
             return
         self.plot_widget = pg.PlotWidget()
+        self.plot_widget.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        self.view_box = self.plot_widget.getViewBox()
         if self.coordinate_space == "qspace":
             set_qspace_axis_labels(self.plot_widget)
         else:
@@ -655,6 +727,10 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         )
         self.family_highlight_scatter.setZValue(15)
         self.peak_scatter.setZValue(14)
+        self.peak_scatter.sigClicked.connect(self._handle_peak_plot_clicked)
+        self.family_highlight_scatter.sigClicked.connect(
+            self._handle_family_plot_clicked
+        )
         self.plot_widget.addItem(self.peak_scatter)
         self.plot_widget.addItem(self.family_highlight_scatter)
 
@@ -670,7 +746,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.peak_table.itemSelectionChanged.connect(
             self._handle_peak_selection
         )
-        self.peak_table.setMinimumHeight(210)
+        self.peak_table.setMinimumHeight(170)
 
     def _build_controls(self) -> None:
         self.colormap_combo = QtWidgets.QComboBox()
@@ -699,6 +775,21 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             self._apply_image_style_from_controls
         )
         self.auto_contrast_button.clicked.connect(self._set_quantile_levels)
+
+        self.zoom_in_button = QtWidgets.QToolButton()
+        self.zoom_in_button.setText("Zoom In")
+        self.zoom_in_button.clicked.connect(lambda: self._zoom_image(0.75))
+        self.zoom_out_button = QtWidgets.QToolButton()
+        self.zoom_out_button.setText("Zoom Out")
+        self.zoom_out_button.clicked.connect(lambda: self._zoom_image(1.35))
+        self.zoom_fit_button = QtWidgets.QToolButton()
+        self.zoom_fit_button.setText("Autoscale")
+        self.zoom_fit_button.clicked.connect(self._reset_image_zoom)
+        self.pan_button = QtWidgets.QToolButton()
+        self.pan_button.setText("Pan")
+        self.pan_button.setCheckable(True)
+        self.pan_button.toggled.connect(self._set_pan_mode)
+        self._set_pan_mode(False)
 
         self.status_label = QtWidgets.QLabel(
             "Structure Analysis edits update this tab only; Peak Fit results "
@@ -761,21 +852,104 @@ class StructureAnalysisPane(QtWidgets.QWidget):
 
         self.family_tolerance = _double_spinbox(0.04, 0.001, 5.0, 0.01)
         self.family_ratio_tolerance = _double_spinbox(0.06, 0.001, 1.0, 0.01)
+        self.family_confidence_filter = _double_spinbox(
+            0.0,
+            0.0,
+            1.0,
+            0.05,
+            decimals=2,
+        )
+        self.family_confidence_filter.setToolTip(
+            qt_tooltip(
+                "Show only generated or edited families at or above this "
+                "confidence score."
+            )
+        )
+        self.family_confidence_filter.valueChanged.connect(
+            lambda _value: self._sync_families()
+        )
         self.family_button = QtWidgets.QToolButton()
         self.family_button.setText("Suggest Families")
         self.family_button.clicked.connect(self.suggest_peak_families)
+        self.family_flag_button = QtWidgets.QToolButton()
+        self.family_flag_button.setText("Flag (F)")
+        self.family_flag_button.setToolTip(
+            qt_tooltip(
+                "Cycle selected families through appropriate, "
+                "inappropriate, and unreviewed flags."
+            )
+        )
+        self.family_flag_button.clicked.connect(
+            self.toggle_selected_family_flags
+        )
+        self.family_appropriate_button = QtWidgets.QToolButton()
+        self.family_appropriate_button.setText("Appropriate")
+        self.family_appropriate_button.setToolTip(
+            qt_tooltip("Mark selected families as appropriate.")
+        )
+        self.family_appropriate_button.clicked.connect(
+            lambda: self.set_selected_family_flag(FAMILY_FLAG_APPROPRIATE)
+        )
+        self.family_inappropriate_button = QtWidgets.QToolButton()
+        self.family_inappropriate_button.setText("Inappropriate")
+        self.family_inappropriate_button.setToolTip(
+            qt_tooltip("Mark selected families as inappropriate.")
+        )
+        self.family_inappropriate_button.clicked.connect(
+            lambda: self.set_selected_family_flag(FAMILY_FLAG_INAPPROPRIATE)
+        )
+        self.family_delete_button = QtWidgets.QToolButton()
+        self.family_delete_button.setText("Delete (D)")
+        self.family_delete_button.setToolTip(
+            qt_tooltip("Delete the selected peak families.")
+        )
+        self.family_delete_button.clicked.connect(
+            self.delete_selected_families
+        )
+        self.family_remove_ring_button = QtWidgets.QToolButton()
+        self.family_remove_ring_button.setText("Remove Ring (R)")
+        self.family_remove_ring_button.setToolTip(
+            qt_tooltip(
+                "Remove the highlighted ring from the active peak family."
+            )
+        )
+        self.family_remove_ring_button.clicked.connect(
+            self.remove_active_family_ring
+        )
         self.family_table = QtWidgets.QTableWidget(0, len(FAMILY_COLUMNS))
         self.family_table.setHorizontalHeaderLabels(FAMILY_COLUMNS)
         enable_rich_text_items(self.family_table)
         self.family_table.setSelectionBehavior(
             QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
         )
+        self.family_table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         self.family_table.setEditTriggers(
             QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
         )
         self.family_table.itemSelectionChanged.connect(self._sync_peak_plot)
+        self._install_family_shortcuts()
 
         self._build_wyckoff_controls()
+
+    def _install_family_shortcuts(self) -> None:
+        targets = [self.family_table]
+        if isinstance(self.plot_widget, QtWidgets.QWidget):
+            targets.append(self.plot_widget)
+        shortcut_specs = [
+            ("F", self.toggle_selected_family_flags),
+            ("D", self.delete_selected_families),
+            ("R", self.remove_active_family_ring),
+        ]
+        for target in targets:
+            for key, callback in shortcut_specs:
+                shortcut = QtGui.QShortcut(QtGui.QKeySequence(key), target)
+                shortcut.setContext(
+                    QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut
+                )
+                shortcut.activated.connect(callback)
+                self._family_shortcuts.append(shortcut)
 
     def _build_wyckoff_controls(self) -> None:
         self.wyckoff_candidate_combo = QtWidgets.QComboBox()
@@ -812,7 +986,37 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.wyckoff_combination_table.setEditTriggers(
             QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
         )
-        self.free_atoms_edit = QtWidgets.QLineEdit("Pb, I")
+        self.atom_table = QtWidgets.QTableWidget(0, len(ATOM_SPEC_COLUMNS))
+        self.atom_table.setHorizontalHeaderLabels(ATOM_SPEC_COLUMNS)
+        self.atom_table.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.atom_table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.AllEditTriggers
+        )
+        self.atom_table.setMinimumHeight(116)
+        self.atom_table.horizontalHeader().setStretchLastSection(True)
+        self.atom_table.itemChanged.connect(
+            lambda _item: self._store_free_atom_specs()
+        )
+        self.add_atom_button = QtWidgets.QToolButton()
+        self.add_atom_button.setText("Add Atoms")
+        self.add_atom_button.setToolTip(
+            qt_tooltip(
+                "Add an optional free atom row with stoichiometry, shared-site, "
+                "and occupancy controls."
+            )
+        )
+        self.add_atom_button.clicked.connect(self.add_atom_spec_row)
+        self.remove_atom_button = QtWidgets.QToolButton()
+        self.remove_atom_button.setText("Remove Atoms")
+        self.remove_atom_button.setToolTip(
+            qt_tooltip("Remove the selected optional free atom row(s).")
+        )
+        self.remove_atom_button.clicked.connect(
+            self.remove_selected_atom_specs
+        )
+        self._sync_atom_table_from_state()
         self.molecule_combo = QtWidgets.QComboBox()
         for key, metadata in REFERENCE_MOLECULES.items():
             self.molecule_combo.addItem(
@@ -840,12 +1044,22 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.stoichiometry_edit = QtWidgets.QLineEdit()
         self.density_spin = _double_spinbox(0.0, 0.0, 100.0, 0.1)
         self.density_spin.setSuffix(" g/cm3")
-        self.occupancy_edit = QtWidgets.QPlainTextEdit()
-        self.occupancy_edit.setMaximumHeight(72)
         self.cif_count_spin = _int_spinbox(5, 1, 50)
         self.generate_cif_button = QtWidgets.QToolButton()
         self.generate_cif_button.setText("Generate Ranked CIFs")
         self.generate_cif_button.clicked.connect(self.generate_candidate_cifs)
+        self.open_cif_folder_button = QtWidgets.QToolButton()
+        self.open_cif_folder_button.setText("Show in Finder")
+        self.open_cif_folder_button.setToolTip(
+            qt_tooltip(
+                "Open the folder containing generated CIF structures for "
+                "inspection in external software."
+            )
+        )
+        self.open_cif_folder_button.setEnabled(False)
+        self.open_cif_folder_button.clicked.connect(
+            self.open_generated_cif_folder
+        )
         self.cif_table = QtWidgets.QTableWidget(0, len(CIF_COLUMNS))
         self.cif_table.setHorizontalHeaderLabels(CIF_COLUMNS)
         enable_rich_text_items(self.cif_table)
@@ -859,28 +1073,148 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.cif_visualizer = _GeneratedCifPreview()
         self._sync_space_group_combo()
 
-    def _build_layout(self) -> None:
-        controls = QtWidgets.QTabWidget()
-        controls.addTab(self._peak_table_tab(), "Peak Table")
-        controls.addTab(self._approximation_tab(), "Structure Approximation")
-        controls.addTab(self._families_tab(), "Peak Families")
-        controls.addTab(self._wyckoff_tab(), "Wyckoff Setup")
+    def _sync_atom_table_from_state(self) -> None:
+        records = self._wyckoff_state().get("free_atoms")
+        if not isinstance(records, list) or not records:
+            records = [
+                {"element": "Pb", "stoichiometry": 1.0},
+                {"element": "I", "stoichiometry": 1.0},
+            ]
+        self._syncing_atom_table = True
+        try:
+            self.atom_table.setRowCount(0)
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                self.add_atom_spec_row(
+                    element=str(record.get("element") or ""),
+                    stoichiometry=_float_or_default(
+                        record.get("stoichiometry", record.get("count", 1.0)),
+                        1.0,
+                    ),
+                    shared_site=str(record.get("shared_site") or ""),
+                    occupancy=_float_or_default(
+                        record.get("occupancy", 1.0),
+                        1.0,
+                    ),
+                )
+        finally:
+            self._syncing_atom_table = False
+        self._store_free_atom_specs()
 
-        contrast_layout = QtWidgets.QHBoxLayout()
-        contrast_layout.addWidget(QtWidgets.QLabel("Color"))
-        contrast_layout.addWidget(self.colormap_combo)
-        contrast_layout.addSpacing(12)
-        contrast_layout.addWidget(QtWidgets.QLabel("Min"))
-        contrast_layout.addWidget(self.level_min)
-        contrast_layout.addWidget(QtWidgets.QLabel("Max"))
-        contrast_layout.addWidget(self.level_max)
-        contrast_layout.addWidget(self.quantile_check)
-        contrast_layout.addWidget(QtWidgets.QLabel("Low"))
-        contrast_layout.addWidget(self.quantile_low)
-        contrast_layout.addWidget(QtWidgets.QLabel("High"))
-        contrast_layout.addWidget(self.quantile_high)
-        contrast_layout.addWidget(self.auto_contrast_button)
-        contrast_layout.addStretch(1)
+    def add_atom_spec_row(
+        self,
+        *,
+        element: str = "X",
+        stoichiometry: float = 1.0,
+        shared_site: str = "",
+        occupancy: float = 1.0,
+    ) -> None:
+        row = self.atom_table.rowCount()
+        self.atom_table.insertRow(row)
+        element_item = QtWidgets.QTableWidgetItem(element)
+        shared_item = QtWidgets.QTableWidgetItem(shared_site)
+        self.atom_table.setItem(row, ATOM_COL_ELEMENT, element_item)
+        self.atom_table.setCellWidget(
+            row,
+            ATOM_COL_STOICHIOMETRY,
+            count_spinbox := _atom_count_spinbox(stoichiometry),
+        )
+        self.atom_table.setItem(row, ATOM_COL_SHARED_SITE, shared_item)
+        self.atom_table.setCellWidget(
+            row,
+            ATOM_COL_OCCUPANCY,
+            occupancy_spinbox := _occupancy_spinbox(occupancy),
+        )
+        count_spinbox.valueChanged.connect(
+            lambda _value: self._store_free_atom_specs()
+        )
+        occupancy_spinbox.valueChanged.connect(
+            lambda _value: self._store_free_atom_specs()
+        )
+        self.atom_table.resizeColumnsToContents()
+        self._store_free_atom_specs()
+
+    def remove_selected_atom_specs(self) -> None:
+        rows = sorted(
+            {index.row() for index in self.atom_table.selectedIndexes()},
+            reverse=True,
+        )
+        if not rows and self.atom_table.currentRow() >= 0:
+            rows = [self.atom_table.currentRow()]
+        for row in rows:
+            self.atom_table.removeRow(row)
+        self._store_free_atom_specs()
+
+    def _free_atom_specs(self) -> list[dict[str, Any]]:
+        specs: list[dict[str, Any]] = []
+        for row in range(self.atom_table.rowCount()):
+            element_item = self.atom_table.item(row, ATOM_COL_ELEMENT)
+            element = str(element_item.text() if element_item else "").strip()
+            if not element:
+                continue
+            shared_item = self.atom_table.item(row, ATOM_COL_SHARED_SITE)
+            count_widget = self.atom_table.cellWidget(
+                row,
+                ATOM_COL_STOICHIOMETRY,
+            )
+            occupancy_widget = self.atom_table.cellWidget(
+                row,
+                ATOM_COL_OCCUPANCY,
+            )
+            stoichiometry = (
+                count_widget.value()
+                if isinstance(count_widget, QtWidgets.QDoubleSpinBox)
+                else 1.0
+            )
+            occupancy = (
+                occupancy_widget.value()
+                if isinstance(occupancy_widget, QtWidgets.QDoubleSpinBox)
+                else 1.0
+            )
+            specs.append(
+                {
+                    "element": element,
+                    "stoichiometry": float(stoichiometry),
+                    "shared_site": str(
+                        shared_item.text() if shared_item else ""
+                    ).strip(),
+                    "occupancy": float(occupancy),
+                }
+            )
+        return specs
+
+    def _store_free_atom_specs(self) -> None:
+        if self._syncing_atom_table:
+            return
+        self._wyckoff_state()["free_atoms"] = self._free_atom_specs()
+
+    def _build_layout(self) -> None:
+        self.analysis_tabs = QtWidgets.QTabWidget()
+        self.analysis_tabs.setMinimumWidth(420)
+        self.analysis_tabs.setMaximumWidth(640)
+        self.approximation_tab = self._approximation_tab()
+        self.family_tab = self._families_tab()
+        self.wyckoff_tab = self._wyckoff_tab()
+        self.analysis_tabs.addTab(
+            self.approximation_tab, "Structure Approximation"
+        )
+        self.analysis_tabs.addTab(self.family_tab, "Peak Families")
+        self.analysis_tabs.addTab(self.wyckoff_tab, "Wyckoff Mapping")
+
+        self.plot_toolbar = ImagePlotToolbar(
+            colormap_combo=self.colormap_combo,
+            level_min=self.level_min,
+            level_max=self.level_max,
+            quantile_check=self.quantile_check,
+            quantile_low=self.quantile_low,
+            quantile_high=self.quantile_high,
+            auto_contrast_button=self.auto_contrast_button,
+            zoom_in_button=self.zoom_in_button,
+            zoom_out_button=self.zoom_out_button,
+            autoscale_button=self.zoom_fit_button,
+            pan_button=self.pan_button,
+        )
 
         plot_area = self.plot_widget
         if pg is not None and self.image_item is not None:
@@ -889,50 +1223,26 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         plot_section = QtWidgets.QWidget()
         plot_section_layout = QtWidgets.QVBoxLayout(plot_section)
         plot_section_layout.setContentsMargins(0, 0, 0, 0)
-        plot_section_layout.addLayout(contrast_layout)
+        plot_section_layout.addWidget(self.plot_toolbar)
         plot_section_layout.addWidget(plot_area, stretch=1)
 
-        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
-        splitter.addWidget(plot_section)
-        splitter.addWidget(controls)
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([520, 340])
+        plot_layout = QtWidgets.QHBoxLayout()
+        plot_layout.addWidget(plot_section, stretch=1)
+        plot_layout.addWidget(self.analysis_tabs)
+
+        table_header = QtWidgets.QHBoxLayout()
+        table_header.addWidget(self.refresh_button)
+        table_header.addStretch(1)
 
         layout = QtWidgets.QVBoxLayout(self)
-        layout.addWidget(splitter, stretch=1)
-
-    def _peak_table_tab(self) -> QtWidgets.QWidget:
-        tab = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(tab)
-        header = QtWidgets.QHBoxLayout()
-        header.addWidget(self.refresh_button)
-        header.addStretch(1)
-        layout.addLayout(header)
-        layout.addWidget(self.peak_table, stretch=1)
+        layout.addLayout(plot_layout, stretch=1)
+        layout.addLayout(table_header)
+        layout.addWidget(self.peak_table)
         layout.addWidget(self.status_label)
-        return tab
 
     def _approximation_tab(self) -> QtWidgets.QWidget:
         tab = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(tab)
-        form = QtWidgets.QFormLayout()
-        form.addRow("Phase", self.phase_filter_combo)
-        form.addRow("Crystal system", self.guess_system_combo)
-        form.addRow("a", self.lattice_a)
-        form.addRow("b", self.lattice_b)
-        form.addRow("c", self.lattice_c)
-        form.addRow("alpha", self.lattice_alpha)
-        form.addRow("beta", self.lattice_beta)
-        form.addRow("gamma", self.lattice_gamma)
-        form.addRow("hkl max", self.hkl_max)
-        form.addRow(
-            rich_label(f"{QSPACE_UNITS_HTML} tolerance"),
-            self.q_tolerance,
-        )
-        form.addRow("Relative tolerance", self.relative_tolerance)
-        form.addRow("Grid points", self.grid_points)
-        layout.addLayout(form)
         buttons = QtWidgets.QHBoxLayout()
         buttons.addWidget(self.refine_button)
         buttons.addWidget(self.guess_button)
@@ -940,6 +1250,48 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         buttons.addWidget(self.outliers_button)
         buttons.addStretch(1)
         layout.addLayout(buttons)
+
+        form = QtWidgets.QGridLayout()
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(6)
+
+        def add_field(
+            row: int,
+            column: int,
+            label: str | QtWidgets.QLabel,
+            widget: QtWidgets.QWidget,
+        ) -> None:
+            if isinstance(label, QtWidgets.QLabel):
+                label_widget = label
+            else:
+                label_widget = QtWidgets.QLabel(label)
+            label_widget.setAlignment(
+                QtCore.Qt.AlignmentFlag.AlignRight
+                | QtCore.Qt.AlignmentFlag.AlignVCenter
+            )
+            form.addWidget(label_widget, row, column * 2)
+            form.addWidget(widget, row, column * 2 + 1)
+
+        add_field(0, 0, "Phase", self.phase_filter_combo)
+        add_field(0, 1, "Crystal system", self.guess_system_combo)
+        add_field(0, 2, "hkl max", self.hkl_max)
+        add_field(1, 0, "a", self.lattice_a)
+        add_field(1, 1, "b", self.lattice_b)
+        add_field(1, 2, "c", self.lattice_c)
+        add_field(2, 0, "alpha", self.lattice_alpha)
+        add_field(2, 1, "beta", self.lattice_beta)
+        add_field(2, 2, "gamma", self.lattice_gamma)
+        add_field(
+            3,
+            0,
+            rich_label(f"{QSPACE_UNITS_HTML} tolerance"),
+            self.q_tolerance,
+        )
+        add_field(3, 1, "Relative tolerance", self.relative_tolerance)
+        add_field(3, 2, "Grid points", self.grid_points)
+        for column in (1, 3, 5):
+            form.setColumnStretch(column, 1)
+        layout.addLayout(form)
         layout.addWidget(self.candidate_table, stretch=1)
         return tab
 
@@ -953,9 +1305,19 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         controls.addWidget(self.family_tolerance)
         controls.addWidget(QtWidgets.QLabel("Ratio tolerance"))
         controls.addWidget(self.family_ratio_tolerance)
+        controls.addWidget(QtWidgets.QLabel("Min confidence"))
+        controls.addWidget(self.family_confidence_filter)
         controls.addWidget(self.family_button)
         controls.addStretch(1)
+        review_controls = QtWidgets.QHBoxLayout()
+        review_controls.addWidget(self.family_flag_button)
+        review_controls.addWidget(self.family_appropriate_button)
+        review_controls.addWidget(self.family_inappropriate_button)
+        review_controls.addWidget(self.family_delete_button)
+        review_controls.addWidget(self.family_remove_ring_button)
+        review_controls.addStretch(1)
         layout.addLayout(controls)
+        layout.addLayout(review_controls)
         layout.addWidget(self.family_table, stretch=1)
         return tab
 
@@ -980,7 +1342,16 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         composition_group = QtWidgets.QGroupBox("Composition & Molecules")
         composition_layout = QtWidgets.QVBoxLayout(composition_group)
         composition_form = QtWidgets.QFormLayout()
-        composition_form.addRow("Free atoms", self.free_atoms_edit)
+        atom_widget = QtWidgets.QWidget()
+        atom_layout = QtWidgets.QVBoxLayout(atom_widget)
+        atom_layout.setContentsMargins(0, 0, 0, 0)
+        atom_button_row = QtWidgets.QHBoxLayout()
+        atom_button_row.addWidget(self.add_atom_button)
+        atom_button_row.addWidget(self.remove_atom_button)
+        atom_button_row.addStretch(1)
+        atom_layout.addLayout(atom_button_row)
+        atom_layout.addWidget(self.atom_table)
+        composition_form.addRow("Free atoms", atom_widget)
         molecule_row = QtWidgets.QWidget()
         molecule_layout = QtWidgets.QHBoxLayout(molecule_row)
         molecule_layout.setContentsMargins(0, 0, 0, 0)
@@ -990,10 +1361,6 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         composition_form.addRow("Reference molecule", molecule_row)
         composition_form.addRow("Stoichiometry", self.stoichiometry_edit)
         composition_form.addRow("Density", self.density_spin)
-        composition_form.addRow(
-            "Occupancy constraints",
-            self.occupancy_edit,
-        )
         composition_layout.addLayout(composition_form)
         composition_layout.addWidget(self.molecule_table)
         setup_layout.addWidget(composition_group)
@@ -1003,6 +1370,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         generate_layout.addWidget(QtWidgets.QLabel("CIF count"))
         generate_layout.addWidget(self.cif_count_spin)
         generate_layout.addWidget(self.generate_cif_button)
+        generate_layout.addWidget(self.open_cif_folder_button)
         generate_layout.addStretch(1)
         setup_layout.addWidget(generate_group)
         setup_layout.addStretch(1)
@@ -1070,6 +1438,30 @@ class StructureAnalysisPane(QtWidgets.QWidget):
     def _apply_manual_levels(self) -> None:
         if not self.quantile_check.isChecked():
             self._apply_image_style_from_controls()
+
+    def _zoom_image(self, factor: float) -> None:
+        if pg is None or self.view_box is None:
+            return
+        self.view_box.scaleBy((factor, factor))
+
+    def _reset_image_zoom(self) -> None:
+        if pg is None or self.plot_widget is None or self.image_data is None:
+            return
+        set_data_image_plot_range(
+            self.plot_widget,
+            self.image_data.shape,
+            self.axis_ranges,
+        )
+
+    def _set_pan_mode(self, enabled: bool) -> None:
+        if self.view_box is not None:
+            self.view_box.setMouseEnabled(x=enabled, y=enabled)
+        if self.plot_widget is not None:
+            self.plot_widget.setCursor(
+                QtCore.Qt.CursorShape.OpenHandCursor
+                if enabled
+                else QtCore.Qt.CursorShape.ArrowCursor
+            )
 
     def image_display_style(self) -> ImageDisplayStyle:
         return ImageDisplayStyle(
@@ -1153,6 +1545,14 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self._sync_cif_table()
         self._sync_wyckoff_registry_tables()
 
+    def refresh_roi_overlays(self, data_id: str | None = None) -> None:
+        if data_id is not None and str(data_id) != self.data_id:
+            return
+        if self.coordinate_space != "qspace":
+            self._clear_roi_overlays()
+            return
+        self._sync_roi_overlays()
+
     def _sync_peak_table(self) -> None:
         peaks = self._structure_peaks()
         self._phase_controls.clear()
@@ -1220,17 +1620,21 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             self.peak_scatter.setData(spots=[])
             if self.family_highlight_scatter is not None:
                 self.family_highlight_scatter.setData(spots=[])
+            self._clear_roi_overlays()
             return
         selected_family_peak_ids = self._selected_family_peak_ids()
+        if self.active_family_peak_id not in selected_family_peak_ids:
+            self.active_family_peak_id = None
         spots = []
         family_spots = []
         for peak in self._structure_peaks():
-            color = _phase_color(peak.phase_tag)
             if peak.peak_id == self.active_peak_id:
                 size = 14
-                pen = pg.mkPen("#111827", width=1.6)
+                brush = pg.mkBrush(STRUCTURE_ACTIVE_PEAK_BRUSH)
+                pen = pg.mkPen("#ffffff", width=1.0)
             else:
                 size = 10
+                brush = pg.mkBrush(STRUCTURE_PEAK_BRUSH)
                 pen = pg.mkPen("#ffffff", width=0.8)
             spots.append(
                 {
@@ -1238,20 +1642,98 @@ class StructureAnalysisPane(QtWidgets.QWidget):
                     "data": peak.as_dict(),
                     "symbol": "o",
                     "size": size,
-                    "brush": pg.mkBrush(color),
+                    "brush": brush,
                     "pen": pen,
                 }
             )
             if peak.peak_id in selected_family_peak_ids:
+                active_family_ring = peak.peak_id == self.active_family_peak_id
                 family_spots.append(
                     {
                         "pos": (peak.qxy, peak.qz),
                         "data": peak.as_dict(),
+                        "size": 22 if active_family_ring else 18,
+                        "symbol": "o",
+                        "brush": pg.mkBrush(255, 255, 255, 0),
+                        "pen": pg.mkPen(
+                            "#ef4444" if active_family_ring else "#facc15",
+                            width=3.0 if active_family_ring else 2.4,
+                        ),
                     }
                 )
         self.peak_scatter.setData(spots=spots)
         if self.family_highlight_scatter is not None:
             self.family_highlight_scatter.setData(spots=family_spots)
+        self._sync_roi_overlays()
+
+    def _sync_roi_overlays(self) -> None:
+        self._clear_roi_overlays()
+        if pg is None or self.plot_widget is None:
+            return
+        for roi in self._structure_roi_records():
+            points = _roi_overlay_points(roi)
+            if points is None:
+                continue
+            x_values, y_values = points
+            kind = str(roi.get("kind", "box")).lower()
+            color = "#f59e0b" if kind == "arch" else "#38bdf8"
+            item = pg.PlotDataItem(
+                x_values,
+                y_values,
+                pen=pg.mkPen(color, width=1.5),
+            )
+            item.setZValue(13)
+            self.plot_widget.addItem(item)
+            self.roi_overlay_items.append(item)
+
+    def _clear_roi_overlays(self) -> None:
+        if pg is None or self.plot_widget is None:
+            self.roi_overlay_items = []
+            return
+        for item in self.roi_overlay_items:
+            try:
+                self.plot_widget.removeItem(item)
+            except Exception:
+                pass
+        self.roi_overlay_items = []
+
+    def _structure_roi_records(self) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        seen: set[tuple[Any, ...]] = set()
+        for roi in self.project.rois_for_target(self.data_id):
+            payload = roi.as_dict() if hasattr(roi, "as_dict") else dict(roi)
+            key = _roi_overlay_key(payload)
+            if key not in seen:
+                records.append(payload)
+                seen.add(key)
+        for peak in self._structure_peaks():
+            metadata = peak.metadata if isinstance(peak.metadata, dict) else {}
+            peak_record = metadata.get("peak_record", {})
+            fit_record = metadata.get("fit_record", {})
+            candidates = []
+            if isinstance(peak_record, dict):
+                candidates.extend(
+                    [
+                        peak_record.get("roi"),
+                        peak_record.get("azimuthal_roi"),
+                    ]
+                )
+            if isinstance(fit_record, dict):
+                candidates.extend(
+                    [
+                        fit_record.get("roi"),
+                        fit_record.get("azimuthal_roi"),
+                    ]
+                )
+            for candidate in candidates:
+                if not isinstance(candidate, dict):
+                    continue
+                key = _roi_overlay_key(candidate)
+                if key in seen:
+                    continue
+                records.append(dict(candidate))
+                seen.add(key)
+        return records
 
     def _sync_candidates(self) -> None:
         candidates = self._candidate_records()
@@ -1281,24 +1763,46 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.candidate_table.resizeColumnsToContents()
         self._sync_wyckoff_candidate_combo()
 
-    def _sync_families(self) -> None:
-        families = self._analysis_state().get("families", [])
+    def _sync_families(self, select_family_id: str | None = None) -> None:
+        if select_family_id is None:
+            select_family_id = self._selected_family_id()
+        min_confidence = self.family_confidence_filter.value()
+        families = [
+            family
+            for family in self._family_records()
+            if _family_confidence(family) >= min_confidence
+        ]
         self.family_table.setRowCount(len(families))
+        selected_row = -1
         for row, family in enumerate(families):
             peak_ids = [str(value) for value in family.get("peak_ids", [])]
+            family_id = str(family.get("family_id", ""))
+            if family_id == select_family_id:
+                selected_row = row
+            flag = _family_flag(family)
+            reason = str(family.get("reason", ""))
+            notes = str(family.get("notes", ""))
             values = [
-                family.get("family_id", ""),
+                family_id,
+                _family_flag_label(flag),
+                f"{_family_confidence(family):.2f}",
                 family.get("kind", ""),
                 family.get("phase_tag", ""),
                 _format_float(family.get("reference")),
                 ", ".join(family.get("labels", family.get("peak_ids", []))),
-                family.get("notes", ""),
+                reason,
+                notes,
             ]
             for column, value in enumerate(values):
                 item = QtWidgets.QTableWidgetItem(str(value))
                 item.setData(QtCore.Qt.ItemDataRole.UserRole, peak_ids)
+                item.setData(QtCore.Qt.ItemDataRole.UserRole + 1, family_id)
+                item.setToolTip(reason or notes)
+                self._style_family_item(item, flag)
                 self.family_table.setItem(row, column, item)
         self.family_table.resizeColumnsToContents()
+        if selected_row >= 0:
+            self.family_table.selectRow(selected_row)
         self._sync_peak_plot()
 
     def _selected_family_peak_ids(self) -> set[str]:
@@ -1310,6 +1814,198 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             if values:
                 peak_ids.update(str(value) for value in values)
         return peak_ids
+
+    def _selected_family_id(self) -> str | None:
+        if not hasattr(self, "family_table"):
+            return None
+        row = self.family_table.currentRow()
+        if row < 0:
+            return None
+        item = self.family_table.item(row, FAMILY_COL_ID)
+        if item is None:
+            return None
+        return str(
+            item.data(QtCore.Qt.ItemDataRole.UserRole + 1) or item.text()
+        )
+
+    def _selected_family_ids(self) -> list[str]:
+        if not hasattr(self, "family_table"):
+            return []
+        rows = sorted(
+            {index.row() for index in self.family_table.selectedIndexes()}
+        )
+        if not rows and self.family_table.currentRow() >= 0:
+            rows = [self.family_table.currentRow()]
+        family_ids: list[str] = []
+        for row in rows:
+            item = self.family_table.item(row, FAMILY_COL_ID)
+            if item is None:
+                continue
+            family_id = str(
+                item.data(QtCore.Qt.ItemDataRole.UserRole + 1) or item.text()
+            )
+            if family_id:
+                family_ids.append(family_id)
+        return family_ids
+
+    def _family_by_id(self, family_id: str | None) -> dict[str, Any] | None:
+        if not family_id:
+            return None
+        for family in self._family_records():
+            if str(family.get("family_id", "")) == str(family_id):
+                return family
+        return None
+
+    def _style_family_item(
+        self,
+        item: QtWidgets.QTableWidgetItem,
+        flag: str,
+    ) -> None:
+        if flag == FAMILY_FLAG_APPROPRIATE:
+            item.setBackground(QtGui.QColor("#dcfce7"))
+        elif flag == FAMILY_FLAG_INAPPROPRIATE:
+            item.setBackground(QtGui.QColor("#fee2e2"))
+
+    def toggle_selected_family_flags(self) -> None:
+        family_ids = self._selected_family_ids()
+        if not family_ids:
+            self._set_status("Select a peak family to flag.")
+            return
+        for family_id in family_ids:
+            family = self._family_by_id(family_id)
+            if family is None:
+                continue
+            flag = _family_flag(family)
+            next_index = (FAMILY_FLAG_CYCLE.index(flag) + 1) % len(
+                FAMILY_FLAG_CYCLE
+            )
+            family["user_flag"] = FAMILY_FLAG_CYCLE[next_index]
+        self._sync_families(select_family_id=family_ids[-1])
+        self._set_status(
+            f"Updated review flag for {len(family_ids)} family(s)."
+        )
+        self.structureAnalysisChanged.emit(self.data_id)
+
+    def set_selected_family_flag(self, flag: str) -> None:
+        family_ids = self._selected_family_ids()
+        if not family_ids:
+            self._set_status("Select a peak family to flag.")
+            return
+        normalized = _family_flag({"user_flag": flag})
+        for family_id in family_ids:
+            family = self._family_by_id(family_id)
+            if family is not None:
+                family["user_flag"] = normalized
+        self._sync_families(select_family_id=family_ids[-1])
+        label = _family_flag_label(normalized).lower()
+        self._set_status(f"Marked {len(family_ids)} family(s) as {label}.")
+        self.structureAnalysisChanged.emit(self.data_id)
+
+    def delete_selected_families(self) -> None:
+        family_ids = set(self._selected_family_ids())
+        if not family_ids:
+            self._set_status("Select a peak family to delete.")
+            return
+        state = self._analysis_state()
+        state["families"] = [
+            family
+            for family in self._family_records()
+            if str(family.get("family_id", "")) not in family_ids
+        ]
+        if self.active_family_peak_id is not None:
+            self.active_family_peak_id = None
+        self._sync_families()
+        self._set_status(f"Deleted {len(family_ids)} peak family record(s).")
+        self.structureAnalysisChanged.emit(self.data_id)
+
+    def add_peak_to_active_family(self, peak_id: str) -> bool:
+        family_id = self._selected_family_id()
+        family = self._family_by_id(family_id)
+        if family is None:
+            return False
+        peak = next(
+            (
+                peak
+                for peak in self._structure_peaks()
+                if peak.peak_id == str(peak_id)
+            ),
+            None,
+        )
+        if peak is None:
+            return False
+        peak_ids = [str(value) for value in family.get("peak_ids", [])]
+        labels = [str(value) for value in family.get("labels", [])]
+        added = False
+        if peak.peak_id not in peak_ids:
+            peak_ids.append(peak.peak_id)
+            labels.append(peak.label)
+            family["peak_ids"] = peak_ids
+            family["labels"] = labels
+            _append_family_note(family, f"manually added {peak.label}")
+            added = True
+        if added:
+            family["manual_edited"] = True
+        self.active_family_peak_id = peak.peak_id
+        self._sync_families(select_family_id=family_id)
+        action = "Added" if added else "Selected"
+        self._set_status(f"{action} {peak.label} in {family_id}.")
+        self.structureAnalysisChanged.emit(self.data_id)
+        return True
+
+    def remove_active_family_ring(self) -> None:
+        family_id = self._selected_family_id()
+        family = self._family_by_id(family_id)
+        if family is None:
+            self._set_status("Select a peak family before removing a ring.")
+            return
+        if not self.active_family_peak_id:
+            self._set_status(
+                "Click a highlighted family ring before removing it."
+            )
+            return
+        peak_ids = [str(value) for value in family.get("peak_ids", [])]
+        if self.active_family_peak_id not in peak_ids:
+            self._set_status(
+                "The highlighted ring is not in the active family."
+            )
+            return
+        peak_lookup = {
+            peak.peak_id: peak.label for peak in self._structure_peaks()
+        }
+        removed_label = peak_lookup.get(
+            self.active_family_peak_id,
+            self.active_family_peak_id,
+        )
+        remaining_ids = [
+            peak_id
+            for peak_id in peak_ids
+            if peak_id != self.active_family_peak_id
+        ]
+        if len(remaining_ids) < 2:
+            state = self._analysis_state()
+            state["families"] = [
+                item
+                for item in self._family_records()
+                if str(item.get("family_id", "")) != str(family_id)
+            ]
+            self.active_family_peak_id = None
+            self._sync_families()
+            self._set_status(
+                f"Removed {removed_label}; {family_id} was deleted because "
+                "fewer than two rings remained."
+            )
+            self.structureAnalysisChanged.emit(self.data_id)
+            return
+        family["peak_ids"] = remaining_ids
+        family["labels"] = [
+            peak_lookup.get(peak_id, peak_id) for peak_id in remaining_ids
+        ]
+        family["manual_edited"] = True
+        _append_family_note(family, f"manually removed {removed_label}")
+        self.active_family_peak_id = None
+        self._sync_families(select_family_id=family_id)
+        self._set_status(f"Removed {removed_label} from {family_id}.")
+        self.structureAnalysisChanged.emit(self.data_id)
 
     def _sync_molecule_table(self) -> None:
         molecules = self._wyckoff_state().get("molecules", [])
@@ -1361,6 +2057,10 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         finally:
             self.cif_table.blockSignals(False)
         self.cif_table.resizeColumnsToContents()
+        if hasattr(self, "open_cif_folder_button"):
+            self.open_cif_folder_button.setEnabled(
+                bool(records) and self.generated_cif_directory.exists()
+            )
         self._sync_cif_visualizer()
 
     def _selected_cif_id(self) -> str | None:
@@ -1623,14 +2323,124 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.structureAnalysisChanged.emit(self.data_id)
 
     def _handle_peak_selection(self) -> None:
+        if self._syncing_peak_selection:
+            return
         row = self.peak_table.currentRow()
         if row < 0:
             return
         item = self.peak_table.item(row, COL_PEAK_ID)
         if item is None:
             return
-        self.active_peak_id = str(item.data(QtCore.Qt.ItemDataRole.UserRole))
+        peak_id = str(item.data(QtCore.Qt.ItemDataRole.UserRole))
+        self.active_peak_id = peak_id
         self._sync_peak_plot()
+        self._ensure_peak_visible(peak_id)
+
+    def _handle_peak_plot_clicked(
+        self,
+        _scatter: Any,
+        points: list[Any],
+        _event: Any,
+    ) -> None:
+        if not points:
+            return
+        payload = points[0].data()
+        if isinstance(payload, dict):
+            peak_id = str(payload.get("peak_id", ""))
+        else:
+            peak_id = str(payload or "")
+        if peak_id:
+            if isinstance(self.plot_widget, QtWidgets.QWidget):
+                self.plot_widget.setFocus()
+            if self._family_editing_active() and self._selected_family_id():
+                if self.add_peak_to_active_family(peak_id):
+                    return
+            self._select_peak_by_id(peak_id, scroll_table=True)
+
+    def _handle_family_plot_clicked(
+        self,
+        _scatter: Any,
+        points: list[Any],
+        _event: Any,
+    ) -> None:
+        if not points:
+            return
+        payload = points[0].data()
+        if isinstance(payload, dict):
+            peak_id = str(payload.get("peak_id", ""))
+        else:
+            peak_id = str(payload or "")
+        if not peak_id:
+            return
+        if isinstance(self.plot_widget, QtWidgets.QWidget):
+            self.plot_widget.setFocus()
+        self.active_family_peak_id = peak_id
+        self._select_peak_by_id(peak_id, scroll_table=True)
+        self._set_status(
+            "Selected family ring. Press R to remove it from the active family."
+        )
+
+    def _family_editing_active(self) -> bool:
+        return (
+            hasattr(self, "analysis_tabs")
+            and hasattr(self, "family_tab")
+            and self.analysis_tabs.currentWidget() is self.family_tab
+        )
+
+    def _select_peak_by_id(
+        self,
+        peak_id: str,
+        *,
+        scroll_table: bool,
+    ) -> bool:
+        for row in range(self.peak_table.rowCount()):
+            item = self.peak_table.item(row, COL_PEAK_ID)
+            if item is None:
+                continue
+            if str(item.data(QtCore.Qt.ItemDataRole.UserRole)) != peak_id:
+                continue
+            self._syncing_peak_selection = True
+            try:
+                self.peak_table.selectRow(row)
+                if scroll_table:
+                    self.peak_table.scrollToItem(
+                        item,
+                        QtWidgets.QAbstractItemView.ScrollHint.PositionAtCenter,
+                    )
+            finally:
+                self._syncing_peak_selection = False
+            self.active_peak_id = peak_id
+            self._sync_peak_plot()
+            self._ensure_peak_visible(peak_id)
+            return True
+        return False
+
+    def _ensure_peak_visible(self, peak_id: str) -> None:
+        if pg is None or self.plot_widget is None:
+            return
+        peak = next(
+            (
+                item
+                for item in self._structure_peaks()
+                if item.peak_id == peak_id
+            ),
+            None,
+        )
+        if peak is None:
+            return
+        try:
+            (x_min, x_max), (y_min, y_max) = self.plot_widget.viewRange()
+        except Exception:
+            return
+        if x_min <= peak.qxy <= x_max and y_min <= peak.qz <= y_max:
+            return
+        x_span = max(float(x_max - x_min), 1.0e-9)
+        y_span = max(float(y_max - y_min), 1.0e-9)
+        self.plot_widget.setRange(
+            xRange=(peak.qxy - x_span / 2.0, peak.qxy + x_span / 2.0),
+            yRange=(peak.qz - y_span / 2.0, peak.qz + y_span / 2.0),
+            padding=0.0,
+        )
 
     def _set_peak_phase(self, peak_id: str, phase_tag: str) -> None:
         if self._syncing_table:
@@ -1747,7 +2557,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             payload = {
                 **record,
                 "data_id": self.data_id,
-                "source": "Structure Analysis Wyckoff Setup",
+                "source": "Structure Analysis Wyckoff Mapping",
             }
             generated[cif_id] = payload
             self.project.structures[cif_id] = {
@@ -1755,12 +2565,38 @@ class StructureAnalysisPane(QtWidgets.QWidget):
                 "data_id": self.data_id,
                 "source": "structure_analysis_generated_cif",
                 "cif_text": record.get("cif_text", ""),
+                "path": record.get("path"),
                 "candidate_id": record.get("candidate_id"),
                 "score": record.get("score"),
                 "space_group": record.get("space_group"),
                 "wyckoff_combination": record.get("wyckoff_combination"),
                 "wyckoff_assignments": record.get("wyckoff_assignments"),
             }
+
+    def _write_generated_cif_files(
+        self,
+        records: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        directory = self.generated_cif_directory
+        directory.mkdir(parents=True, exist_ok=True)
+        self._wyckoff_state()["generated_cif_directory"] = str(directory)
+        written_records: list[dict[str, Any]] = []
+        for record in records:
+            payload = dict(record)
+            cif_text = str(payload.get("cif_text") or "")
+            cif_id = str(payload.get("cif_id") or payload.get("id") or "")
+            filename = _safe_generated_cif_filename(cif_id or "generated_cif")
+            path = directory / filename
+            if cif_text.strip():
+                if (
+                    not path.exists()
+                    or path.read_text(encoding="utf-8") != cif_text
+                ):
+                    path.write_text(cif_text, encoding="utf-8")
+                payload["path"] = str(path)
+                payload["structure_path"] = str(path)
+            written_records.append(payload)
+        return written_records
 
     def _set_status(self, message: str) -> None:
         self.status_label.setText(message)
@@ -1772,6 +2608,100 @@ def _lattice_spinbox(value: float) -> QtWidgets.QDoubleSpinBox:
 
 def _angle_spinbox(value: float) -> QtWidgets.QDoubleSpinBox:
     return _double_spinbox(value, 0.01, 179.99, 1.0, decimals=3)
+
+
+def _atom_count_spinbox(value: float) -> QtWidgets.QDoubleSpinBox:
+    spinbox = _double_spinbox(value, 0.0, 999.0, 1.0, decimals=4)
+    spinbox.setToolTip(
+        qt_tooltip(
+            "Optional stoichiometric amount for this free atom. Leave as 1 "
+            "for a simple one-site atom entry."
+        )
+    )
+    return spinbox
+
+
+def _occupancy_spinbox(value: float) -> QtWidgets.QDoubleSpinBox:
+    spinbox = _double_spinbox(value, 0.0, 1.0, 0.05, decimals=4)
+    spinbox.setToolTip(
+        qt_tooltip(
+            "Optional site occupancy fraction written to the CIF atom-site "
+            "occupancy column."
+        )
+    )
+    return spinbox
+
+
+def _family_confidence(family: dict[str, Any]) -> float:
+    try:
+        value = float(family.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        value = 0.0
+    return max(0.0, min(1.0, value))
+
+
+def _family_flag(family: dict[str, Any]) -> str:
+    flag = str(family.get("user_flag", "")).strip().lower()
+    if flag in {FAMILY_FLAG_APPROPRIATE, FAMILY_FLAG_INAPPROPRIATE}:
+        return flag
+    return ""
+
+
+def _family_flag_label(flag: str) -> str:
+    if flag == FAMILY_FLAG_APPROPRIATE:
+        return "Appropriate"
+    if flag == FAMILY_FLAG_INAPPROPRIATE:
+        return "Inappropriate"
+    return "Unreviewed"
+
+
+def _append_family_note(family: dict[str, Any], note: str) -> None:
+    existing = str(family.get("notes", "")).strip()
+    if note in existing:
+        return
+    family["notes"] = f"{existing}; {note}" if existing else note
+
+
+def _default_generated_cif_directory(project_path: Path | None) -> Path:
+    base = project_path.parent if project_path is not None else Path.cwd()
+    return base / "output" / "generated_cifs"
+
+
+def _safe_generated_cif_filename(cif_id: str) -> str:
+    safe = "".join(
+        (
+            character
+            if character.isalnum() or character in {"-", "_", "."}
+            else "_"
+        )
+        for character in cif_id
+    ).strip("._")
+    return f"{safe or 'generated_cif'}.cif"
+
+
+def _float_or_default(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _atom_occupancy_summary(atom_specs: list[dict[str, Any]]) -> str:
+    pieces = []
+    for spec in atom_specs:
+        element = str(spec.get("element") or "").strip()
+        shared_site = str(spec.get("shared_site") or "").strip()
+        occupancy = _float_or_default(spec.get("occupancy", 1.0), 1.0)
+        if not element:
+            continue
+        details = []
+        if shared_site:
+            details.append(f"shared site {shared_site}")
+        if abs(occupancy - 1.0) > 1.0e-9:
+            details.append(f"occupancy {occupancy:g}")
+        if details:
+            pieces.append(f"{element}: " + ", ".join(details))
+    return "; ".join(pieces)
 
 
 def _double_spinbox(
@@ -2190,6 +3120,87 @@ def _format_float(value: Any) -> str:
         return f"{float(value):.5g}"
     except (TypeError, ValueError):
         return str(value)
+
+
+def _roi_overlay_key(roi: dict[str, Any]) -> tuple[Any, ...]:
+    roi_id = roi.get("roi_id")
+    if roi_id:
+        return ("id", str(roi_id))
+    return (
+        str(roi.get("kind", "box")).lower(),
+        _rounded_roi_value(roi.get("qxy_min")),
+        _rounded_roi_value(roi.get("qxy_max")),
+        _rounded_roi_value(roi.get("qz_min")),
+        _rounded_roi_value(roi.get("qz_max")),
+        _rounded_roi_value(roi.get("qxy_center")),
+        _rounded_roi_value(roi.get("qz_center")),
+        _rounded_roi_value(roi.get("qr_min")),
+        _rounded_roi_value(roi.get("qr_max")),
+        _rounded_roi_value(roi.get("chi_min")),
+        _rounded_roi_value(roi.get("chi_max")),
+    )
+
+
+def _rounded_roi_value(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(parsed):
+        return None
+    return round(parsed, 9)
+
+
+def _roi_overlay_points(
+    roi: dict[str, Any],
+) -> tuple[np.ndarray, np.ndarray] | None:
+    kind = str(roi.get("kind", "box")).lower()
+    if kind == "arch":
+        return _arch_roi_overlay_points(roi)
+    return _box_roi_overlay_points(roi)
+
+
+def _box_roi_overlay_points(
+    roi: dict[str, Any],
+) -> tuple[np.ndarray, np.ndarray] | None:
+    qxy_min = _rounded_roi_value(roi.get("qxy_min"))
+    qxy_max = _rounded_roi_value(roi.get("qxy_max"))
+    qz_min = _rounded_roi_value(roi.get("qz_min"))
+    qz_max = _rounded_roi_value(roi.get("qz_max"))
+    if None in {qxy_min, qxy_max, qz_min, qz_max}:
+        return None
+    x_min, x_max = sorted((float(qxy_min), float(qxy_max)))
+    y_min, y_max = sorted((float(qz_min), float(qz_max)))
+    return (
+        np.asarray([x_min, x_max, x_max, x_min, x_min], dtype=float),
+        np.asarray([y_min, y_min, y_max, y_max, y_min], dtype=float),
+    )
+
+
+def _arch_roi_overlay_points(
+    roi: dict[str, Any],
+) -> tuple[np.ndarray, np.ndarray] | None:
+    center_qxy = _rounded_roi_value(roi.get("qxy_center")) or 0.0
+    center_qz = _rounded_roi_value(roi.get("qz_center")) or 0.0
+    qr_min = _rounded_roi_value(roi.get("qr_min"))
+    qr_max = _rounded_roi_value(roi.get("qr_max"))
+    chi_min = _rounded_roi_value(roi.get("chi_min"))
+    chi_max = _rounded_roi_value(roi.get("chi_max"))
+    if None in {qr_min, qr_max, chi_min, chi_max}:
+        return None
+    inner, outer = sorted((max(float(qr_min), 0.0), max(float(qr_max), 0.0)))
+    if outer <= inner:
+        return None
+    start, stop = sorted((float(chi_min), float(chi_max)))
+    theta = np.radians(np.linspace(start, stop, 96))
+    outer_x = center_qxy + outer * np.sin(theta)
+    outer_y = center_qz + outer * np.cos(theta)
+    inner_x = center_qxy + inner * np.sin(theta[::-1])
+    inner_y = center_qz + inner * np.cos(theta[::-1])
+    return (
+        np.concatenate([outer_x, inner_x, outer_x[:1]]),
+        np.concatenate([outer_y, inner_y, outer_y[:1]]),
+    )
 
 
 def _safe_float(text: str, fallback: float) -> float:

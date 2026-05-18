@@ -827,6 +827,14 @@ def test_simulation_result_pane_styles_independently_from_data_viewer(
 
     assert simulation_viewer.colormap_combo.findData("magma") >= 0
     assert simulation_viewer.quantile_check.isChecked()
+    assert simulation_viewer.zoom_fit_button.text() == "Autoscale"
+    for button in (
+        simulation_viewer.zoom_in_button,
+        simulation_viewer.zoom_out_button,
+        simulation_viewer.zoom_fit_button,
+        simulation_viewer.pan_button,
+    ):
+        assert button.parentWidget() is simulation_viewer.plot_toolbar
     assert data_viewer.quantile_low.value() == 10.0
     assert simulation_viewer.quantile_low.value() == 5.0
     if simulation_viewer.image_item is not None:

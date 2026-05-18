@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from qtpy import QtCore, QtWidgets
+from qtpy import QtCore, QtGui, QtWidgets
 
 from ewald.analysis.structure import (
     CRYSTAL_SYSTEM_SPACE_GROUP_RANGES,
@@ -37,6 +37,7 @@ from ewald.ui.peak_identification import (
     PeakIdentificationPane,
 )
 from ewald.ui.structure_analysis import (
+    COL_PEAK_ID,
     COL_PHASE,
     COL_QXY,
     StructureAnalysisPane,
@@ -212,6 +213,13 @@ def test_peak_family_grouping_respects_phase_tags():
         frozenset(family["peak_ids"]) for family in families
     }
     assert all("p3" not in family["peak_ids"] for family in families)
+    reviewed_family = next(
+        family
+        for family in families
+        if {"p1", "p2"} <= set(family["peak_ids"])
+    )
+    assert reviewed_family["confidence"] > 0.0
+    assert "within tolerance" in reviewed_family["reason"]
 
 
 def test_project_state_peak_helpers_sync_structure_analysis_state():
@@ -382,6 +390,54 @@ def test_generated_cif_records_include_atoms_molecules_and_ranking():
     assert "_symmetry_space_group_name_H-M 'P1'" in records[0]["cif_text"]
 
 
+def test_generated_cif_records_use_optional_atom_site_occupancy_specs():
+    candidate = LatticeCandidate("candidate_001", "Cubic", 6.3, 6.3, 6.3)
+
+    records = generate_ranked_cif_records(
+        candidate,
+        atoms=["Pb", "Sn", "I"],
+        atom_specs=[
+            {
+                "element": "Pb",
+                "stoichiometry": 0.5,
+                "shared_site": "B",
+                "occupancy": 0.5,
+            },
+            {
+                "element": "Sn",
+                "stoichiometry": 0.5,
+                "shared_site": "B",
+                "occupancy": 0.5,
+            },
+            {"element": "I", "stoichiometry": 3.0},
+        ],
+        molecules=[],
+        limit=1,
+    )
+
+    record = records[0]
+    cif_text = record["cif_text"]
+    assert record["composition_elements"] == {
+        "Pb": 0.5,
+        "Sn": 0.5,
+        "I": 3.0,
+    }
+    assert record["atom_specs"][0]["shared_site"] == "B"
+    assert "_chemical_formula_sum 'I3 Pb0.5 Sn0.5'" in cif_text
+    assert "Pb1 Pb" in cif_text
+    assert "Sn1 Sn" in cif_text
+    assert " 0.5" in cif_text
+
+    rows = [
+        line.split()
+        for line in cif_text.splitlines()
+        if line.startswith(("Pb", "Sn"))
+    ]
+    assert rows[0][2:5] == rows[1][2:5]
+    assert rows[0][5] == "0.5"
+    assert rows[1][5] == "0.5"
+
+
 def test_generated_cif_fallback_writes_full_composition_parseable(tmp_path):
     candidate = LatticeCandidate("candidate_001", "Cubic", 6.3, 6.3, 6.3)
 
@@ -521,6 +577,36 @@ def test_structure_analysis_table_imports_fit_centers_and_user_edits(qtbot):
     assert state["peaks"][0]["phase_tag"] == PHASE_SECONDARY
 
 
+def test_structure_approximation_tab_uses_top_actions_and_three_columns(qtbot):
+    project = ProjectState()
+    pane = StructureAnalysisPane(project, "synthetic")
+    qtbot.addWidget(pane)
+
+    tab = pane.analysis_tabs.widget(0)
+    layout = tab.layout()
+    buttons = layout.itemAt(0).layout()
+    grid = layout.itemAt(1).layout()
+
+    assert buttons.itemAt(0).widget() is pane.refine_button
+    assert buttons.itemAt(1).widget() is pane.guess_button
+    assert buttons.itemAt(2).widget() is pane.overlay_button
+    assert buttons.itemAt(3).widget() is pane.outliers_button
+    assert isinstance(grid, QtWidgets.QGridLayout)
+
+    assert grid.itemAtPosition(0, 1).widget() is pane.phase_filter_combo
+    assert grid.itemAtPosition(0, 3).widget() is pane.guess_system_combo
+    assert grid.itemAtPosition(0, 5).widget() is pane.hkl_max
+    assert grid.itemAtPosition(1, 1).widget() is pane.lattice_a
+    assert grid.itemAtPosition(1, 3).widget() is pane.lattice_b
+    assert grid.itemAtPosition(1, 5).widget() is pane.lattice_c
+    assert grid.itemAtPosition(2, 1).widget() is pane.lattice_alpha
+    assert grid.itemAtPosition(2, 3).widget() is pane.lattice_beta
+    assert grid.itemAtPosition(2, 5).widget() is pane.lattice_gamma
+    assert grid.itemAtPosition(3, 1).widget() is pane.q_tolerance
+    assert grid.itemAtPosition(3, 3).widget() is pane.relative_tolerance
+    assert grid.itemAtPosition(3, 5).widget() is pane.grid_points
+
+
 def test_structure_analysis_family_selection_highlights_plot_peaks(qtbot):
     project = ProjectState()
     project.peak_sets["synthetic"] = [
@@ -549,6 +635,171 @@ def test_structure_analysis_family_selection_highlights_plot_peaks(qtbot):
     x_data, y_data = pane.family_highlight_scatter.getData()
     assert len(x_data) == 0
     assert len(y_data) == 0
+
+
+def test_structure_analysis_family_review_flags_and_deletes(qtbot):
+    project = ProjectState()
+    project.peak_sets["synthetic"] = [
+        {"peak_id": "p1", "label": "P1", "qxy": 1.0, "qz": 0.2},
+        {"peak_id": "p2", "label": "P2", "qxy": 1.02, "qz": 0.6},
+    ]
+    pane = StructureAnalysisPane(project, "synthetic")
+    qtbot.addWidget(pane)
+
+    pane.suggest_peak_families()
+    assert pane.family_table.rowCount() > 0
+    low_confidence_family = pane._family_records()[0]
+    low_confidence_family["confidence"] = 0.25
+    pane._sync_families()
+    low_confidence_id = low_confidence_family["family_id"]
+
+    pane.family_confidence_filter.setValue(0.5)
+    displayed_ids = {
+        pane.family_table.item(row, 0).text()
+        for row in range(pane.family_table.rowCount())
+    }
+    assert low_confidence_id not in displayed_ids
+    pane.family_confidence_filter.setValue(0.0)
+
+    pane.family_table.selectRow(0)
+    family_id = pane.family_table.item(0, 0).text()
+
+    assert any(
+        shortcut.key().toString() == "F" for shortcut in pane._family_shortcuts
+    )
+    pane.toggle_selected_family_flags()
+    family = pane._family_by_id(family_id)
+    assert family["user_flag"] == "appropriate"
+    assert pane.family_table.item(0, 1).text() == "Appropriate"
+
+    pane.set_selected_family_flag("inappropriate")
+    assert family["user_flag"] == "inappropriate"
+    assert pane.family_table.item(0, 1).text() == "Inappropriate"
+
+    pane.delete_selected_families()
+    assert pane._family_by_id(family_id) is None
+
+
+def test_structure_analysis_family_plot_edits_members(qtbot):
+    class FakePoint:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def data(self):
+            return self._payload
+
+    project = ProjectState()
+    project.peak_sets["synthetic"] = [
+        {"peak_id": "p1", "label": "P1", "qxy": 1.0, "qz": 0.2},
+        {"peak_id": "p2", "label": "P2", "qxy": 1.02, "qz": 0.6},
+        {"peak_id": "p3", "label": "P3", "qxy": 1.8, "qz": 1.1},
+    ]
+    pane = StructureAnalysisPane(project, "synthetic")
+    qtbot.addWidget(pane)
+
+    pane.suggest_peak_families()
+    family_row = next(
+        row
+        for row in range(pane.family_table.rowCount())
+        if {"p1", "p2"}
+        <= set(
+            pane.family_table.item(row, 0).data(
+                QtCore.Qt.ItemDataRole.UserRole
+            )
+        )
+    )
+    pane.family_table.selectRow(family_row)
+    family_id = pane.family_table.item(family_row, 0).text()
+    pane.analysis_tabs.setCurrentIndex(1)
+
+    pane._handle_peak_plot_clicked(
+        None,
+        [FakePoint({"peak_id": "p3"})],
+        None,
+    )
+    family = pane._family_by_id(family_id)
+    assert "p3" in family["peak_ids"]
+    assert pane.active_family_peak_id == "p3"
+
+    pane._handle_family_plot_clicked(
+        None,
+        [FakePoint({"peak_id": "p3"})],
+        None,
+    )
+    pane.remove_active_family_ring()
+
+    family = pane._family_by_id(family_id)
+    assert "p3" not in family["peak_ids"]
+    assert family["manual_edited"] is True
+
+
+def test_structure_analysis_peak_plot_and_table_selection_sync(qtbot):
+    project = ProjectState()
+    project.peak_sets["synthetic"] = [
+        {"peak_id": "p1", "label": "P1", "qxy": 0.1, "qz": 0.2},
+        {"peak_id": "p2", "label": "P2", "qxy": 1.1, "qz": 1.2},
+    ]
+    pane = StructureAnalysisPane(project, "synthetic")
+    qtbot.addWidget(pane)
+    if pane.peak_scatter is None:
+        pytest.skip("pyqtgraph is unavailable")
+
+    p2_point = next(
+        point
+        for point in pane.peak_scatter.points()
+        if point.data()["peak_id"] == "p2"
+    )
+    assert p2_point.brush().color() == QtGui.QColor("#22c55e")
+    pane._handle_peak_plot_clicked(pane.peak_scatter, [p2_point], None)
+
+    assert pane.active_peak_id == "p2"
+    assert (
+        pane.peak_table.item(
+            pane.peak_table.currentRow(),
+            COL_PEAK_ID,
+        ).data(QtCore.Qt.ItemDataRole.UserRole)
+        == "p2"
+    )
+    p2_point = next(
+        point
+        for point in pane.peak_scatter.points()
+        if point.data()["peak_id"] == "p2"
+    )
+    assert p2_point.brush().color() == QtGui.QColor("#2f80ed")
+
+    pane.peak_table.selectRow(0)
+
+    assert pane.active_peak_id == "p1"
+
+
+def test_structure_analysis_draws_peak_rois_on_plot(qtbot):
+    project = ProjectState()
+    project.peak_sets["synthetic"] = [
+        {
+            "peak_id": "p1",
+            "label": "P1",
+            "qxy": 1.0,
+            "qz": 0.2,
+            "roi": {
+                "kind": "box",
+                "qxy_min": 0.8,
+                "qxy_max": 1.2,
+                "qz_min": 0.0,
+                "qz_max": 0.4,
+            },
+        }
+    ]
+    pane = StructureAnalysisPane(project, "synthetic")
+    qtbot.addWidget(pane)
+    if pane.peak_scatter is None:
+        pytest.skip("pyqtgraph is unavailable")
+
+    assert len(pane.roi_overlay_items) == 1
+    x_values, y_values = pane.roi_overlay_items[0].getData()
+    assert min(x_values) == pytest.approx(0.8)
+    assert max(x_values) == pytest.approx(1.2)
+    assert min(y_values) == pytest.approx(0.0)
+    assert max(y_values) == pytest.approx(0.4)
 
 
 def test_structure_analysis_guess_candidates_shows_progress_dialog(
@@ -701,7 +952,11 @@ def test_structure_analysis_guess_candidates_shows_progress_dialog(
     assert pane.candidate_table.item(0, 8).text() == "0.25"
 
 
-def test_structure_analysis_wyckoff_setup_registers_ui_possibilities(qtbot):
+def test_structure_analysis_wyckoff_mapping_registers_ui_possibilities(
+    qtbot,
+    tmp_path,
+    monkeypatch,
+):
     project = ProjectState()
     project.analysis_results.setdefault("structure_analysis", {})[
         "synthetic"
@@ -720,8 +975,22 @@ def test_structure_analysis_wyckoff_setup_registers_ui_possibilities(qtbot):
             ).as_dict()
         ],
     }
-    pane = StructureAnalysisPane(project, "synthetic")
+    generated_dir = tmp_path / "generated_cifs"
+    pane = StructureAnalysisPane(
+        project,
+        "synthetic",
+        generated_cif_directory=generated_dir,
+    )
     qtbot.addWidget(pane)
+    assert pane.analysis_tabs.tabText(2) == "Wyckoff Mapping"
+    pane.atom_table.item(0, 2).setText("B")
+    pane.atom_table.cellWidget(0, 3).setValue(0.5)
+    pane.add_atom_spec_row(
+        element="Sn",
+        stoichiometry=0.5,
+        shared_site="B",
+        occupancy=0.5,
+    )
 
     pane.wyckoff_system_combo.setCurrentText("Cubic")
     assert pane.space_group_combo.count() == 36
@@ -745,13 +1014,37 @@ def test_structure_analysis_wyckoff_setup_registers_ui_possibilities(qtbot):
 
     records = pane.generate_candidate_cifs()
     assert records
+    assert records[0]["atom_specs"][0]["shared_site"] == "B"
+    assert records[0]["atom_specs"][0]["occupancy"] == 0.5
+    assert records[0]["atom_specs"][-1]["element"] == "Sn"
+    assert "Sn1 Sn" in records[0]["cif_text"]
+    assert records[0]["occupancy_constraints"]
     assert records[0]["space_group"]["number"] == 221
-    assert project.reference_cifs["generated"][records[0]["cif_id"]]
+    generated_path = generated_dir / f"{records[0]['cif_id']}.cif"
+    assert generated_path.exists()
+    assert generated_path.read_text(encoding="utf-8") == records[0]["cif_text"]
+    assert records[0]["path"] == str(generated_path)
+    assert project.reference_cifs["generated"][records[0]["cif_id"]][
+        "path"
+    ] == str(generated_path)
+    assert project.structures[records[0]["cif_id"]]["path"] == str(
+        generated_path
+    )
+    assert pane.open_cif_folder_button.isEnabled()
     assert pane.cif_visualizer.cif_id == records[0]["cif_id"]
-    assert pane.cif_visualizer.atom_count == 2
-    assert pane.cif_visualizer.species_text == "I, Pb"
+    assert pane.cif_visualizer.atom_count == 3
+    assert pane.cif_visualizer.species_text == "I, Pb, Sn"
     assert pane.cif_visualizer.plot_container.hasHeightForWidth()
     assert pane._selected_cif_record()["cif_id"] == records[0]["cif_id"]
+
+    opened_urls = []
+    monkeypatch.setattr(
+        QtGui.QDesktopServices,
+        "openUrl",
+        lambda url: opened_urls.append(url) or True,
+    )
+    assert pane.open_generated_cif_folder() == generated_dir
+    assert opened_urls[0].toLocalFile() == str(generated_dir)
 
     pane.cif_table.setCurrentCell(1, 0)
     pane.cif_table.selectRow(1)

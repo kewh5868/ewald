@@ -29,6 +29,7 @@ from ewald.simulation.giwaxs import (
     run_and_store_ewald_sphere_sweep,
     run_and_store_simulation,
 )
+from ewald.ui.data_viewer import ImagePlotToolbar
 from ewald.ui.notation import (
     QSPACE_UNITS_HTML,
     QXY_HTML,
@@ -137,6 +138,8 @@ class GIWAXSSimulationResultPane(QtWidgets.QWidget):
         self.simulation_id = simulation_id
         self.image_data: np.ndarray | None = None
         self.data_array: Any | None = None
+        self.axis_ranges: tuple[float, float, float, float] | None = None
+        self.view_box: Any | None = None
         self.sweep_data: Any | None = None
         self.frame_index = 0
         self.peak_rows: list[dict[str, Any]] = []
@@ -205,16 +208,33 @@ class GIWAXSSimulationResultPane(QtWidgets.QWidget):
         self.auto_contrast_button.setText("Auto")
         self.auto_contrast_button.clicked.connect(self._set_quantile_levels)
 
+        self.zoom_in_button = QtWidgets.QToolButton()
+        self.zoom_in_button.setText("Zoom In")
+        self.zoom_in_button.clicked.connect(lambda: self._zoom_image(0.75))
+        self.zoom_out_button = QtWidgets.QToolButton()
+        self.zoom_out_button.setText("Zoom Out")
+        self.zoom_out_button.clicked.connect(lambda: self._zoom_image(1.35))
+        self.zoom_fit_button = QtWidgets.QToolButton()
+        self.zoom_fit_button.setText("Autoscale")
+        self.zoom_fit_button.clicked.connect(self._reset_image_zoom)
+        self.pan_button = QtWidgets.QToolButton()
+        self.pan_button.setText("Pan")
+        self.pan_button.setCheckable(True)
+        self.pan_button.toggled.connect(self._set_pan_mode)
+
     def _build_plot(self) -> None:
         if pg is None:
             self.plot_widget = QtWidgets.QLabel("GIWAXS Simulation")
             self.plot_widget.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             self.image_item = None
             self.hkl_scatter = None
+            self.view_box = None
             return
         self.plot_widget = pg.PlotWidget()
+        self.view_box = self.plot_widget.getViewBox()
         set_qspace_axis_labels(self.plot_widget)
         self.plot_widget.showGrid(x=True, y=True, alpha=0.25)
+        self._set_pan_mode(False)
         self.image_item = pg.ImageItem(axisOrder="row-major")
         self.plot_widget.addItem(self.image_item)
         self.hkl_scatter = pg.ScatterPlotItem(
@@ -317,22 +337,20 @@ class GIWAXSSimulationResultPane(QtWidgets.QWidget):
 
     def _build_layout(self) -> None:
         layout = QtWidgets.QVBoxLayout(self)
-        contrast_layout = QtWidgets.QHBoxLayout()
-        contrast_layout.addWidget(QtWidgets.QLabel("Color"))
-        contrast_layout.addWidget(self.colormap_combo)
-        contrast_layout.addSpacing(12)
-        contrast_layout.addWidget(QtWidgets.QLabel("Min"))
-        contrast_layout.addWidget(self.level_min)
-        contrast_layout.addWidget(QtWidgets.QLabel("Max"))
-        contrast_layout.addWidget(self.level_max)
-        contrast_layout.addWidget(self.quantile_check)
-        contrast_layout.addWidget(QtWidgets.QLabel("Low"))
-        contrast_layout.addWidget(self.quantile_low)
-        contrast_layout.addWidget(QtWidgets.QLabel("High"))
-        contrast_layout.addWidget(self.quantile_high)
-        contrast_layout.addWidget(self.auto_contrast_button)
-        contrast_layout.addStretch(1)
-        layout.addLayout(contrast_layout)
+        self.plot_toolbar = ImagePlotToolbar(
+            colormap_combo=self.colormap_combo,
+            level_min=self.level_min,
+            level_max=self.level_max,
+            quantile_check=self.quantile_check,
+            quantile_low=self.quantile_low,
+            quantile_high=self.quantile_high,
+            auto_contrast_button=self.auto_contrast_button,
+            zoom_in_button=self.zoom_in_button,
+            zoom_out_button=self.zoom_out_button,
+            autoscale_button=self.zoom_fit_button,
+            pan_button=self.pan_button,
+        )
+        layout.addWidget(self.plot_toolbar)
         layout.addWidget(self.plot_widget, stretch=1)
         layout.addWidget(self.playback_controls)
         overlay_layout = QtWidgets.QHBoxLayout()
@@ -411,6 +429,7 @@ class GIWAXSSimulationResultPane(QtWidgets.QWidget):
         qxy_max = float(np.nanmax(qxy))
         qz_min = float(np.nanmin(qz))
         qz_max = float(np.nanmax(qz))
+        self.axis_ranges = (qxy_min, qxy_max, qz_min, qz_max)
         self.image_item.setRect(
             QtCore.QRectF(
                 qxy_min,
@@ -431,6 +450,7 @@ class GIWAXSSimulationResultPane(QtWidgets.QWidget):
         self.stop_button.setEnabled(False)
         self.image_data = None
         self.data_array = None
+        self.axis_ranges = None
         self.sweep_data = None
         self.frame_index = 0
         self.playback_controls.setVisible(False)
@@ -540,6 +560,31 @@ class GIWAXSSimulationResultPane(QtWidgets.QWidget):
     def _apply_manual_levels(self) -> None:
         if not self.quantile_check.isChecked():
             self._apply_image_style()
+
+    def _zoom_image(self, factor: float) -> None:
+        if pg is None or self.view_box is None:
+            return
+        self.view_box.scaleBy((factor, factor))
+
+    def _reset_image_zoom(self) -> None:
+        if pg is None or self.plot_widget is None or self.axis_ranges is None:
+            return
+        x_min, x_max, y_min, y_max = self.axis_ranges
+        self.plot_widget.setRange(
+            xRange=(x_min, x_max),
+            yRange=(y_min, y_max),
+            padding=0.0,
+        )
+
+    def _set_pan_mode(self, enabled: bool) -> None:
+        if self.view_box is not None:
+            self.view_box.setMouseEnabled(x=enabled, y=enabled)
+        if self.plot_widget is not None:
+            self.plot_widget.setCursor(
+                QtCore.Qt.CursorShape.OpenHandCursor
+                if enabled
+                else QtCore.Qt.CursorShape.ArrowCursor
+            )
 
     def _handle_quantile_controls_changed(self) -> None:
         if self.quantile_check.isChecked():

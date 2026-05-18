@@ -40,12 +40,15 @@ except Exception:  # pragma: no cover
 
 ARCH_CHI_LIMITS_DEG = (-90.0, 90.0)
 ARCH_CHI_LOCKED_METADATA_KEY = "chi_locked"
+ARCH_HANDLE_SIZE = 11
 COUPLED_ROI_GROUP_METADATA_KEY = "coupling_id"
 COUPLED_ROI_ID_METADATA_KEY = "coupled_roi_id"
 COUPLED_ROI_IDS_METADATA_KEY = "coupled_roi_ids"
 COUPLED_ROI_ROLE_METADATA_KEY = "coupled_role"
 COUPLED_ROI_SHARED_CENTER_METADATA_KEY = "shared_center"
 CHANNEL_MIME_TYPE = "application/x-ewald-integration-channel"
+CHANNEL_DETECT_MAX_PEAKS_PER_TRACE = 12
+CHANNEL_DETECT_MIN_HEIGHT_FRACTION = 0.05
 ROI_COLOR_ARCH = "#f2a65a"
 ROI_COLOR_BOX_HORIZONTAL = "#3da5d9"
 ROI_COLOR_BOX_VERTICAL = "#2a9d8f"
@@ -118,6 +121,63 @@ class ImageDisplayStyle:
     quantile_high: float = 99.0
     level_min: float = 0.0
     level_max: float = 1.0
+
+
+class ImagePlotToolbar(QtWidgets.QWidget):
+    """Shared color and navigation toolbar for image-backed plots."""
+
+    def __init__(
+        self,
+        *,
+        colormap_combo: QtWidgets.QComboBox,
+        level_min: QtWidgets.QDoubleSpinBox,
+        level_max: QtWidgets.QDoubleSpinBox,
+        quantile_check: QtWidgets.QCheckBox,
+        quantile_low: QtWidgets.QDoubleSpinBox,
+        quantile_high: QtWidgets.QDoubleSpinBox,
+        auto_contrast_button: QtWidgets.QToolButton,
+        zoom_in_button: QtWidgets.QToolButton | None = None,
+        zoom_out_button: QtWidgets.QToolButton | None = None,
+        autoscale_button: QtWidgets.QToolButton | None = None,
+        pan_button: QtWidgets.QToolButton | None = None,
+        parent: QtWidgets.QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("ImagePlotToolbar")
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        layout.addWidget(QtWidgets.QLabel("Color"))
+        layout.addWidget(colormap_combo)
+        layout.addSpacing(12)
+        layout.addWidget(QtWidgets.QLabel("Min"))
+        layout.addWidget(level_min)
+        layout.addWidget(QtWidgets.QLabel("Max"))
+        layout.addWidget(level_max)
+        layout.addWidget(quantile_check)
+        layout.addWidget(QtWidgets.QLabel("Low"))
+        layout.addWidget(quantile_low)
+        layout.addWidget(QtWidgets.QLabel("High"))
+        layout.addWidget(quantile_high)
+        layout.addWidget(auto_contrast_button)
+        if all(
+            button is not None
+            for button in (
+                zoom_in_button,
+                zoom_out_button,
+                autoscale_button,
+                pan_button,
+            )
+        ):
+            assert autoscale_button is not None
+            autoscale_button.setText("Autoscale")
+            layout.addSpacing(12)
+            layout.addWidget(QtWidgets.QLabel("View"))
+            layout.addWidget(zoom_in_button)
+            layout.addWidget(zoom_out_button)
+            layout.addWidget(autoscale_button)
+            layout.addWidget(pan_button)
+        layout.addStretch(1)
 
 
 @dataclass(slots=True)
@@ -264,6 +324,56 @@ class _ImageAspectPlotFrame(QtWidgets.QWidget):
 
 if pg is not None:
 
+    class _BoxROI(pg.ROI):
+        """Movable rectangular ROI with resize handles on every edge."""
+
+        CORNER_HANDLE = "box-corner"
+        LEFT_HANDLE = "box-left"
+        RIGHT_HANDLE = "box-right"
+        BOTTOM_HANDLE = "box-bottom"
+        TOP_HANDLE = "box-top"
+
+        def __init__(
+            self,
+            pos: tuple[float, float],
+            size: tuple[float, float],
+            pen,
+        ) -> None:
+            super().__init__(
+                pos,
+                size,
+                pen=pen,
+                movable=True,
+                rotatable=False,
+                resizable=True,
+            )
+            self.handleSize = 7
+            self.addScaleHandle(
+                (1.0, 1.0),
+                (0.0, 0.0),
+                name=self.CORNER_HANDLE,
+            )
+            self.addScaleHandle(
+                (0.0, 0.5),
+                (1.0, 0.5),
+                name=self.LEFT_HANDLE,
+            )
+            self.addScaleHandle(
+                (1.0, 0.5),
+                (0.0, 0.5),
+                name=self.RIGHT_HANDLE,
+            )
+            self.addScaleHandle(
+                (0.5, 0.0),
+                (0.5, 1.0),
+                name=self.BOTTOM_HANDLE,
+            )
+            self.addScaleHandle(
+                (0.5, 1.0),
+                (0.5, 0.0),
+                name=self.TOP_HANDLE,
+            )
+
     class _ArchROI(pg.ROI):
         """Movable annular-sector ROI with polar shape controls."""
 
@@ -286,7 +396,8 @@ if pg is not None:
                 rotatable=False,
             )
             self.brush = pg.mkBrush(242, 166, 90, 45)
-            self.handleSize = 7
+            self.handleSize = ARCH_HANDLE_SIZE
+            self._fixed_resize_center: tuple[float, float] | None = None
             self.addFreeHandle((0.5, 0.8), name=self.RADIUS_HANDLE)
             self.addFreeHandle((0.5, 1.0), name=self.THICKNESS_HANDLE)
             self.addFreeHandle((0.0, 0.5), name=self.CHI_MIN_HANDLE)
@@ -301,12 +412,20 @@ if pg is not None:
             self.chi_locked = _arch_chi_locked(roi)
             self.center_qxy = float(roi.qxy_center)
             self.center_qz = float(roi.qz_center)
+            self._fixed_resize_center = None
             self._apply_arch_bounds()
 
         def arch_parameters(self) -> tuple[float, float, float, float]:
             return self.qr_min, self.qr_max, self.chi_min, self.chi_max
 
         def arch_center(self) -> tuple[float, float]:
+            if self._fixed_resize_center is not None:
+                return self._fixed_resize_center
+            center = self._center_from_graphic_position()
+            self.center_qxy, self.center_qz = center
+            return center
+
+        def _center_from_graphic_position(self) -> tuple[float, float]:
             x_min, _x_max, y_min, _y_max = _arch_local_bounds(
                 self.qr_min,
                 self.qr_max,
@@ -315,6 +434,13 @@ if pg is not None:
             )
             position = self.pos()
             return float(position.x() - x_min), float(position.y() - y_min)
+
+        def _begin_fixed_center_resize(self) -> None:
+            if self._fixed_resize_center is None:
+                self._fixed_resize_center = (
+                    self._center_from_graphic_position()
+                )
+            self.center_qxy, self.center_qz = self._fixed_resize_center
 
         def _apply_arch_bounds(
             self,
@@ -396,6 +522,7 @@ if pg is not None:
                 self.chi_min,
                 self.chi_max,
             )
+            self._begin_fixed_center_resize()
             arch_x = local_x + x_min
             arch_y = local_y + y_min
             if name == self.RADIUS_HANDLE:
@@ -430,6 +557,8 @@ if pg is not None:
                         ARCH_CHI_LIMITS_DEG[1],
                     )
             self._apply_arch_bounds(block_signals=False, finish=finish)
+            if finish:
+                self._fixed_resize_center = None
 
         def _handle_name(self, handle) -> str | None:
             for info in self.handles:
@@ -554,6 +683,7 @@ class _MatplotlibIntegrationWidget(QtWidgets.QWidget):
     """Matplotlib-backed line plot for one integration channel."""
 
     peakMarked = QtCore.Signal(str, float, float)
+    markerDragPreviewed = QtCore.Signal(str, float, float)
     markerMoved = QtCore.Signal(str, float, float)
     markerDeleted = QtCore.Signal(str)
 
@@ -567,10 +697,13 @@ class _MatplotlibIntegrationWidget(QtWidgets.QWidget):
         self.series: list[_IntegrationTrace] = []
         self.markers: list[IntegrationPeakMarker] = []
         self.mode: str | None = None
+        self.autosnap_enabled = True
         self._drag_marker_id: str | None = None
         self._drag_marker_roi_id: str | None = None
         self._drag_marker_moved = False
         self._drag_marker_delete_pending = False
+        self._poof_timers: list[QtCore.QTimer] = []
+        self._poof_artists: list[Any] = []
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         try:
@@ -625,6 +758,7 @@ class _MatplotlibIntegrationWidget(QtWidgets.QWidget):
         self.mode = mode
         if self.axes is None or self.canvas is None:
             return
+        self._clear_poof_animations()
         self.axes.clear()
         for trace in self.series:
             self.axes.plot(
@@ -661,6 +795,9 @@ class _MatplotlibIntegrationWidget(QtWidgets.QWidget):
         self.axes.grid(True, alpha=0.25)
         self.canvas.draw_idle()
 
+    def set_autosnap_enabled(self, enabled: bool) -> None:
+        self.autosnap_enabled = bool(enabled)
+
     def _handle_mouse_press(self, event: Any) -> None:
         if self.axes is None or event.inaxes is not self.axes:
             return
@@ -676,6 +813,11 @@ class _MatplotlibIntegrationWidget(QtWidgets.QWidget):
             self._drag_marker_delete_pending = False
             if self.canvas is not None:
                 self.canvas.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
+            self.markerDragPreviewed.emit(
+                marker.marker_id,
+                marker.integration_x,
+                marker.integrated_intensity,
+            )
             return
         self._mark_nearest_trace_point(event)
 
@@ -709,6 +851,11 @@ class _MatplotlibIntegrationWidget(QtWidgets.QWidget):
             y_value,
         ):
             self._drag_marker_moved = True
+        self.markerDragPreviewed.emit(
+            self._drag_marker_id,
+            x_value,
+            y_value,
+        )
 
     def _handle_mouse_release(self, event: Any) -> None:
         if self._drag_marker_id is None:
@@ -729,7 +876,13 @@ class _MatplotlibIntegrationWidget(QtWidgets.QWidget):
         if self.canvas is not None:
             self.canvas.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
         if delete_marker:
+            marker = self._marker_by_id(marker_id)
             self.markerDeleted.emit(marker_id)
+            if marker is not None:
+                self._start_marker_poof(
+                    marker.integration_x,
+                    marker.integrated_intensity,
+                )
             return
         if not moved:
             return
@@ -823,7 +976,130 @@ class _MatplotlibIntegrationWidget(QtWidgets.QWidget):
         self.set_series(self.series, self.mode, updated)
         return True
 
+    def _start_marker_poof(
+        self,
+        integration_x: float,
+        integrated_intensity: float,
+    ) -> None:
+        if self.axes is None or self.canvas is None:
+            return
+        x_min, x_max = self.axes.get_xlim()
+        y_min, y_max = self.axes.get_ylim()
+        x_span = max(abs(float(x_max) - float(x_min)), 1.0e-12)
+        y_span = max(abs(float(y_max) - float(y_min)), 1.0e-12)
+        center = np.asarray(
+            [float(integration_x), float(integrated_intensity)],
+            dtype=float,
+        )
+        directions = np.asarray(
+            [
+                (1.0, 0.0),
+                (0.45, 0.9),
+                (-0.45, 0.9),
+                (-1.0, 0.0),
+                (-0.45, -0.9),
+                (0.45, -0.9),
+            ],
+            dtype=float,
+        )
+        spread = np.asarray([x_span * 0.035, y_span * 0.055], dtype=float)
+        ring = self.axes.scatter(
+            [center[0]],
+            [center[1]],
+            s=[36.0],
+            marker="o",
+            facecolors="none",
+            edgecolors="#e76f51",
+            linewidths=1.4,
+            alpha=0.9,
+            zorder=8,
+        )
+        sparks = self.axes.scatter(
+            np.full(directions.shape[0], center[0]),
+            np.full(directions.shape[0], center[1]),
+            s=np.full(directions.shape[0], 14.0),
+            marker="*",
+            color="#f4a261",
+            alpha=0.9,
+            zorder=9,
+        )
+        artists = [ring, sparks]
+        self._poof_artists.extend(artists)
+        timer = QtCore.QTimer(self)
+        frame = {"index": 0}
+        frame_count = 9
+
+        def advance_poof() -> None:
+            progress = frame["index"] / max(frame_count - 1, 1)
+            alpha = max(0.0, 1.0 - progress)
+            ring.set_sizes([36.0 + 140.0 * progress])
+            ring.set_alpha(alpha * 0.9)
+            spark_offsets = center + directions * spread * progress
+            sparks.set_offsets(spark_offsets)
+            sparks.set_sizes(
+                np.full(directions.shape[0], 14.0 + 22.0 * progress)
+            )
+            sparks.set_alpha(alpha * 0.85)
+            if self.canvas is not None:
+                self.canvas.draw_idle()
+            frame["index"] += 1
+            if frame["index"] >= frame_count:
+                timer.stop()
+                self._remove_poof_artists(artists)
+                if timer in self._poof_timers:
+                    self._poof_timers.remove(timer)
+                timer.deleteLater()
+
+        self._poof_timers.append(timer)
+        timer.timeout.connect(advance_poof)
+        timer.start(35)
+        advance_poof()
+
+    def _clear_poof_animations(self) -> None:
+        for timer in list(self._poof_timers):
+            timer.stop()
+            timer.deleteLater()
+        self._poof_timers.clear()
+        self._remove_poof_artists(list(self._poof_artists))
+
+    def _remove_poof_artists(self, artists: list[Any]) -> None:
+        for artist in artists:
+            try:
+                artist.remove()
+            except ValueError:
+                pass
+            if artist in self._poof_artists:
+                self._poof_artists.remove(artist)
+        if self.canvas is not None:
+            self.canvas.draw_idle()
+
     def _nearest_trace_point(
+        self,
+        x_value: float,
+        y_value: float,
+        *,
+        roi_id: str | None = None,
+    ) -> tuple[_IntegrationTrace, float, float] | None:
+        if not self.autosnap_enabled:
+            return self._nearest_trace_sample(
+                x_value,
+                y_value,
+                roi_id=roi_id,
+            )
+        nearest_peak = self._nearest_trace_local_maximum(
+            x_value,
+            y_value,
+            roi_id=roi_id,
+        )
+        if nearest_peak is not None:
+            return nearest_peak
+        return self._nearest_trace_sample(
+            x_value,
+            y_value,
+            roi_id=roi_id,
+        )
+
+    def _nearest_trace_local_maximum(
         self,
         x_value: float,
         y_value: float,
@@ -832,24 +1108,34 @@ class _MatplotlibIntegrationWidget(QtWidgets.QWidget):
     ) -> tuple[_IntegrationTrace, float, float] | None:
         nearest: tuple[_IntegrationTrace, float, float] | None = None
         nearest_distance = float("inf")
-        x_span = max(
-            (
-                float(np.nanmax(trace.x_values) - np.nanmin(trace.x_values))
-                for trace in self.series
-                if trace.x_values.size and np.isfinite(trace.x_values).any()
-            ),
-            default=1.0,
-        )
-        y_span = max(
-            (
-                float(np.nanmax(trace.y_values) - np.nanmin(trace.y_values))
-                for trace in self.series
-                if trace.y_values.size and np.isfinite(trace.y_values).any()
-            ),
-            default=1.0,
-        )
-        x_span = max(abs(x_span), 1.0e-12)
-        y_span = max(abs(y_span), 1.0e-12)
+        maxima_by_trace = [
+            (trace, _trace_local_maxima(trace))
+            for trace in self.series
+            if roi_id is None or trace.roi_id == roi_id
+        ]
+        if not any(maxima for _trace, maxima in maxima_by_trace):
+            return None
+        x_span, y_span = _trace_collection_spans(self.series)
+        for trace, maxima in maxima_by_trace:
+            for candidate_x, candidate_y, _index in maxima:
+                distance = ((candidate_x - x_value) / x_span) ** 2 + (
+                    (candidate_y - y_value) / y_span
+                ) ** 2
+                if distance < nearest_distance:
+                    nearest_distance = distance
+                    nearest = (trace, candidate_x, candidate_y)
+        return nearest
+
+    def _nearest_trace_sample(
+        self,
+        x_value: float,
+        y_value: float,
+        *,
+        roi_id: str | None = None,
+    ) -> tuple[_IntegrationTrace, float, float] | None:
+        nearest: tuple[_IntegrationTrace, float, float] | None = None
+        nearest_distance = float("inf")
+        x_span, y_span = _trace_collection_spans(self.series)
         for trace in self.series:
             if roi_id is not None and trace.roi_id != roi_id:
                 continue
@@ -872,6 +1158,150 @@ class _MatplotlibIntegrationWidget(QtWidgets.QWidget):
         return nearest
 
 
+def _trace_collection_spans(
+    series: list[_IntegrationTrace],
+) -> tuple[float, float]:
+    x_span = max(
+        (
+            float(np.nanmax(trace.x_values) - np.nanmin(trace.x_values))
+            for trace in series
+            if trace.x_values.size and np.isfinite(trace.x_values).any()
+        ),
+        default=1.0,
+    )
+    y_span = max(
+        (
+            float(np.nanmax(trace.y_values) - np.nanmin(trace.y_values))
+            for trace in series
+            if trace.y_values.size and np.isfinite(trace.y_values).any()
+        ),
+        default=1.0,
+    )
+    return max(abs(x_span), 1.0e-12), max(abs(y_span), 1.0e-12)
+
+
+def _trace_local_maxima(
+    trace: _IntegrationTrace,
+    *,
+    include_edges: bool = False,
+) -> list[tuple[float, float, int]]:
+    x_values = np.asarray(trace.x_values, dtype=float)
+    y_values = np.asarray(trace.y_values, dtype=float)
+    valid = np.isfinite(x_values) & np.isfinite(y_values)
+    if not np.any(valid):
+        return []
+    compact_x = x_values[valid]
+    compact_y = y_values[valid]
+    indices = _local_maximum_indices(compact_y, include_edges=include_edges)
+    return [
+        (float(compact_x[index]), float(compact_y[index]), int(index))
+        for index in indices
+    ]
+
+
+def _local_maximum_indices(
+    values: np.ndarray,
+    *,
+    include_edges: bool = False,
+) -> np.ndarray:
+    array = np.asarray(values, dtype=float)
+    if array.size == 0:
+        return np.asarray([], dtype=int)
+    if array.size == 1:
+        return np.asarray([0], dtype=int) if include_edges else np.asarray([])
+    indices: list[int] = []
+    if include_edges and array[0] > array[1]:
+        indices.append(0)
+    if array.size > 2:
+        middle = array[1:-1]
+        left = array[:-2]
+        right = array[2:]
+        mask = (
+            (middle >= left)
+            & (middle >= right)
+            & ((middle > left) | (middle > right))
+        )
+        indices.extend((np.flatnonzero(mask) + 1).astype(int).tolist())
+    if include_edges and array[-1] > array[-2]:
+        indices.append(array.size - 1)
+    return np.asarray(indices, dtype=int)
+
+
+def _auto_detect_trace_peaks(
+    trace: _IntegrationTrace,
+    *,
+    max_peaks: int = CHANNEL_DETECT_MAX_PEAKS_PER_TRACE,
+) -> list[tuple[float, float]]:
+    x_values = np.asarray(trace.x_values, dtype=float)
+    y_values = np.asarray(trace.y_values, dtype=float)
+    valid = np.isfinite(x_values) & np.isfinite(y_values)
+    if not np.any(valid):
+        return []
+    compact_x = x_values[valid]
+    compact_y = y_values[valid]
+    maxima = _local_maximum_indices(compact_y, include_edges=False)
+    if maxima.size == 0:
+        return []
+    y_min = float(np.nanmin(compact_y))
+    y_max = float(np.nanmax(compact_y))
+    dynamic_range = max(y_max - y_min, 1.0e-12)
+    baseline = float(np.nanmedian(compact_y))
+    noise = _robust_trace_noise(compact_y - baseline)
+    min_height = max(
+        dynamic_range * CHANNEL_DETECT_MIN_HEIGHT_FRACTION,
+        min(noise * 3.0, dynamic_range * 0.25),
+    )
+    scored: list[tuple[float, int]] = []
+    for index in maxima:
+        height = float(compact_y[index] - baseline)
+        if height < min_height:
+            continue
+        scored.append((height, int(index)))
+    scored.sort(reverse=True)
+    selected: list[int] = []
+    min_separation = max(1, int(round(compact_x.size * 0.03)))
+    for _height, index in scored:
+        if len(selected) >= max(1, int(max_peaks)):
+            break
+        if any(abs(index - kept) < min_separation for kept in selected):
+            continue
+        selected.append(index)
+    selected.sort(key=lambda index: float(compact_x[index]))
+    return [
+        (float(compact_x[index]), float(compact_y[index]))
+        for index in selected
+    ]
+
+
+def _robust_trace_noise(values: np.ndarray) -> float:
+    finite = np.asarray(values, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        return 0.0
+    median = float(np.nanmedian(finite))
+    mad = float(np.nanmedian(np.abs(finite - median)))
+    noise = 1.4826 * mad
+    if not np.isfinite(noise) or noise <= 1.0e-12:
+        q25, q75 = np.nanpercentile(finite, [25.0, 75.0])
+        noise = float((q75 - q25) / 1.349)
+    if not np.isfinite(noise) or noise <= 1.0e-12:
+        noise = float(np.nanstd(finite))
+    return max(noise, 0.0)
+
+
+def _trace_x_tolerance(trace: _IntegrationTrace) -> float:
+    x_values = np.asarray(trace.x_values, dtype=float)
+    x_values = x_values[np.isfinite(x_values)]
+    if x_values.size < 2:
+        return 1.0e-9
+    diffs = np.diff(np.unique(np.sort(x_values)))
+    positive = diffs[diffs > 0.0]
+    if positive.size:
+        return max(float(np.nanmin(positive)) / 2.0, 1.0e-9)
+    span = float(np.nanmax(x_values) - np.nanmin(x_values))
+    return max(abs(span) * 1.0e-9, 1.0e-9)
+
+
 class _IntegrationChannelPanel(QtWidgets.QFrame):
     """Reserved home slot for one ROI integration channel."""
 
@@ -879,10 +1309,13 @@ class _IntegrationChannelPanel(QtWidgets.QFrame):
     detachRequested = QtCore.Signal(int)
     reattachDropRequested = QtCore.Signal(int)
     markerRequested = QtCore.Signal(int, str, float, float)
+    markerDragPreviewed = QtCore.Signal(int, str, float, float)
     markerMoved = QtCore.Signal(int, str, float, float)
     markerDeleted = QtCore.Signal(int, str)
     clearMarkersRequested = QtCore.Signal(int)
     pushMarkersRequested = QtCore.Signal(int)
+    detectPeaksRequested = QtCore.Signal(int)
+    autoSnapToggled = QtCore.Signal(int, bool)
 
     def __init__(
         self,
@@ -914,12 +1347,31 @@ class _IntegrationChannelPanel(QtWidgets.QFrame):
         )
         self.marker_count_label = QtWidgets.QLabel("0 marks")
         self.marker_count_label.setMinimumWidth(54)
+        self.coordinate_readout_label = QtWidgets.QLabel("")
+        self.coordinate_readout_label.setMinimumWidth(150)
+        self.coordinate_readout_label.setStyleSheet("color: #475569;")
         self.clear_marks_button = QtWidgets.QToolButton()
         self.clear_marks_button.setText("Clear Marks")
         self.clear_marks_button.clicked.connect(
             lambda _checked=False: self.clearMarkersRequested.emit(
                 self.channel
             )
+        )
+        self.detect_peaks_button = QtWidgets.QToolButton()
+        self.detect_peaks_button.setText("Detect Peaks")
+        self.detect_peaks_button.setEnabled(False)
+        self.detect_peaks_button.clicked.connect(
+            lambda _checked=False: self.detectPeaksRequested.emit(self.channel)
+        )
+        self.autosnap_button = QtWidgets.QToolButton()
+        self.autosnap_button.setText("Autosnap")
+        self.autosnap_button.setCheckable(True)
+        self.autosnap_button.setChecked(True)
+        self.autosnap_button.setToolTip(
+            "Snap clicked or dragged peaks to local maxima"
+        )
+        self.autosnap_button.toggled.connect(
+            lambda checked: self.autoSnapToggled.emit(self.channel, checked)
         )
         self.push_markers_button = QtWidgets.QToolButton()
         self.push_markers_button.setText("Push Peaks")
@@ -935,7 +1387,10 @@ class _IntegrationChannelPanel(QtWidgets.QFrame):
         header_layout.addWidget(self.drag_label)
         header_layout.addStretch(1)
         header_layout.addWidget(self.marker_count_label)
+        header_layout.addWidget(self.coordinate_readout_label)
         header_layout.addWidget(self.clear_marks_button)
+        header_layout.addWidget(self.detect_peaks_button)
+        header_layout.addWidget(self.autosnap_button)
         header_layout.addWidget(self.push_markers_button)
         header_layout.addWidget(self.clear_button)
         header_layout.addWidget(self.detach_button)
@@ -947,6 +1402,16 @@ class _IntegrationChannelPanel(QtWidgets.QFrame):
                 roi_id,
                 x_value,
                 y_value,
+            )
+        )
+        self.plot_widget.markerDragPreviewed.connect(
+            lambda marker_id, x_value, y_value: (
+                self.markerDragPreviewed.emit(
+                    self.channel,
+                    marker_id,
+                    x_value,
+                    y_value,
+                )
             )
         )
         self.plot_widget.markerMoved.connect(
@@ -984,12 +1449,24 @@ class _IntegrationChannelPanel(QtWidgets.QFrame):
         self.drag_label.setText(_channel_header_text(self.channel, mode))
         self.plot_widget.set_series(self.series, self.mode, markers)
         self.set_marker_count(len(markers or []))
+        self.detect_peaks_button.setEnabled(bool(self.series))
 
     def set_marker_count(self, count: int) -> None:
         suffix = "mark" if count == 1 else "marks"
         self.marker_count_label.setText(f"{count} {suffix}")
         self.clear_marks_button.setEnabled(count > 0)
         self.push_markers_button.setEnabled(count > 0)
+
+    def set_peak_readout(self, text: str) -> None:
+        self.coordinate_readout_label.setText(text)
+
+    def set_autosnap_enabled(self, enabled: bool) -> None:
+        self.plot_widget.set_autosnap_enabled(enabled)
+        previous = self.autosnap_button.blockSignals(True)
+        try:
+            self.autosnap_button.setChecked(bool(enabled))
+        finally:
+            self.autosnap_button.blockSignals(previous)
 
     def set_detached(self, detached: bool) -> None:
         self.detached = detached
@@ -1033,10 +1510,13 @@ class _DetachedIntegrationWindow(QtWidgets.QDialog):
     reattachRequested = QtCore.Signal(int)
     clearRequested = QtCore.Signal(int)
     markerRequested = QtCore.Signal(int, str, float, float)
+    markerDragPreviewed = QtCore.Signal(int, str, float, float)
     markerMoved = QtCore.Signal(int, str, float, float)
     markerDeleted = QtCore.Signal(int, str)
     clearMarkersRequested = QtCore.Signal(int)
     pushMarkersRequested = QtCore.Signal(int)
+    detectPeaksRequested = QtCore.Signal(int)
+    autoSnapToggled = QtCore.Signal(int, bool)
 
     def __init__(
         self,
@@ -1063,12 +1543,31 @@ class _DetachedIntegrationWindow(QtWidgets.QDialog):
             lambda _checked=False: self.clearRequested.emit(self.channel)
         )
         self.marker_count_label = QtWidgets.QLabel("0 marks")
+        self.coordinate_readout_label = QtWidgets.QLabel("")
+        self.coordinate_readout_label.setMinimumWidth(150)
+        self.coordinate_readout_label.setStyleSheet("color: #475569;")
         self.clear_marks_button = QtWidgets.QToolButton()
         self.clear_marks_button.setText("Clear Marks")
         self.clear_marks_button.clicked.connect(
             lambda _checked=False: self.clearMarkersRequested.emit(
                 self.channel
             )
+        )
+        self.detect_peaks_button = QtWidgets.QToolButton()
+        self.detect_peaks_button.setText("Detect Peaks")
+        self.detect_peaks_button.setEnabled(False)
+        self.detect_peaks_button.clicked.connect(
+            lambda _checked=False: self.detectPeaksRequested.emit(self.channel)
+        )
+        self.autosnap_button = QtWidgets.QToolButton()
+        self.autosnap_button.setText("Autosnap")
+        self.autosnap_button.setCheckable(True)
+        self.autosnap_button.setChecked(True)
+        self.autosnap_button.setToolTip(
+            "Snap clicked or dragged peaks to local maxima"
+        )
+        self.autosnap_button.toggled.connect(
+            lambda checked: self.autoSnapToggled.emit(self.channel, checked)
         )
         self.push_markers_button = QtWidgets.QToolButton()
         self.push_markers_button.setText("Push Peaks")
@@ -1083,7 +1582,10 @@ class _DetachedIntegrationWindow(QtWidgets.QDialog):
         header_layout.addWidget(self.drag_label)
         header_layout.addStretch(1)
         header_layout.addWidget(self.marker_count_label)
+        header_layout.addWidget(self.coordinate_readout_label)
         header_layout.addWidget(self.clear_marks_button)
+        header_layout.addWidget(self.detect_peaks_button)
+        header_layout.addWidget(self.autosnap_button)
         header_layout.addWidget(self.push_markers_button)
         header_layout.addWidget(self.clear_button)
         header_layout.addWidget(self.return_button)
@@ -1095,6 +1597,16 @@ class _DetachedIntegrationWindow(QtWidgets.QDialog):
                 roi_id,
                 x_value,
                 y_value,
+            )
+        )
+        self.plot_widget.markerDragPreviewed.connect(
+            lambda marker_id, x_value, y_value: (
+                self.markerDragPreviewed.emit(
+                    self.channel,
+                    marker_id,
+                    x_value,
+                    y_value,
+                )
             )
         )
         self.plot_widget.markerMoved.connect(
@@ -1124,12 +1636,24 @@ class _DetachedIntegrationWindow(QtWidgets.QDialog):
         self.drag_label.setText(_channel_header_text(self.channel, mode))
         self.plot_widget.set_series(series, mode, markers)
         self.set_marker_count(len(markers or []))
+        self.detect_peaks_button.setEnabled(bool(series))
 
     def set_marker_count(self, count: int) -> None:
         suffix = "mark" if count == 1 else "marks"
         self.marker_count_label.setText(f"{count} {suffix}")
         self.clear_marks_button.setEnabled(count > 0)
         self.push_markers_button.setEnabled(count > 0)
+
+    def set_peak_readout(self, text: str) -> None:
+        self.coordinate_readout_label.setText(text)
+
+    def set_autosnap_enabled(self, enabled: bool) -> None:
+        self.plot_widget.set_autosnap_enabled(enabled)
+        previous = self.autosnap_button.blockSignals(True)
+        try:
+            self.autosnap_button.setChecked(bool(enabled))
+        finally:
+            self.autosnap_button.blockSignals(previous)
 
     def close_from_viewer(self) -> None:
         self._closing_from_viewer = True
@@ -1177,6 +1701,10 @@ class DataViewerPane(QtWidgets.QWidget):
         self.low_q_graphics: list[Any] = []
         self.channel_assignments: dict[int, set[str]] = {1: set(), 2: set()}
         self.channel_modes: dict[int, str | None] = {1: None, 2: None}
+        self.channel_autosnap_enabled: dict[int, bool] = {
+            1: True,
+            2: True,
+        }
         self.channel_panels: dict[int, _IntegrationChannelPanel] = {}
         self.channel_windows: dict[int, _DetachedIntegrationWindow] = {}
         self.integration_peak_markers: dict[
@@ -1387,7 +1915,7 @@ class DataViewerPane(QtWidgets.QWidget):
         self.zoom_out_button.setText("Zoom Out")
         self.zoom_out_button.clicked.connect(lambda: self._zoom_image(1.35))
         self.zoom_fit_button = QtWidgets.QToolButton()
-        self.zoom_fit_button.setText("Fit")
+        self.zoom_fit_button.setText("Autoscale")
         self.zoom_fit_button.clicked.connect(self._reset_image_zoom)
         self.pan_button = QtWidgets.QToolButton()
         self.pan_button.setText("Pan")
@@ -1522,10 +2050,16 @@ class DataViewerPane(QtWidgets.QWidget):
             panel.detachRequested.connect(self._detach_channel)
             panel.reattachDropRequested.connect(self._reattach_channel)
             panel.markerRequested.connect(self._add_channel_peak_marker)
+            panel.markerDragPreviewed.connect(
+                self._preview_channel_peak_marker_coordinate
+            )
             panel.markerMoved.connect(self._move_channel_peak_marker)
             panel.markerDeleted.connect(self._delete_channel_peak_marker)
             panel.clearMarkersRequested.connect(self._clear_channel_markers)
             panel.pushMarkersRequested.connect(self._push_channel_markers)
+            panel.detectPeaksRequested.connect(self._detect_channel_peaks)
+            panel.autoSnapToggled.connect(self._set_channel_autosnap_enabled)
+            panel.set_autosnap_enabled(self.channel_autosnap_enabled[channel])
             self.channel_panels[channel] = panel
             layout.addWidget(panel, stretch=1)
 
@@ -1557,27 +2091,19 @@ class DataViewerPane(QtWidgets.QWidget):
         orientation_layout.addWidget(self.mirror_y_button)
         orientation_layout.addStretch(1)
 
-        contrast_layout = QtWidgets.QHBoxLayout()
-        contrast_layout.addWidget(QtWidgets.QLabel("Color"))
-        contrast_layout.addWidget(self.colormap_combo)
-        contrast_layout.addSpacing(12)
-        contrast_layout.addWidget(QtWidgets.QLabel("Min"))
-        contrast_layout.addWidget(self.level_min)
-        contrast_layout.addWidget(QtWidgets.QLabel("Max"))
-        contrast_layout.addWidget(self.level_max)
-        contrast_layout.addWidget(self.quantile_check)
-        contrast_layout.addWidget(QtWidgets.QLabel("Low"))
-        contrast_layout.addWidget(self.quantile_low)
-        contrast_layout.addWidget(QtWidgets.QLabel("High"))
-        contrast_layout.addWidget(self.quantile_high)
-        contrast_layout.addWidget(self.auto_contrast_button)
-        contrast_layout.addSpacing(12)
-        contrast_layout.addWidget(QtWidgets.QLabel("View"))
-        contrast_layout.addWidget(self.zoom_in_button)
-        contrast_layout.addWidget(self.zoom_out_button)
-        contrast_layout.addWidget(self.zoom_fit_button)
-        contrast_layout.addWidget(self.pan_button)
-        contrast_layout.addStretch(1)
+        self.plot_toolbar = ImagePlotToolbar(
+            colormap_combo=self.colormap_combo,
+            level_min=self.level_min,
+            level_max=self.level_max,
+            quantile_check=self.quantile_check,
+            quantile_low=self.quantile_low,
+            quantile_high=self.quantile_high,
+            auto_contrast_button=self.auto_contrast_button,
+            zoom_in_button=self.zoom_in_button,
+            zoom_out_button=self.zoom_out_button,
+            autoscale_button=self.zoom_fit_button,
+            pan_button=self.pan_button,
+        )
 
         roi_layout = QtWidgets.QHBoxLayout()
         roi_layout.addWidget(self.box_button)
@@ -1606,7 +2132,7 @@ class DataViewerPane(QtWidgets.QWidget):
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.orientation_bar)
-        layout.addLayout(contrast_layout)
+        layout.addWidget(self.plot_toolbar)
         self.plot_splitter = QtWidgets.QSplitter(
             QtCore.Qt.Orientation.Horizontal
         )
@@ -2437,6 +2963,7 @@ class DataViewerPane(QtWidgets.QWidget):
         self.channel_assignments[channel].clear()
         self.channel_modes[channel] = None
         self.integration_peak_markers[channel].clear()
+        self._set_channel_peak_readout(channel, "")
         self._refresh_channel(channel)
         self._sync_roi_table()
 
@@ -2449,10 +2976,16 @@ class DataViewerPane(QtWidgets.QWidget):
         window.reattachRequested.connect(self._reattach_channel)
         window.clearRequested.connect(self._clear_channel)
         window.markerRequested.connect(self._add_channel_peak_marker)
+        window.markerDragPreviewed.connect(
+            self._preview_channel_peak_marker_coordinate
+        )
         window.markerMoved.connect(self._move_channel_peak_marker)
         window.markerDeleted.connect(self._delete_channel_peak_marker)
         window.clearMarkersRequested.connect(self._clear_channel_markers)
         window.pushMarkersRequested.connect(self._push_channel_markers)
+        window.detectPeaksRequested.connect(self._detect_channel_peaks)
+        window.autoSnapToggled.connect(self._set_channel_autosnap_enabled)
+        window.set_autosnap_enabled(self.channel_autosnap_enabled[channel])
         self.channel_windows[channel] = window
         self.channel_panels[channel].set_detached(True)
         self._refresh_channel(channel)
@@ -2526,7 +3059,87 @@ class DataViewerPane(QtWidgets.QWidget):
         if marker is None:
             return
         self.integration_peak_markers[channel].append(marker)
+        self._set_channel_peak_readout(
+            channel,
+            _channel_peak_readout_text(channel, roi, marker),
+        )
         self._refresh_channel(channel)
+
+    def _preview_channel_peak_marker_coordinate(
+        self,
+        channel: int,
+        marker_id: str,
+        integration_x: float,
+        integrated_intensity: float,
+    ) -> None:
+        marker = self._channel_marker_by_id(channel, marker_id)
+        if marker is None:
+            return
+        roi = self._roi_by_id(marker.roi_id)
+        if roi is None:
+            return
+        preview_marker = replace(
+            marker,
+            integration_x=float(integration_x),
+            integrated_intensity=float(integrated_intensity),
+        )
+        text = _channel_peak_readout_text(channel, roi, preview_marker)
+        self._set_channel_peak_readout(channel, text)
+        self._set_roi_status(text)
+
+    def _detect_channel_peaks(self, channel: int) -> None:
+        traces = list(self.channel_panels[channel].series)
+        if not traces:
+            self._set_roi_status(f"Channel {channel} has no ROI trace.")
+            return
+        added = 0
+        existing_ids = {
+            marker.marker_id
+            for markers in self.integration_peak_markers.values()
+            for marker in markers
+        }
+        for trace in traces:
+            roi = self._roi_by_id(trace.roi_id)
+            if roi is None:
+                continue
+            tolerance = _trace_x_tolerance(trace)
+            for integration_x, intensity in _auto_detect_trace_peaks(trace):
+                if self._channel_has_marker_near(
+                    channel,
+                    trace.roi_id,
+                    integration_x,
+                    tolerance,
+                ):
+                    continue
+                marker = _integration_peak_marker(
+                    roi,
+                    channel,
+                    integration_x,
+                    intensity,
+                    existing_ids=existing_ids,
+                )
+                if marker is None:
+                    continue
+                self.integration_peak_markers[channel].append(marker)
+                added += 1
+        self._refresh_channel(channel)
+        suffix = "peak" if added == 1 else "peaks"
+        self._set_roi_status(f"Detected {added} channel {channel} {suffix}.")
+
+    def _set_channel_autosnap_enabled(
+        self,
+        channel: int,
+        enabled: bool,
+    ) -> None:
+        self.channel_autosnap_enabled[channel] = bool(enabled)
+        panel = self.channel_panels.get(channel)
+        if panel is not None:
+            panel.set_autosnap_enabled(enabled)
+        window = self.channel_windows.get(channel)
+        if window is not None:
+            window.set_autosnap_enabled(enabled)
+        state = "enabled" if enabled else "disabled"
+        self._set_roi_status(f"Channel {channel} autosnap {state}.")
 
     def _move_channel_peak_marker(
         self,
@@ -2566,6 +3179,10 @@ class DataViewerPane(QtWidgets.QWidget):
                 ),
             )
             self._refresh_channel(channel)
+            self._set_channel_peak_readout(
+                channel,
+                _channel_peak_readout_text(channel, roi, markers[index]),
+            )
             return
 
     def _delete_channel_peak_marker(
@@ -2581,7 +3198,32 @@ class DataViewerPane(QtWidgets.QWidget):
             marker for marker in markers if marker.marker_id != marker_id
         ]
         if len(self.integration_peak_markers[channel]) != before:
+            self._set_channel_peak_readout(channel, "")
             self._refresh_channel(channel)
+
+    def _channel_marker_by_id(
+        self,
+        channel: int,
+        marker_id: str,
+    ) -> IntegrationPeakMarker | None:
+        for marker in self.integration_peak_markers.get(channel, []):
+            if marker.marker_id == marker_id:
+                return marker
+        return None
+
+    def _channel_has_marker_near(
+        self,
+        channel: int,
+        roi_id: str,
+        integration_x: float,
+        tolerance: float,
+    ) -> bool:
+        for marker in self.integration_peak_markers.get(channel, []):
+            if marker.roi_id != roi_id:
+                continue
+            if abs(marker.integration_x - integration_x) <= tolerance:
+                return True
+        return False
 
     def _markers_for_channel(
         self,
@@ -2596,6 +3238,7 @@ class DataViewerPane(QtWidgets.QWidget):
 
     def _clear_channel_markers(self, channel: int) -> None:
         self.integration_peak_markers[channel].clear()
+        self._set_channel_peak_readout(channel, "")
         self._refresh_channel(channel)
 
     def _remove_channel_markers(
@@ -2606,6 +3249,7 @@ class DataViewerPane(QtWidgets.QWidget):
     ) -> None:
         if roi_id is None:
             self.integration_peak_markers[channel].clear()
+            self._set_channel_peak_readout(channel, "")
             self._refresh_channel(channel)
             return
         before = len(self.integration_peak_markers[channel])
@@ -2615,7 +3259,16 @@ class DataViewerPane(QtWidgets.QWidget):
             if marker.roi_id != roi_id
         ]
         if len(self.integration_peak_markers[channel]) != before:
+            self._set_channel_peak_readout(channel, "")
             self._refresh_channel(channel)
+
+    def _set_channel_peak_readout(self, channel: int, text: str) -> None:
+        panel = self.channel_panels.get(channel)
+        if panel is not None:
+            panel.set_peak_readout(text)
+        window = self.channel_windows.get(channel)
+        if window is not None:
+            window.set_peak_readout(text)
 
     def _push_channel_markers(self, channel: int) -> None:
         markers = self._markers_for_channel(
@@ -2738,12 +3391,10 @@ class DataViewerPane(QtWidgets.QWidget):
         if roi.kind == "arch":
             graphic = _ArchROI(roi, pen=pen)
         else:
-            graphic = pg.RectROI(
+            graphic = _BoxROI(
                 (x_min, y_min),
                 (x_max - x_min, y_max - y_min),
                 pen=pen,
-                movable=True,
-                sideScalers=True,
             )
         graphic.setZValue(10)
         graphic.sigRegionChangeStarted.connect(
@@ -3357,6 +4008,36 @@ def _integration_peak_marker(
             f"@ {_format_float(float(integration_x))}"
         ),
     )
+
+
+def _channel_peak_readout_text(
+    channel: int,
+    roi: ROIRegion,
+    marker: IntegrationPeakMarker,
+) -> str:
+    axis_label = _roi_integration_axis_label(roi)
+    coordinate = _integration_peak_qspace_coordinate(
+        roi,
+        marker.integration_x,
+    )
+    base = (
+        f"Ch {channel} active peak: "
+        f"trace {axis_label}={_format_float(marker.integration_x)}, "
+        f"I={_format_float(marker.integrated_intensity)}"
+    )
+    if coordinate is None:
+        return base
+    qxy, qz = coordinate
+    return f"{base}, " f"qxy={_format_float(qxy)}, " f"qz={_format_float(qz)}"
+
+
+def _roi_integration_axis_label(roi: ROIRegion) -> str:
+    mode = _roi_integration_mode(roi)
+    if mode == "arch":
+        return "chi"
+    if mode == "box:qxy":
+        return "qxy"
+    return "qz"
 
 
 def _integration_peak_qspace_coordinate(

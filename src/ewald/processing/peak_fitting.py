@@ -101,8 +101,9 @@ def compute_peak_fit_integrations(
     sliced = slice_peak_roi(image, axis_ranges, roi)
     if sliced is None:
         return {}
-    qxy_profile = np.nansum(sliced.intensity, axis=0)
-    qz_profile = np.nansum(sliced.intensity, axis=1)
+    fit_intensity, gap_mask = _gap_filtered_intensity(sliced.intensity)
+    qxy_profile = _finite_sum_profile(fit_intensity, axis=0)
+    qz_profile = _finite_sum_profile(fit_intensity, axis=1)
     integrations = {
         "qxy": _profile_dict(
             "qxy",
@@ -119,6 +120,8 @@ def compute_peak_fit_integrations(
             qz_profile,
         ),
     }
+    _annotate_gap_profile(integrations["qxy"], gap_mask, axis=0)
+    _annotate_gap_profile(integrations["qz"], gap_mask, axis=1)
     azimuthal = None
     if azimuthal_roi is not None:
         azimuthal = _arch_azimuthal_profile(
@@ -180,8 +183,11 @@ def fit_peak_roi_2d(
     if sliced is None:
         return None
     qxy_grid, qz_grid, intensity = sliced.as_mesh()
+    fit_intensity, gap_mask = _gap_filtered_intensity(intensity)
     finite = (
-        np.isfinite(qxy_grid) & np.isfinite(qz_grid) & np.isfinite(intensity)
+        np.isfinite(qxy_grid)
+        & np.isfinite(qz_grid)
+        & np.isfinite(fit_intensity)
     )
     if np.count_nonzero(finite) < 6:
         return None
@@ -189,7 +195,7 @@ def fit_peak_roi_2d(
     seed = _seed_2d_from_profiles(sliced, integration_fits or {})
     x_flat = qxy_grid[finite].ravel()
     y_flat = qz_grid[finite].ravel()
-    z_flat = intensity[finite].ravel()
+    z_flat = fit_intensity[finite].ravel()
     qxy_step = _axis_step(sliced.qxy)
     qz_step = _axis_step(sliced.qz)
     qxy_range = max(
@@ -265,7 +271,10 @@ def fit_peak_roi_2d(
         "width_qz_fwhm": abs(sigma_qz) * GAUSSIAN_FWHM_FACTOR,
         "offset": offset,
         "statistics": statistics,
-        "metadata": {"seed": seed},
+        "metadata": {
+            "seed": seed,
+            "masked_gap_pixels": int(np.count_nonzero(gap_mask)),
+        },
     }
 
 
@@ -292,6 +301,68 @@ def evaluate_peak_fit_2d(
         float(fit.get("offset", 0.0)),
     )
     return qxy_grid, qz_grid, intensity, np.asarray(model, dtype=float)
+
+
+def _gap_filtered_intensity(
+    intensity: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    array = np.asarray(intensity, dtype=float)
+    gap_mask = _masked_gap_array_mask(array)
+    if not np.any(gap_mask):
+        return array, gap_mask
+    filtered = np.array(array, dtype=float, copy=True)
+    filtered[gap_mask] = np.nan
+    return filtered, gap_mask
+
+
+def _masked_gap_array_mask(intensity: np.ndarray) -> np.ndarray:
+    array = np.asarray(intensity, dtype=float)
+    finite = np.isfinite(array)
+    if not np.any(finite):
+        return ~finite
+    floor = float(np.nanmin(array[finite]))
+    ceiling = float(np.nanmax(array[finite]))
+    dynamic_range = max(ceiling - floor, 0.0)
+    tolerance = max(abs(floor) * 0.02, dynamic_range * 0.005, 1.0e-9)
+    floor_mask = finite & (array <= floor + tolerance)
+    mask = ~finite
+    if array.ndim != 2 or not np.any(floor_mask):
+        return mask
+    row_floor_fraction = np.mean(floor_mask, axis=1)
+    col_floor_fraction = np.mean(floor_mask, axis=0)
+    row_gaps = row_floor_fraction >= 0.85
+    col_gaps = col_floor_fraction >= 0.85
+    if np.any(row_gaps):
+        mask |= row_gaps[:, None]
+    if np.any(col_gaps):
+        mask |= col_gaps[None, :]
+    return mask
+
+
+def _finite_sum_profile(intensity: np.ndarray, *, axis: int) -> np.ndarray:
+    finite = np.isfinite(intensity)
+    values = np.where(finite, intensity, 0.0)
+    counts = np.sum(finite, axis=axis)
+    summed = np.sum(values, axis=axis)
+    return np.where(counts > 0, summed, np.nan)
+
+
+def _annotate_gap_profile(
+    profile: dict[str, Any],
+    gap_mask: np.ndarray,
+    *,
+    axis: int,
+) -> None:
+    if not np.any(gap_mask):
+        return
+    counts = np.sum(gap_mask, axis=axis)
+    gap_bins = np.flatnonzero(counts > 0)
+    if not gap_bins.size:
+        return
+    profile["metadata"] = {
+        "masked_gap_bins": [int(value) for value in gap_bins],
+        "masked_gap_pixel_count": int(np.count_nonzero(gap_mask)),
+    }
 
 
 def _profile_dict(

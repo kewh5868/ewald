@@ -43,6 +43,37 @@ def test_peak_fit_integrations_seed_2d_gaussian_center():
     assert fit_2d["expression"]
 
 
+def test_peak_fit_ignores_masked_gap_stripes():
+    qxy = np.linspace(-1.0, 1.0, 101)
+    qz = np.linspace(-1.0, 1.0, 101)
+    qxy_grid, qz_grid = np.meshgrid(qxy, qz)
+    image = 2.0 + 120.0 * np.exp(
+        -0.5 * (((qxy_grid - 0.0) / 0.13) ** 2 + (qz_grid / 0.1) ** 2)
+    )
+    image[:, np.abs(qxy) < 0.045] = 0.0
+    roi = {
+        "qxy_min": -0.45,
+        "qxy_max": 0.45,
+        "qz_min": -0.35,
+        "qz_max": 0.35,
+    }
+
+    integrations = compute_peak_fit_integrations(
+        image,
+        (-1.0, 1.0, -1.0, 1.0),
+        roi,
+    )
+    fits = fit_peak_integrations(integrations)
+    fit_2d = fit_peak_roi_2d(image, (-1.0, 1.0, -1.0, 1.0), roi, fits)
+
+    assert np.isnan(integrations["qxy"]["y_values"]).any()
+    assert integrations["qxy"]["metadata"]["masked_gap_pixel_count"] > 0
+    assert fit_2d is not None
+    assert fit_2d["metadata"]["masked_gap_pixels"] > 0
+    assert fit_2d["center_qxy"] == pytest.approx(0.0, abs=0.04)
+    assert fit_2d["center_qz"] == pytest.approx(0.0, abs=0.04)
+
+
 def test_peak_fit_azimuthal_integration_can_use_arch_roi():
     qxy = np.linspace(-1.0, 1.0, 101)
     qz = np.linspace(-1.0, 1.0, 101)

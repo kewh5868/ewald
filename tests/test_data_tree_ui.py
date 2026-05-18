@@ -9,6 +9,7 @@ from qtpy import QtCore, QtGui, QtWidgets
 
 from ewald.data.models import (
     PEAK_POINT_KIND_COMMITTED,
+    PEAK_POINT_KIND_GAP_ESTIMATED,
     ImageCorrectionState,
     ProjectState,
     ROIRegion,
@@ -107,6 +108,99 @@ def test_data_tree_renders_groups_files_metadata_and_fits(qtbot, repo_root):
     )
     assert _child_with_text(metadata_item, "Sample number").text(1) == "22"
     assert _child_with_text(metadata_item, "Parse delimiter").text(1) == "_"
+
+
+def test_data_tree_registers_peak_fits_and_computed_cifs(
+    qtbot,
+    repo_root,
+    tmp_path,
+):
+    path = next((repo_root / "example").glob("*.tiff"))
+    group, _ = build_data_group_from_paths([path], group_name="Example")
+    project = ProjectState()
+    project.add_data_group(group)
+    data_id = group.data_files[0].data_id
+    project.fits[data_id] = {
+        "peak_fit": {
+            "p1": {
+                "peak_id": "p1",
+                "label": "Peak 1",
+                "roi": {
+                    "kind": "box",
+                    "qxy_min": 0.1,
+                    "qxy_max": 0.3,
+                    "qz_min": 0.4,
+                    "qz_max": 0.6,
+                },
+                "integrations": {
+                    "qxy": {
+                        "x_label": "qxy",
+                        "y_label": "Integrated intensity",
+                        "x_values": [0.1, 0.2, 0.3],
+                        "y_values": [10.0, 12.0, 9.0],
+                    }
+                },
+                "integration_fits": {
+                    "qxy": {
+                        "center": 0.2,
+                        "statistics": {"r_squared": 0.91},
+                    }
+                },
+                "fit_2d": {
+                    "center_qxy": 0.2,
+                    "center_qz": 0.5,
+                    "statistics": {"r_squared": 0.95},
+                },
+            }
+        }
+    }
+    cif_path = tmp_path / "candidate_001.cif"
+    cif_path.write_text("data_candidate_001\n", encoding="utf-8")
+    project.reference_cifs["generated"] = {
+        "candidate_001": {
+            "cif_id": "candidate_001",
+            "candidate_id": "candidate_001",
+            "data_id": data_id,
+            "score": 0.12,
+            "path": str(cif_path),
+            "archive_path": "structures/generated_cifs/candidate_001/candidate_001.cif",
+            "cif_text": "data_candidate_001\n",
+        }
+    }
+    project.structures["candidate_001"] = {
+        "structure_id": "candidate_001",
+        "source": "structure_analysis_generated_cif",
+        "path": str(cif_path),
+        "cif_text": "data_candidate_001\n",
+    }
+
+    pane = DataTreePane()
+    qtbot.addWidget(pane)
+    pane.set_project(project)
+
+    root = pane.tree.topLevelItem(0)
+    file_item = root.child(0)
+    fits_item = _child_with_text(file_item, "Fits")
+    peak_fits_item = _child_with_text(fits_item, "Peak fits")
+    peak_fit_item = _child_with_text(peak_fits_item, "Peak 1")
+    assert "1 traces" in peak_fit_item.text(1)
+    assert "2D fit" in peak_fit_item.text(1)
+    traces_item = _child_with_text(peak_fit_item, "Integrated traces")
+    qxy_item = _child_with_text(traces_item, "qxy")
+    assert qxy_item.text(1) == "3 x points, 3 y points"
+    assert (
+        _child_with_text(peak_fit_item, "2D Gaussian fit")
+        .text(1)
+        .startswith("center 0.2")
+    )
+
+    computed_item = _child_with_text(root, "Computed CIFs")
+    assert computed_item.text(1) == "1"
+    cif_item = _child_with_text(computed_item, "candidate_001")
+    assert _child_with_text(cif_item, "Path").text(1) == str(cif_path)
+    assert (
+        _child_with_text(cif_item, "CIF text").text(1) == "embedded, 1 lines"
+    )
 
 
 def test_main_window_has_left_data_dock(qtbot):
@@ -1182,6 +1276,14 @@ def test_major_analysis_plots_share_locked_aspect(qtbot, repo_root):
     assert structure_pane.axis_ranges == viewer.axis_ranges
     assert peak_pane.image_data.shape == viewer.image_data.shape
     assert structure_pane.image_data.shape == viewer.image_data.shape
+    assert structure_pane.analysis_tabs.tabText(0) == "Structure Approximation"
+    assert structure_pane.analysis_tabs.tabText(1) == "Peak Families"
+    assert structure_pane.analysis_tabs.tabText(2) == "Wyckoff Mapping"
+    assert "Peak Table" not in [
+        structure_pane.analysis_tabs.tabText(index)
+        for index in range(structure_pane.analysis_tabs.count())
+    ]
+    assert structure_pane.peak_table.parentWidget() is structure_pane
 
     x_min, x_max, y_min, y_max = viewer.axis_ranges
     x_span = x_max - x_min
@@ -1193,6 +1295,7 @@ def test_major_analysis_plots_share_locked_aspect(qtbot, repo_root):
         y_min + 0.35 * y_span,
     )
     assert roi is not None
+    assert len(structure_pane.roi_overlay_items) >= 1
     graphic = viewer.roi_graphics[roi.roi_id]
     roi_pos_before = (float(graphic.pos().x()), float(graphic.pos().y()))
     roi_size_before = (float(graphic.size().x()), float(graphic.size().y()))
@@ -1255,12 +1358,51 @@ def test_peak_identification_adds_detects_and_regions_peaks(qtbot, repo_root):
     structure_pane = window.tabs.widget(2)
     assert type(pane).__name__ == "PeakIdentificationPane"
     assert pane.side_tabs.tabText(0) == "Peak Finder"
-    assert pane.side_tabs.tabText(1) == "Crystal Overlay"
+    assert pane.side_tabs.tabText(1) == "ROI Selection"
     assert pane.side_tabs.tabText(2) == "Peak Fit"
+    peak_finder_tab = pane.side_tabs.widget(0)
+    assert peak_finder_tab.layout().itemAt(0).widget() is pane.peak_action_bar
+    assert (
+        peak_finder_tab.layout().itemAt(1).widget() is pane.peak_finder_subtabs
+    )
+    assert pane.peak_finder_subtabs.tabText(0) == "Peak Detection"
+    assert pane.peak_finder_subtabs.tabText(1) == "Crystal Overlay"
+    roi_groups = {
+        group.title()
+        for group in pane.side_tabs.widget(1).findChildren(QtWidgets.QGroupBox)
+    }
+    assert "ROI Tools" in roi_groups
+    for button in (
+        pane.undo_button,
+        pane.redo_button,
+        pane.clear_peaks_button,
+    ):
+        assert button.parentWidget() is pane.peak_action_bar
+        assert not button.icon().isNull()
+        assert (
+            button.toolButtonStyle()
+            == QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly
+        )
     assert pane.image_style == viewer.image_display_style()
     assert structure_pane.image_style == viewer.image_display_style()
     assert pane.image_display_style() == viewer.image_display_style()
     assert structure_pane.image_display_style() == viewer.image_display_style()
+    assert pane.zoom_fit_button.text() == "Autoscale"
+    assert structure_pane.zoom_fit_button.text() == "Autoscale"
+    for button in (
+        pane.zoom_in_button,
+        pane.zoom_out_button,
+        pane.zoom_fit_button,
+        pane.pan_button,
+    ):
+        assert button.parentWidget() is pane.plot_toolbar
+    for button in (
+        structure_pane.zoom_in_button,
+        structure_pane.zoom_out_button,
+        structure_pane.zoom_fit_button,
+        structure_pane.pan_button,
+    ):
+        assert button.parentWidget() is structure_pane.plot_toolbar
 
     viewer.colormap_combo.setCurrentIndex(1)
     viewer.quantile_low.setValue(5.0)
@@ -1422,6 +1564,38 @@ def test_peak_finder_presets_update_detection_controls(qtbot):
     pane = PeakIdentificationPane(ProjectState(), "synthetic")
     qtbot.addWidget(pane)
 
+    peak_finder_controls = [
+        pane.threshold_percentile,
+        pane.adaptive_peak_threshold_check,
+        pane.adaptive_floor_percentile,
+        pane.min_snr,
+        pane.background_radius_px,
+        pane.max_peaks,
+        pane.min_distance_px,
+        pane.neighborhood_radius_px,
+        pane.min_qz,
+        pane.ignore_nonpositive_check,
+        pane.consolidate_peaks_check,
+        pane.find_peaks_button,
+    ]
+    for control in peak_finder_controls:
+        assert control.toolTip().startswith("<qt>")
+    assert (
+        "image-wide intensity cutoff"
+        in pane.global_peak_preset_button.toolTip()
+    )
+    assert "local background" in pane.adaptive_peak_preset_button.toolTip()
+    assert "weak peaks" in pane.sensitive_peak_preset_button.toolTip()
+    finder_labels = [
+        label
+        for label in pane.peak_finder_subtabs.widget(0).findChildren(
+            QtWidgets.QLabel
+        )
+        if label.toolTip().startswith("<qt>")
+    ]
+    assert len(finder_labels) >= 8
+    assert any(label.text() == "Threshold" for label in finder_labels)
+
     assert pane.max_peaks.value() == 500
     assert not pane.adaptive_peak_threshold_check.isChecked()
 
@@ -1440,6 +1614,135 @@ def test_peak_finder_presets_update_detection_controls(qtbot):
     assert pane.min_snr.value() == pytest.approx(4.5)
     assert pane.max_peaks.value() == 600
     assert pane.adaptive_peak_threshold_check.isChecked()
+
+
+def test_peak_finder_mirrors_selected_missing_peaks(qtbot):
+    from ewald.ui.peak_identification import PeakIdentificationPane
+
+    project = ProjectState()
+    pane = PeakIdentificationPane(project, "synthetic")
+    qtbot.addWidget(pane)
+
+    pane.image_data = np.zeros((41, 41), dtype=float)
+    pane.axis_ranges = (-1.0, 1.0, 0.0, 2.0)
+    pane.coordinate_space = "qspace"
+    pane.symmetry_qxy_tolerance.setValue(0.02)
+    pane.symmetry_qz_tolerance.setValue(0.02)
+
+    matched_source = pane.add_peak_at(
+        0.35,
+        0.8,
+        record_history=False,
+    )
+    missing_source = pane.add_peak_at(
+        0.65,
+        1.2,
+        record_history=False,
+    )
+    pane.add_peak_at(-0.35, 0.8, record_history=False)
+
+    assert (
+        pane.peak_table.selectionMode()
+        == QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
+    )
+    pane.peak_table.clearSelection()
+    selection = pane.peak_table.selectionModel()
+    flags = (
+        QtCore.QItemSelectionModel.SelectionFlag.Select
+        | QtCore.QItemSelectionModel.SelectionFlag.Rows
+    )
+    for row in (0, 1):
+        selection.select(pane.peak_table.model().index(row, 0), flags)
+
+    pane.mirror_missing_button.click()
+
+    records = project.peak_sets["synthetic"]
+    assert len(records) == 4
+    mirrored = [
+        record
+        for record in records
+        if record.get("metadata", {}).get("mirror_source_peak_id")
+        == missing_source["peak_id"]
+    ]
+    assert len(mirrored) == 1
+    mirrored_peak = mirrored[0]
+    assert mirrored_peak["qxy"] == pytest.approx(-0.65)
+    assert mirrored_peak["qz"] == pytest.approx(1.2)
+    assert mirrored_peak["source"] == "gap estimate"
+    assert mirrored_peak["point_kind"] == PEAK_POINT_KIND_GAP_ESTIMATED
+    assert mirrored_peak["gap_estimated"] is True
+    assert mirrored_peak["metadata"]["estimate_method"] == (
+        "mirror across qz axis"
+    )
+    assert not any(
+        record.get("metadata", {}).get("mirror_source_peak_id")
+        == matched_source["peak_id"]
+        for record in records
+    )
+    assert (
+        "Added 1 mirrored gap estimate" in pane.symmetry_summary_label.text()
+    )
+
+    pane.mirror_missing_button.click()
+    assert len(project.peak_sets["synthetic"]) == 4
+    assert "No missing mirrored partners" in pane.symmetry_summary_label.text()
+
+    pane.undo_peak_action()
+    assert len(project.peak_sets["synthetic"]) == 3
+
+
+@pytest.mark.parametrize(
+    ("gap_axis", "center_qxy", "center_qz"),
+    [
+        ("qxy", 0.06, 0.24),
+        ("qz", 0.34, 0.16),
+    ],
+)
+def test_peak_finder_centers_masked_gap_click_from_side_maxima(
+    qtbot,
+    gap_axis,
+    center_qxy,
+    center_qz,
+):
+    from ewald.ui.peak_identification import PeakIdentificationPane
+
+    project = ProjectState()
+    pane = PeakIdentificationPane(project, "synthetic")
+    qtbot.addWidget(pane)
+
+    x_axis = np.linspace(-1.0, 1.0, 101)
+    y_axis = np.linspace(-1.0, 1.0, 101)
+    x_grid, y_grid = np.meshgrid(x_axis, y_axis)
+    image = 4.0 + 150.0 * np.exp(
+        -0.5
+        * (
+            ((x_grid - center_qxy) / 0.22) ** 2
+            + ((y_grid - center_qz) / 0.16) ** 2
+        )
+    )
+    if gap_axis == "qxy":
+        image[
+            :, (x_axis >= center_qxy - 0.08) & (x_axis <= center_qxy + 0.08)
+        ] = 0.0
+    else:
+        image[
+            (y_axis >= center_qz - 0.08) & (y_axis <= center_qz + 0.08), :
+        ] = 0.0
+    pane.image_data = image
+    pane.axis_ranges = (-1.0, 1.0, -1.0, 1.0)
+    pane.coordinate_space = "qspace"
+
+    record = pane.add_peak_at(center_qxy, center_qz)
+
+    assert record["qxy"] == pytest.approx(center_qxy, abs=0.035)
+    assert record["qz"] == pytest.approx(center_qz, abs=0.035)
+    assert record["source"] == "gap estimate"
+    assert record["point_kind"] == PEAK_POINT_KIND_GAP_ESTIMATED
+    assert record["gap_estimated"] is True
+    assert record["metadata"]["estimate_method"] == "masked gap gaussian"
+    assert record["metadata"]["gap_axis"] == gap_axis
+    assert np.isfinite(record["intensity"])
+    assert "masked-gap peak estimate" in pane.snap_feedback_label.text()
 
 
 def test_peak_fit_subtab_runs_roi_fit_workflow(qtbot):
@@ -1505,6 +1808,57 @@ def test_peak_fit_subtab_runs_roi_fit_workflow(qtbot):
     assert pane.fit_detail_tree.topLevelItem(0).text(0) == "Peak"
 
 
+def test_batch_peak_fit_flags_and_sorts_problem_fits(qtbot):
+    from ewald.ui.peak_identification import PeakIdentificationPane
+
+    project = ProjectState()
+    pane = PeakIdentificationPane(project, "synthetic")
+    qtbot.addWidget(pane)
+
+    qxy = np.linspace(-1.0, 1.0, 61)
+    qz = np.linspace(-1.0, 1.0, 61)
+    qxy_grid, qz_grid = np.meshgrid(qxy, qz)
+    image = 3.0 + 90.0 * np.exp(
+        -0.5
+        * (((qxy_grid + 0.45) / 0.08) ** 2 + ((qz_grid + 0.35) / 0.1) ** 2)
+    )
+    image[(qxy_grid > 0.35) & (qz_grid > 0.35)] = np.nan
+    pane.image_data = image
+    pane.axis_ranges = (-1.0, 1.0, -1.0, 1.0)
+    pane.coordinate_space = "qspace"
+
+    good = pane.add_peak_at(-0.45, -0.35)
+    pane.roi_width.setValue(0.45)
+    pane.roi_height.setValue(0.45)
+    pane.apply_roi_to_selected_peak()
+    bad = pane.add_peak_at(0.65, 0.65)
+    pane.apply_roi_to_selected_peak()
+
+    pane.batch_process_all_peak_fits()
+
+    stores = project.fits["synthetic"]["peak_fit"]
+    assert stores[good["peak_id"]]["fit_2d"]["status"] == "fit"
+    assert stores[bad["peak_id"]]["fit_2d_failure"]["status"] == "failed"
+    bad_row = next(
+        row
+        for row in range(pane.peak_table.rowCount())
+        if pane.peak_table.item(row, 0).data(QtCore.Qt.ItemDataRole.UserRole)
+        == bad["peak_id"]
+    )
+    assert pane.peak_table.item(
+        bad_row, 0
+    ).background().color() == QtGui.QColor("#fef3c7")
+    assert "No finite ROI pixels" in pane.peak_table.item(bad_row, 0).toolTip()
+
+    pane.fit_issues_first_button.click()
+
+    assert pane.fit_issues_first_button.isChecked()
+    assert (
+        pane.peak_table.item(0, 0).data(QtCore.Qt.ItemDataRole.UserRole)
+        == bad["peak_id"]
+    )
+
+
 def test_peak_identification_crystal_overlay_updates_project(qtbot, repo_root):
     path = next((repo_root / "example").glob("*.tiff"))
     group, _ = build_data_group_from_paths([path], group_name="Example")
@@ -1556,7 +1910,9 @@ def test_peak_identification_crystal_overlay_updates_project(qtbot, repo_root):
     )
     crystal_groups = {
         group.title()
-        for group in pane.side_tabs.widget(1).findChildren(QtWidgets.QGroupBox)
+        for group in pane.peak_finder_subtabs.widget(1).findChildren(
+            QtWidgets.QGroupBox
+        )
     }
     assert "Lattice & Overlay Peaks" in crystal_groups
     assert "Overlay Peaks" not in crystal_groups
@@ -1840,8 +2196,15 @@ def test_data_viewer_roi_graphics_are_draggable_and_resizable(
     assert viewer.view_box.state["mouseEnabled"] == [False, False]
     assert viewer.zoom_in_button.text() == "Zoom In"
     assert viewer.zoom_out_button.text() == "Zoom Out"
-    assert viewer.zoom_fit_button.text() == "Fit"
+    assert viewer.zoom_fit_button.text() == "Autoscale"
     assert viewer.pan_button.text() == "Pan"
+    for button in (
+        viewer.zoom_in_button,
+        viewer.zoom_out_button,
+        viewer.zoom_fit_button,
+        viewer.pan_button,
+    ):
+        assert button.parentWidget() is viewer.plot_toolbar
 
     (x_min, x_max), (y_min, y_max) = viewer.view_box.viewRange()
     viewer.zoom_in_button.click()
@@ -1878,7 +2241,13 @@ def test_data_viewer_roi_graphics_are_draggable_and_resizable(
     assert box is not None
     box_graphic = viewer.roi_graphics[box.roi_id]
     assert box_graphic.translatable
-    assert len(box_graphic.getHandles()) >= 3
+    assert {handle["name"] for handle in box_graphic.handles} == {
+        "box-corner",
+        "box-left",
+        "box-right",
+        "box-bottom",
+        "box-top",
+    }
 
     box_graphic.setPos((0.2, 0.3))
     box_graphic.setSize((0.5, 0.6))
@@ -1888,6 +2257,31 @@ def test_data_viewer_roi_graphics_are_draggable_and_resizable(
     assert box.qxy_max == pytest.approx(0.7)
     assert box.qz_min == pytest.approx(0.3)
     assert box.qz_max == pytest.approx(0.9)
+
+    box_handles = {
+        str(handle["name"]): handle["item"] for handle in box_graphic.handles
+    }
+    box_graphic.movePoint(
+        box_handles["box-left"],
+        QtCore.QPointF(0.0, 0.6),
+    )
+    box_graphic.movePoint(
+        box_handles["box-right"],
+        QtCore.QPointF(0.8, 0.6),
+    )
+    box_graphic.movePoint(
+        box_handles["box-bottom"],
+        QtCore.QPointF(0.4, 0.1),
+    )
+    box_graphic.movePoint(
+        box_handles["box-top"],
+        QtCore.QPointF(0.4, 1.0),
+    )
+
+    assert box.qxy_min == pytest.approx(0.0)
+    assert box.qxy_max == pytest.approx(0.8)
+    assert box.qz_min == pytest.approx(0.1)
+    assert box.qz_max == pytest.approx(1.0)
 
     viewer.arch_button.setChecked(True)
     arch = viewer.add_roi_from_bounds(-0.4, 0.4, 0.5, 1.0)
@@ -1915,24 +2309,44 @@ def test_data_viewer_roi_graphics_are_draggable_and_resizable(
     assert arch.qz_center == pytest.approx(0.1588, abs=1.0e-3)
     assert viewer.roi_table.rowCount() == 2
 
-    thickness_handle = next(
-        handle["item"]
-        for handle in arch_graphic.handles
-        if handle["name"] == "arch-thickness"
-    )
+    arch_handles = {
+        str(handle["name"]): handle["item"] for handle in arch_graphic.handles
+    }
+    center_after_drag = (arch.qxy_center, arch.qz_center)
+    thickness_handle = arch_handles["arch-thickness"]
     arch_graphic.movePoint(
         thickness_handle,
         QtCore.QPointF(arch.qxy_center, arch.qz_center + 1.2),
     )
 
+    assert arch.qxy_center == pytest.approx(center_after_drag[0])
+    assert arch.qz_center == pytest.approx(center_after_drag[1])
     assert arch.qr_min == pytest.approx(0.5)
     assert arch.qr_max == pytest.approx(1.2)
 
-    chi_max_handle = next(
-        handle["item"]
-        for handle in arch_graphic.handles
-        if handle["name"] == "arch-chi-max"
+    radius_handle = arch_handles["arch-radius"]
+    thickness = (arch.qr_max or 0.0) - (arch.qr_min or 0.0)
+    radius_center = ((arch.qr_min or 0.0) + (arch.qr_max or 0.0)) / 2.0
+    target_radius_center = radius_center + 0.25
+    arch_graphic.movePoint(
+        radius_handle,
+        QtCore.QPointF(
+            arch.qxy_center,
+            arch.qz_center + target_radius_center,
+        ),
     )
+
+    assert arch.qxy_center == pytest.approx(center_after_drag[0])
+    assert arch.qz_center == pytest.approx(center_after_drag[1])
+    assert (arch.qr_max or 0.0) - (arch.qr_min or 0.0) == pytest.approx(
+        thickness
+    )
+    radius_center_after_resize = (
+        (arch.qr_min or 0.0) + (arch.qr_max or 0.0)
+    ) / 2.0
+    assert radius_center_after_resize == pytest.approx(target_radius_center)
+
+    chi_max_handle = arch_handles["arch-chi-max"]
     side_radius = ((arch.qr_min or 0.0) + (arch.qr_max or 0.0)) / 2.0
     side_x = arch.qxy_center + side_radius * np.sin(np.radians(45.0))
     side_y = arch.qz_center + side_radius * np.cos(np.radians(45.0))
@@ -2155,9 +2569,13 @@ def test_integration_channel_peak_markers_push_to_peak_identification(
     assert marker.qxy == pytest.approx(3.0)
     assert marker.qz == pytest.approx(5.0)
     assert marker.integrated_intensity == pytest.approx(123.0)
-    assert viewer.channel_panels[1].marker_count_label.text() == "1 mark"
+    panel = viewer.channel_panels[1]
+    assert panel.marker_count_label.text() == "1 mark"
+    assert panel.coordinate_readout_label.text() == (
+        "Ch 1 active peak: trace qz=5, I=123, qxy=3, qz=5"
+    )
 
-    plot_widget = viewer.channel_panels[1].plot_widget
+    plot_widget = panel.plot_widget
     if plot_widget.axes is None or plot_widget.canvas is None:
         pytest.skip("matplotlib is unavailable")
     trace = viewer.channel_panels[1].series[0]
@@ -2187,6 +2605,12 @@ def test_integration_channel_peak_markers_push_to_peak_identification(
         mpl_event(marker.integration_x, marker.integrated_intensity)
     )
     plot_widget._handle_mouse_motion(mpl_event(drag_x, drag_y))
+    live_readout = panel.coordinate_readout_label.text()
+    assert live_readout.startswith("Ch 1 active peak: trace qz=")
+    assert f"I={drag_y:.5g}" in live_readout
+    assert "qxy=3" in live_readout
+    assert f"qz={drag_x:.5g}" in live_readout
+    assert viewer.roi_status_label.text() == live_readout
     plot_widget._handle_mouse_release(mpl_event(drag_x, drag_y))
 
     marker = viewer.integration_peak_markers[1][0]
@@ -2229,6 +2653,8 @@ def test_integration_channel_peak_markers_push_to_peak_identification(
     plot_widget._handle_mouse_motion(mpl_off_trace_event())
     plot_widget._handle_mouse_release(mpl_off_trace_event())
 
+    assert plot_widget._poof_timers
+    assert plot_widget._poof_artists
     assert viewer.integration_peak_markers[1] == []
     assert viewer.channel_panels[1].marker_count_label.text() == "0 marks"
     assert plot_widget.markers == []
@@ -2247,6 +2673,101 @@ def test_integration_channel_peak_markers_push_to_peak_identification(
         project.peak_sets[data_id][0]["point_kind"]
         == PEAK_POINT_KIND_COMMITTED
     )
+
+
+def test_integration_channel_clicks_snap_and_detect_local_maxima(
+    qtbot,
+    tmp_path,
+):
+    project = ProjectState()
+    data_file = project.add_data_file(tmp_path / "synthetic.tiff")
+    data_id = data_file.data_id
+    assert data_id is not None
+    project.set_image_corrections(
+        ImageCorrectionState(target_id=data_id, confirmed=True)
+    )
+    window = MainWindow(project=project)
+    qtbot.addWidget(window)
+
+    viewer = window.tabs.widget(0)
+    image = np.zeros((10, 10), dtype=float)
+    image[4, 2:5] = 20.0
+    image[6, 2:5] = 10.0
+    viewer.image_data = image
+    viewer.axis_ranges = (0.0, 9.0, 0.0, 9.0)
+    viewer.coordinate_space = "qspace"
+    viewer.roi_controls_enabled = True
+    viewer._set_roi_controls_enabled(True)
+
+    vertical = viewer.add_roi_from_bounds(2.0, 4.0, 3.0, 7.0)
+    assert vertical is not None
+    viewer._toggle_roi_channel(vertical.roi_id, 1, True)
+
+    panel = viewer.channel_panels[1]
+    assert panel.detect_peaks_button.text() == "Detect Peaks"
+    assert panel.detect_peaks_button.isEnabled()
+    assert panel.autosnap_button.text() == "Autosnap"
+    assert panel.autosnap_button.isChecked()
+    plot_widget = panel.plot_widget
+    if plot_widget.axes is None or plot_widget.canvas is None:
+        pytest.skip("matplotlib is unavailable")
+    plot_widget.canvas.draw()
+
+    def mpl_event(x_value, y_value):
+        display_x, display_y = plot_widget.axes.transData.transform(
+            (x_value, y_value)
+        )
+        return type(
+            "MplEvent",
+            (),
+            {
+                "button": 1,
+                "xdata": x_value,
+                "ydata": y_value,
+                "x": display_x,
+                "y": display_y,
+                "inaxes": plot_widget.axes,
+            },
+        )()
+
+    plot_widget._handle_mouse_press(mpl_event(4.25, 35.0))
+
+    marker = viewer.integration_peak_markers[1][0]
+    assert marker.integration_x == pytest.approx(4.0)
+    assert marker.integrated_intensity == pytest.approx(60.0)
+
+    viewer._clear_channel_markers(1)
+    panel.autosnap_button.setChecked(False)
+
+    assert viewer.channel_autosnap_enabled[1] is False
+    assert plot_widget.autosnap_enabled is False
+
+    plot_widget._handle_mouse_press(mpl_event(5.1, 35.0))
+
+    marker = viewer.integration_peak_markers[1][0]
+    assert marker.integration_x == pytest.approx(5.0)
+    assert marker.integrated_intensity == pytest.approx(0.0)
+
+    viewer._clear_channel_markers(1)
+    panel.autosnap_button.setChecked(True)
+
+    assert viewer.channel_autosnap_enabled[1] is True
+    assert plot_widget.autosnap_enabled is True
+
+    panel.detect_peaks_button.click()
+
+    markers = viewer.integration_peak_markers[1]
+    assert len(markers) == 2
+    assert [marker.integration_x for marker in markers] == pytest.approx(
+        [4.0, 6.0]
+    )
+    assert [
+        marker.integrated_intensity for marker in markers
+    ] == pytest.approx([60.0, 30.0])
+
+    panel.detect_peaks_button.click()
+
+    assert len(viewer.integration_peak_markers[1]) == 2
 
 
 def test_integration_peak_coordinate_conversion_covers_channel_modes():
@@ -2329,6 +2850,10 @@ def test_integration_channel_detaches_and_reattaches(qtbot, repo_root):
     panel = viewer.channel_panels[1]
     assert not panel.plot_widget.isHidden()
     assert panel.placeholder.isHidden()
+    panel.autosnap_button.setChecked(False)
+
+    assert viewer.channel_autosnap_enabled[1] is False
+    assert not panel.plot_widget.autosnap_enabled
 
     viewer._detach_channel(1)
     detached_window = viewer.channel_windows[1]
@@ -2339,6 +2864,14 @@ def test_integration_channel_detaches_and_reattaches(qtbot, repo_root):
     assert not panel.placeholder.isHidden()
     assert len(detached_window.plot_widget.series) == 1
     assert detached_window.drag_label.text() == "Channel 1 (Vertical Box)"
+    assert not detached_window.autosnap_button.isChecked()
+    assert not detached_window.plot_widget.autosnap_enabled
+
+    detached_window.autosnap_button.setChecked(True)
+
+    assert viewer.channel_autosnap_enabled[1] is True
+    assert panel.autosnap_button.isChecked()
+    assert panel.plot_widget.autosnap_enabled
 
     viewer._reattach_channel(1)
 
