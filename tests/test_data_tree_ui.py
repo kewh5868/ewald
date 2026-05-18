@@ -2270,6 +2270,8 @@ def test_integration_channel_peak_markers_push_to_peak_identification(
     plot_widget._handle_mouse_motion(mpl_off_trace_event())
     plot_widget._handle_mouse_release(mpl_off_trace_event())
 
+    assert plot_widget._poof_timers
+    assert plot_widget._poof_artists
     assert viewer.integration_peak_markers[1] == []
     assert viewer.channel_panels[1].marker_count_label.text() == "0 marks"
     assert plot_widget.markers == []

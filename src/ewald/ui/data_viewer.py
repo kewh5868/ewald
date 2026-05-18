@@ -624,6 +624,8 @@ class _MatplotlibIntegrationWidget(QtWidgets.QWidget):
         self._drag_marker_roi_id: str | None = None
         self._drag_marker_moved = False
         self._drag_marker_delete_pending = False
+        self._poof_timers: list[QtCore.QTimer] = []
+        self._poof_artists: list[Any] = []
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         try:
@@ -678,6 +680,7 @@ class _MatplotlibIntegrationWidget(QtWidgets.QWidget):
         self.mode = mode
         if self.axes is None or self.canvas is None:
             return
+        self._clear_poof_animations()
         self.axes.clear()
         for trace in self.series:
             self.axes.plot(
@@ -792,7 +795,13 @@ class _MatplotlibIntegrationWidget(QtWidgets.QWidget):
         if self.canvas is not None:
             self.canvas.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
         if delete_marker:
+            marker = self._marker_by_id(marker_id)
             self.markerDeleted.emit(marker_id)
+            if marker is not None:
+                self._start_marker_poof(
+                    marker.integration_x,
+                    marker.integrated_intensity,
+                )
             return
         if not moved:
             return
@@ -885,6 +894,103 @@ class _MatplotlibIntegrationWidget(QtWidgets.QWidget):
             return False
         self.set_series(self.series, self.mode, updated)
         return True
+
+    def _start_marker_poof(
+        self,
+        integration_x: float,
+        integrated_intensity: float,
+    ) -> None:
+        if self.axes is None or self.canvas is None:
+            return
+        x_min, x_max = self.axes.get_xlim()
+        y_min, y_max = self.axes.get_ylim()
+        x_span = max(abs(float(x_max) - float(x_min)), 1.0e-12)
+        y_span = max(abs(float(y_max) - float(y_min)), 1.0e-12)
+        center = np.asarray(
+            [float(integration_x), float(integrated_intensity)],
+            dtype=float,
+        )
+        directions = np.asarray(
+            [
+                (1.0, 0.0),
+                (0.45, 0.9),
+                (-0.45, 0.9),
+                (-1.0, 0.0),
+                (-0.45, -0.9),
+                (0.45, -0.9),
+            ],
+            dtype=float,
+        )
+        spread = np.asarray([x_span * 0.035, y_span * 0.055], dtype=float)
+        ring = self.axes.scatter(
+            [center[0]],
+            [center[1]],
+            s=[36.0],
+            marker="o",
+            facecolors="none",
+            edgecolors="#e76f51",
+            linewidths=1.4,
+            alpha=0.9,
+            zorder=8,
+        )
+        sparks = self.axes.scatter(
+            np.full(directions.shape[0], center[0]),
+            np.full(directions.shape[0], center[1]),
+            s=np.full(directions.shape[0], 14.0),
+            marker="*",
+            color="#f4a261",
+            alpha=0.9,
+            zorder=9,
+        )
+        artists = [ring, sparks]
+        self._poof_artists.extend(artists)
+        timer = QtCore.QTimer(self)
+        frame = {"index": 0}
+        frame_count = 9
+
+        def advance_poof() -> None:
+            progress = frame["index"] / max(frame_count - 1, 1)
+            alpha = max(0.0, 1.0 - progress)
+            ring.set_sizes([36.0 + 140.0 * progress])
+            ring.set_alpha(alpha * 0.9)
+            spark_offsets = center + directions * spread * progress
+            sparks.set_offsets(spark_offsets)
+            sparks.set_sizes(
+                np.full(directions.shape[0], 14.0 + 22.0 * progress)
+            )
+            sparks.set_alpha(alpha * 0.85)
+            if self.canvas is not None:
+                self.canvas.draw_idle()
+            frame["index"] += 1
+            if frame["index"] >= frame_count:
+                timer.stop()
+                self._remove_poof_artists(artists)
+                if timer in self._poof_timers:
+                    self._poof_timers.remove(timer)
+                timer.deleteLater()
+
+        self._poof_timers.append(timer)
+        timer.timeout.connect(advance_poof)
+        timer.start(35)
+        advance_poof()
+
+    def _clear_poof_animations(self) -> None:
+        for timer in list(self._poof_timers):
+            timer.stop()
+            timer.deleteLater()
+        self._poof_timers.clear()
+        self._remove_poof_artists(list(self._poof_artists))
+
+    def _remove_poof_artists(self, artists: list[Any]) -> None:
+        for artist in artists:
+            try:
+                artist.remove()
+            except ValueError:
+                pass
+            if artist in self._poof_artists:
+                self._poof_artists.remove(artist)
+        if self.canvas is not None:
+            self.canvas.draw_idle()
 
     def _nearest_trace_point(
         self,
