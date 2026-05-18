@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import shlex
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -365,6 +366,8 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         axis_ranges: tuple[float, float, float, float] | None = None,
         coordinate_space: str = "qspace",
         image_style: ImageDisplayStyle | None = None,
+        project_path: Path | None = None,
+        generated_cif_directory: Path | None = None,
         parent: QtWidgets.QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -374,6 +377,12 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.axis_ranges = axis_ranges
         self.coordinate_space = coordinate_space
         self.image_style = image_style or ImageDisplayStyle()
+        self.project_path = Path(project_path) if project_path else None
+        self.generated_cif_directory = (
+            Path(generated_cif_directory)
+            if generated_cif_directory is not None
+            else _default_generated_cif_directory(self.project_path)
+        )
         self.active_peak_id: str | None = None
         self.active_family_peak_id: str | None = None
         self._syncing_table = False
@@ -575,12 +584,30 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             occupancy_constraints=self.occupancy_edit.toPlainText(),
             limit=self.cif_count_spin.value(),
         )
+        records = self._write_generated_cif_files(records)
         self._wyckoff_state()["generated_cifs"] = records
         self._publish_generated_cifs(records)
         self._sync_cif_table()
-        self._set_status(f"Generated {len(records)} ranked draft CIF file(s).")
+        self._set_status(
+            f"Generated {len(records)} ranked draft CIF file(s) in "
+            f"{self.generated_cif_directory}."
+        )
         self.structureAnalysisChanged.emit(self.data_id)
         return records
+
+    def open_generated_cif_folder(self) -> Path | None:
+        directory = self.generated_cif_directory
+        if not directory.exists():
+            self._set_status("Generate CIFs before opening the output folder.")
+            return None
+        opened = QtGui.QDesktopServices.openUrl(
+            QtCore.QUrl.fromLocalFile(str(directory))
+        )
+        if opened:
+            self._set_status(f"Opened generated CIF folder: {directory}")
+            return directory
+        self._set_status(f"Could not open generated CIF folder: {directory}")
+        return None
 
     def _analysis_state(self) -> dict[str, Any]:
         analyses = self.project.analysis_results.setdefault(
@@ -990,6 +1017,18 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.generate_cif_button = QtWidgets.QToolButton()
         self.generate_cif_button.setText("Generate Ranked CIFs")
         self.generate_cif_button.clicked.connect(self.generate_candidate_cifs)
+        self.open_cif_folder_button = QtWidgets.QToolButton()
+        self.open_cif_folder_button.setText("Show in Finder")
+        self.open_cif_folder_button.setToolTip(
+            qt_tooltip(
+                "Open the folder containing generated CIF structures for "
+                "inspection in external software."
+            )
+        )
+        self.open_cif_folder_button.setEnabled(False)
+        self.open_cif_folder_button.clicked.connect(
+            self.open_generated_cif_folder
+        )
         self.cif_table = QtWidgets.QTableWidget(0, len(CIF_COLUMNS))
         self.cif_table.setHorizontalHeaderLabels(CIF_COLUMNS)
         enable_rich_text_items(self.cif_table)
@@ -1014,7 +1053,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             self.approximation_tab, "Structure Approximation"
         )
         self.analysis_tabs.addTab(self.family_tab, "Peak Families")
-        self.analysis_tabs.addTab(self.wyckoff_tab, "Wyckoff Setup")
+        self.analysis_tabs.addTab(self.wyckoff_tab, "Wyckoff Mapping")
 
         self.plot_toolbar = ImagePlotToolbar(
             colormap_combo=self.colormap_combo,
@@ -1179,6 +1218,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         generate_layout.addWidget(QtWidgets.QLabel("CIF count"))
         generate_layout.addWidget(self.cif_count_spin)
         generate_layout.addWidget(self.generate_cif_button)
+        generate_layout.addWidget(self.open_cif_folder_button)
         generate_layout.addStretch(1)
         setup_layout.addWidget(generate_group)
         setup_layout.addStretch(1)
@@ -1865,6 +1905,10 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         finally:
             self.cif_table.blockSignals(False)
         self.cif_table.resizeColumnsToContents()
+        if hasattr(self, "open_cif_folder_button"):
+            self.open_cif_folder_button.setEnabled(
+                bool(records) and self.generated_cif_directory.exists()
+            )
         self._sync_cif_visualizer()
 
     def _selected_cif_id(self) -> str | None:
@@ -2361,7 +2405,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             payload = {
                 **record,
                 "data_id": self.data_id,
-                "source": "Structure Analysis Wyckoff Setup",
+                "source": "Structure Analysis Wyckoff Mapping",
             }
             generated[cif_id] = payload
             self.project.structures[cif_id] = {
@@ -2369,12 +2413,38 @@ class StructureAnalysisPane(QtWidgets.QWidget):
                 "data_id": self.data_id,
                 "source": "structure_analysis_generated_cif",
                 "cif_text": record.get("cif_text", ""),
+                "path": record.get("path"),
                 "candidate_id": record.get("candidate_id"),
                 "score": record.get("score"),
                 "space_group": record.get("space_group"),
                 "wyckoff_combination": record.get("wyckoff_combination"),
                 "wyckoff_assignments": record.get("wyckoff_assignments"),
             }
+
+    def _write_generated_cif_files(
+        self,
+        records: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        directory = self.generated_cif_directory
+        directory.mkdir(parents=True, exist_ok=True)
+        self._wyckoff_state()["generated_cif_directory"] = str(directory)
+        written_records: list[dict[str, Any]] = []
+        for record in records:
+            payload = dict(record)
+            cif_text = str(payload.get("cif_text") or "")
+            cif_id = str(payload.get("cif_id") or payload.get("id") or "")
+            filename = _safe_generated_cif_filename(cif_id or "generated_cif")
+            path = directory / filename
+            if cif_text.strip():
+                if (
+                    not path.exists()
+                    or path.read_text(encoding="utf-8") != cif_text
+                ):
+                    path.write_text(cif_text, encoding="utf-8")
+                payload["path"] = str(path)
+                payload["structure_path"] = str(path)
+            written_records.append(payload)
+        return written_records
 
     def _set_status(self, message: str) -> None:
         self.status_label.setText(message)
@@ -2416,6 +2486,23 @@ def _append_family_note(family: dict[str, Any], note: str) -> None:
     if note in existing:
         return
     family["notes"] = f"{existing}; {note}" if existing else note
+
+
+def _default_generated_cif_directory(project_path: Path | None) -> Path:
+    base = project_path.parent if project_path is not None else Path.cwd()
+    return base / "output" / "generated_cifs"
+
+
+def _safe_generated_cif_filename(cif_id: str) -> str:
+    safe = "".join(
+        (
+            character
+            if character.isalnum() or character in {"-", "_", "."}
+            else "_"
+        )
+        for character in cif_id
+    ).strip("._")
+    return f"{safe or 'generated_cif'}.cif"
 
 
 def _double_spinbox(

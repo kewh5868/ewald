@@ -904,7 +904,11 @@ def test_structure_analysis_guess_candidates_shows_progress_dialog(
     assert pane.candidate_table.item(0, 8).text() == "0.25"
 
 
-def test_structure_analysis_wyckoff_setup_registers_ui_possibilities(qtbot):
+def test_structure_analysis_wyckoff_mapping_registers_ui_possibilities(
+    qtbot,
+    tmp_path,
+    monkeypatch,
+):
     project = ProjectState()
     project.analysis_results.setdefault("structure_analysis", {})[
         "synthetic"
@@ -923,8 +927,14 @@ def test_structure_analysis_wyckoff_setup_registers_ui_possibilities(qtbot):
             ).as_dict()
         ],
     }
-    pane = StructureAnalysisPane(project, "synthetic")
+    generated_dir = tmp_path / "generated_cifs"
+    pane = StructureAnalysisPane(
+        project,
+        "synthetic",
+        generated_cif_directory=generated_dir,
+    )
     qtbot.addWidget(pane)
+    assert pane.analysis_tabs.tabText(2) == "Wyckoff Mapping"
 
     pane.wyckoff_system_combo.setCurrentText("Cubic")
     assert pane.space_group_combo.count() == 36
@@ -949,12 +959,31 @@ def test_structure_analysis_wyckoff_setup_registers_ui_possibilities(qtbot):
     records = pane.generate_candidate_cifs()
     assert records
     assert records[0]["space_group"]["number"] == 221
-    assert project.reference_cifs["generated"][records[0]["cif_id"]]
+    generated_path = generated_dir / f"{records[0]['cif_id']}.cif"
+    assert generated_path.exists()
+    assert generated_path.read_text(encoding="utf-8") == records[0]["cif_text"]
+    assert records[0]["path"] == str(generated_path)
+    assert project.reference_cifs["generated"][records[0]["cif_id"]][
+        "path"
+    ] == str(generated_path)
+    assert project.structures[records[0]["cif_id"]]["path"] == str(
+        generated_path
+    )
+    assert pane.open_cif_folder_button.isEnabled()
     assert pane.cif_visualizer.cif_id == records[0]["cif_id"]
     assert pane.cif_visualizer.atom_count == 2
     assert pane.cif_visualizer.species_text == "I, Pb"
     assert pane.cif_visualizer.plot_container.hasHeightForWidth()
     assert pane._selected_cif_record()["cif_id"] == records[0]["cif_id"]
+
+    opened_urls = []
+    monkeypatch.setattr(
+        QtGui.QDesktopServices,
+        "openUrl",
+        lambda url: opened_urls.append(url) or True,
+    )
+    assert pane.open_generated_cif_folder() == generated_dir
+    assert opened_urls[0].toLocalFile() == str(generated_dir)
 
     pane.cif_table.setCurrentCell(1, 0)
     pane.cif_table.selectRow(1)
