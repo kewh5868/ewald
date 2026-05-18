@@ -551,6 +551,36 @@ def test_structure_analysis_family_selection_highlights_plot_peaks(qtbot):
     assert len(y_data) == 0
 
 
+def test_structure_analysis_draws_peak_rois_on_plot(qtbot):
+    project = ProjectState()
+    project.peak_sets["synthetic"] = [
+        {
+            "peak_id": "p1",
+            "label": "P1",
+            "qxy": 1.0,
+            "qz": 0.2,
+            "roi": {
+                "kind": "box",
+                "qxy_min": 0.8,
+                "qxy_max": 1.2,
+                "qz_min": 0.0,
+                "qz_max": 0.4,
+            },
+        }
+    ]
+    pane = StructureAnalysisPane(project, "synthetic")
+    qtbot.addWidget(pane)
+    if pane.peak_scatter is None:
+        pytest.skip("pyqtgraph is unavailable")
+
+    assert len(pane.roi_overlay_items) == 1
+    x_values, y_values = pane.roi_overlay_items[0].getData()
+    assert min(x_values) == pytest.approx(0.8)
+    assert max(x_values) == pytest.approx(1.2)
+    assert min(y_values) == pytest.approx(0.0)
+    assert max(y_values) == pytest.approx(0.4)
+
+
 def test_structure_analysis_guess_candidates_shows_progress_dialog(
     qtbot,
     monkeypatch,

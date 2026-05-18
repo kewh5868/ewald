@@ -354,6 +354,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self._syncing_table = False
         self._phase_controls: list[QtWidgets.QComboBox] = []
         self.view_box: Any | None = None
+        self.roi_overlay_items: list[Any] = []
         self.plot_frame: _ImageAspectPlotFrame | None = None
         self._analysis_state()
         self._refresh_imported_peaks(preserve_user_edits=True)
@@ -632,6 +633,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             self.peak_scatter = None
             self.family_highlight_scatter = None
             self.view_box = None
+            self.roi_overlay_items = []
             return
         self.plot_widget = pg.PlotWidget()
         self.view_box = self.plot_widget.getViewBox()
@@ -674,7 +676,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.peak_table.itemSelectionChanged.connect(
             self._handle_peak_selection
         )
-        self.peak_table.setMinimumHeight(210)
+        self.peak_table.setMinimumHeight(170)
 
     def _build_controls(self) -> None:
         self.colormap_combo = QtWidgets.QComboBox()
@@ -879,11 +881,14 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self._sync_space_group_combo()
 
     def _build_layout(self) -> None:
-        controls = QtWidgets.QTabWidget()
-        controls.addTab(self._peak_table_tab(), "Peak Table")
-        controls.addTab(self._approximation_tab(), "Structure Approximation")
-        controls.addTab(self._families_tab(), "Peak Families")
-        controls.addTab(self._wyckoff_tab(), "Wyckoff Setup")
+        self.analysis_tabs = QtWidgets.QTabWidget()
+        self.analysis_tabs.setMinimumWidth(420)
+        self.analysis_tabs.setMaximumWidth(640)
+        self.analysis_tabs.addTab(
+            self._approximation_tab(), "Structure Approximation"
+        )
+        self.analysis_tabs.addTab(self._families_tab(), "Peak Families")
+        self.analysis_tabs.addTab(self._wyckoff_tab(), "Wyckoff Setup")
 
         self.plot_toolbar = ImagePlotToolbar(
             colormap_combo=self.colormap_combo,
@@ -909,26 +914,19 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         plot_section_layout.addWidget(self.plot_toolbar)
         plot_section_layout.addWidget(plot_area, stretch=1)
 
-        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
-        splitter.addWidget(plot_section)
-        splitter.addWidget(controls)
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([520, 340])
+        plot_layout = QtWidgets.QHBoxLayout()
+        plot_layout.addWidget(plot_section, stretch=1)
+        plot_layout.addWidget(self.analysis_tabs)
+
+        table_header = QtWidgets.QHBoxLayout()
+        table_header.addWidget(self.refresh_button)
+        table_header.addStretch(1)
 
         layout = QtWidgets.QVBoxLayout(self)
-        layout.addWidget(splitter, stretch=1)
-
-    def _peak_table_tab(self) -> QtWidgets.QWidget:
-        tab = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(tab)
-        header = QtWidgets.QHBoxLayout()
-        header.addWidget(self.refresh_button)
-        header.addStretch(1)
-        layout.addLayout(header)
-        layout.addWidget(self.peak_table, stretch=1)
+        layout.addLayout(plot_layout, stretch=1)
+        layout.addLayout(table_header)
+        layout.addWidget(self.peak_table)
         layout.addWidget(self.status_label)
-        return tab
 
     def _approximation_tab(self) -> QtWidgets.QWidget:
         tab = QtWidgets.QWidget()
@@ -1194,6 +1192,14 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self._sync_cif_table()
         self._sync_wyckoff_registry_tables()
 
+    def refresh_roi_overlays(self, data_id: str | None = None) -> None:
+        if data_id is not None and str(data_id) != self.data_id:
+            return
+        if self.coordinate_space != "qspace":
+            self._clear_roi_overlays()
+            return
+        self._sync_roi_overlays()
+
     def _sync_peak_table(self) -> None:
         peaks = self._structure_peaks()
         self._phase_controls.clear()
@@ -1261,6 +1267,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             self.peak_scatter.setData(spots=[])
             if self.family_highlight_scatter is not None:
                 self.family_highlight_scatter.setData(spots=[])
+            self._clear_roi_overlays()
             return
         selected_family_peak_ids = self._selected_family_peak_ids()
         spots = []
@@ -1293,6 +1300,76 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.peak_scatter.setData(spots=spots)
         if self.family_highlight_scatter is not None:
             self.family_highlight_scatter.setData(spots=family_spots)
+        self._sync_roi_overlays()
+
+    def _sync_roi_overlays(self) -> None:
+        self._clear_roi_overlays()
+        if pg is None or self.plot_widget is None:
+            return
+        for roi in self._structure_roi_records():
+            points = _roi_overlay_points(roi)
+            if points is None:
+                continue
+            x_values, y_values = points
+            kind = str(roi.get("kind", "box")).lower()
+            color = "#f59e0b" if kind == "arch" else "#38bdf8"
+            item = pg.PlotDataItem(
+                x_values,
+                y_values,
+                pen=pg.mkPen(color, width=1.5),
+            )
+            item.setZValue(13)
+            self.plot_widget.addItem(item)
+            self.roi_overlay_items.append(item)
+
+    def _clear_roi_overlays(self) -> None:
+        if pg is None or self.plot_widget is None:
+            self.roi_overlay_items = []
+            return
+        for item in self.roi_overlay_items:
+            try:
+                self.plot_widget.removeItem(item)
+            except Exception:
+                pass
+        self.roi_overlay_items = []
+
+    def _structure_roi_records(self) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        seen: set[tuple[Any, ...]] = set()
+        for roi in self.project.rois_for_target(self.data_id):
+            payload = roi.as_dict() if hasattr(roi, "as_dict") else dict(roi)
+            key = _roi_overlay_key(payload)
+            if key not in seen:
+                records.append(payload)
+                seen.add(key)
+        for peak in self._structure_peaks():
+            metadata = peak.metadata if isinstance(peak.metadata, dict) else {}
+            peak_record = metadata.get("peak_record", {})
+            fit_record = metadata.get("fit_record", {})
+            candidates = []
+            if isinstance(peak_record, dict):
+                candidates.extend(
+                    [
+                        peak_record.get("roi"),
+                        peak_record.get("azimuthal_roi"),
+                    ]
+                )
+            if isinstance(fit_record, dict):
+                candidates.extend(
+                    [
+                        fit_record.get("roi"),
+                        fit_record.get("azimuthal_roi"),
+                    ]
+                )
+            for candidate in candidates:
+                if not isinstance(candidate, dict):
+                    continue
+                key = _roi_overlay_key(candidate)
+                if key in seen:
+                    continue
+                records.append(dict(candidate))
+                seen.add(key)
+        return records
 
     def _sync_candidates(self) -> None:
         candidates = self._candidate_records()
@@ -2231,6 +2308,87 @@ def _format_float(value: Any) -> str:
         return f"{float(value):.5g}"
     except (TypeError, ValueError):
         return str(value)
+
+
+def _roi_overlay_key(roi: dict[str, Any]) -> tuple[Any, ...]:
+    roi_id = roi.get("roi_id")
+    if roi_id:
+        return ("id", str(roi_id))
+    return (
+        str(roi.get("kind", "box")).lower(),
+        _rounded_roi_value(roi.get("qxy_min")),
+        _rounded_roi_value(roi.get("qxy_max")),
+        _rounded_roi_value(roi.get("qz_min")),
+        _rounded_roi_value(roi.get("qz_max")),
+        _rounded_roi_value(roi.get("qxy_center")),
+        _rounded_roi_value(roi.get("qz_center")),
+        _rounded_roi_value(roi.get("qr_min")),
+        _rounded_roi_value(roi.get("qr_max")),
+        _rounded_roi_value(roi.get("chi_min")),
+        _rounded_roi_value(roi.get("chi_max")),
+    )
+
+
+def _rounded_roi_value(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(parsed):
+        return None
+    return round(parsed, 9)
+
+
+def _roi_overlay_points(
+    roi: dict[str, Any],
+) -> tuple[np.ndarray, np.ndarray] | None:
+    kind = str(roi.get("kind", "box")).lower()
+    if kind == "arch":
+        return _arch_roi_overlay_points(roi)
+    return _box_roi_overlay_points(roi)
+
+
+def _box_roi_overlay_points(
+    roi: dict[str, Any],
+) -> tuple[np.ndarray, np.ndarray] | None:
+    qxy_min = _rounded_roi_value(roi.get("qxy_min"))
+    qxy_max = _rounded_roi_value(roi.get("qxy_max"))
+    qz_min = _rounded_roi_value(roi.get("qz_min"))
+    qz_max = _rounded_roi_value(roi.get("qz_max"))
+    if None in {qxy_min, qxy_max, qz_min, qz_max}:
+        return None
+    x_min, x_max = sorted((float(qxy_min), float(qxy_max)))
+    y_min, y_max = sorted((float(qz_min), float(qz_max)))
+    return (
+        np.asarray([x_min, x_max, x_max, x_min, x_min], dtype=float),
+        np.asarray([y_min, y_min, y_max, y_max, y_min], dtype=float),
+    )
+
+
+def _arch_roi_overlay_points(
+    roi: dict[str, Any],
+) -> tuple[np.ndarray, np.ndarray] | None:
+    center_qxy = _rounded_roi_value(roi.get("qxy_center")) or 0.0
+    center_qz = _rounded_roi_value(roi.get("qz_center")) or 0.0
+    qr_min = _rounded_roi_value(roi.get("qr_min"))
+    qr_max = _rounded_roi_value(roi.get("qr_max"))
+    chi_min = _rounded_roi_value(roi.get("chi_min"))
+    chi_max = _rounded_roi_value(roi.get("chi_max"))
+    if None in {qr_min, qr_max, chi_min, chi_max}:
+        return None
+    inner, outer = sorted((max(float(qr_min), 0.0), max(float(qr_max), 0.0)))
+    if outer <= inner:
+        return None
+    start, stop = sorted((float(chi_min), float(chi_max)))
+    theta = np.radians(np.linspace(start, stop, 96))
+    outer_x = center_qxy + outer * np.sin(theta)
+    outer_y = center_qz + outer * np.cos(theta)
+    inner_x = center_qxy + inner * np.sin(theta[::-1])
+    inner_y = center_qz + inner * np.cos(theta[::-1])
+    return (
+        np.concatenate([outer_x, inner_x, outer_x[:1]]),
+        np.concatenate([outer_y, inner_y, outer_y[:1]]),
+    )
 
 
 def _safe_float(text: str, fallback: float) -> float:

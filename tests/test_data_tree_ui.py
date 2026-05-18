@@ -1183,6 +1183,14 @@ def test_major_analysis_plots_share_locked_aspect(qtbot, repo_root):
     assert structure_pane.axis_ranges == viewer.axis_ranges
     assert peak_pane.image_data.shape == viewer.image_data.shape
     assert structure_pane.image_data.shape == viewer.image_data.shape
+    assert structure_pane.analysis_tabs.tabText(0) == "Structure Approximation"
+    assert structure_pane.analysis_tabs.tabText(1) == "Peak Families"
+    assert structure_pane.analysis_tabs.tabText(2) == "Wyckoff Setup"
+    assert "Peak Table" not in [
+        structure_pane.analysis_tabs.tabText(index)
+        for index in range(structure_pane.analysis_tabs.count())
+    ]
+    assert structure_pane.peak_table.parentWidget() is structure_pane
 
     x_min, x_max, y_min, y_max = viewer.axis_ranges
     x_span = x_max - x_min
@@ -1194,6 +1202,7 @@ def test_major_analysis_plots_share_locked_aspect(qtbot, repo_root):
         y_min + 0.35 * y_span,
     )
     assert roi is not None
+    assert len(structure_pane.roi_overlay_items) >= 1
     graphic = viewer.roi_graphics[roi.roi_id]
     roi_pos_before = (float(graphic.pos().x()), float(graphic.pos().y()))
     roi_size_before = (float(graphic.size().x()), float(graphic.size().y()))

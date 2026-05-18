@@ -847,6 +847,7 @@ class MainWindow(QtWidgets.QMainWindow):
             image_style=viewer.image_display_style(),
         )
         viewer.imageStyleChanged.connect(structure_pane.apply_image_style)
+        viewer.roiRegionsChanged.connect(structure_pane.refresh_roi_overlays)
         peak_pane.peakSetChanged.connect(structure_pane.refresh_from_peak_fit)
         structure_pane.structureAnalysisChanged.connect(
             self._handle_structure_analysis_changed
