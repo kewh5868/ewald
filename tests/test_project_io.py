@@ -1,7 +1,10 @@
 """Project model and .ewld archive tests."""
 
 import json
+from pathlib import Path
 from zipfile import ZipFile
+
+import pytest
 
 from ewald.data.models import (
     PEAK_POINT_KIND_COMMITTED,
@@ -17,7 +20,11 @@ from ewald.io.importers import (
     build_data_group_from_folder,
     build_data_group_from_paths,
 )
-from ewald.io.project import load_project, save_project
+from ewald.io.project import (
+    READABLE_PROJECT_EXTENSION,
+    load_project,
+    save_project,
+)
 
 
 def test_project_round_trip(tmp_path):
@@ -572,6 +579,94 @@ def test_project_archive_embeds_generated_cif_files(tmp_path):
         ][0]["path"]
         == loaded_record["path"]
     )
+
+
+def test_project_archive_embeds_loaded_cif_files(tmp_path):
+    project = ProjectState(name="Loaded CIF archive")
+    cif_path = tmp_path / "reference_001.cif"
+    cif_text = (
+        "data_reference_001\n"
+        "_cell_length_a 4.2\n"
+        "_cell_length_b 4.2\n"
+        "_cell_length_c 7.1\n"
+        "_cell_angle_alpha 90\n"
+        "_cell_angle_beta 90\n"
+        "_cell_angle_gamma 90\n"
+    )
+    cif_path.write_text(cif_text, encoding="utf-8")
+    record = project.remember_loaded_cif(
+        cif_path,
+        cif_text=cif_text,
+        lattice={
+            "a": 4.2,
+            "b": 4.2,
+            "c": 7.1,
+            "alpha": 90.0,
+            "beta": 90.0,
+            "gamma": 90.0,
+        },
+        crystal_system="Tetragonal",
+        target_id="synthetic",
+    )
+
+    saved = save_project(project, tmp_path / "loaded_cif_archive")
+    with ZipFile(saved) as archive:
+        members = set(archive.namelist())
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+    archive_path = manifest["reference_cifs"]["loaded"][record["cif_id"]][
+        "archive_path"
+    ]
+    cif_path.unlink()
+    loaded = load_project(saved)
+    loaded_record = loaded.reference_cifs["loaded"][record["cif_id"]]
+
+    assert archive_path in members
+    assert archive_path.startswith("structures/loaded_cifs/")
+    assert loaded_record["local_path"].endswith("reference_001.cif")
+    assert loaded_record["path"] == loaded_record["local_path"]
+    assert loaded_record["lattice"]["c"] == pytest.approx(7.1)
+
+
+def test_project_save_writes_human_readable_sidecar_with_cif_file(tmp_path):
+    project = ProjectState(name="Readable CIF project")
+    cif_text = "data_candidate_001\n_cell_length_a 6.3\n"
+    project.reference_cifs["generated"] = {
+        "candidate_001": {
+            "cif_id": "candidate_001",
+            "cif_text": cif_text,
+            "status": "generated",
+        }
+    }
+
+    saved = save_project(project, tmp_path / "readable_cif_project")
+    readable_path = saved.with_suffix(READABLE_PROJECT_EXTENSION)
+    payload = json.loads(readable_path.read_text(encoding="utf-8"))
+    materialized_cif_path = Path(
+        payload["reference_cifs"]["generated"]["candidate_001"]["path"]
+    )
+    loaded = load_project(readable_path)
+
+    assert readable_path.exists()
+    assert readable_path.read_text(encoding="utf-8").startswith("{\n")
+    assert materialized_cif_path.exists()
+    assert materialized_cif_path.read_text(encoding="utf-8") == cif_text
+    assert materialized_cif_path.parent.name == "candidate_001"
+    assert loaded.reference_cifs["generated"]["candidate_001"]["path"] == str(
+        materialized_cif_path
+    )
+
+
+def test_readable_project_file_round_trips_as_json(tmp_path):
+    project = ProjectState(name="Readable project")
+    project.add_data_file("detector_001.tiff", incident_angle_deg=0.3)
+
+    saved = save_project(project, tmp_path / "readable_project.ewald.json")
+    payload = json.loads(saved.read_text(encoding="utf-8"))
+    loaded = load_project(saved)
+
+    assert saved.name == "readable_project.ewald.json"
+    assert payload["name"] == "Readable project"
+    assert loaded.data_files[0].path.name == "detector_001.tiff"
 
 
 def test_project_archive_embeds_assets_and_single_imports(repo_root, tmp_path):

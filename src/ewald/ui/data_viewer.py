@@ -15,8 +15,11 @@ from ewald.data.models import (
     ProjectState,
     ROIRegion,
     mark_roi_pole_figure_stale,
+    roi_geometry_signature,
     roi_hkl_metadata,
+    roi_intensity_metadata,
     roi_pole_figure_status,
+    set_roi_intensity_metadata,
 )
 from ewald.ui.notation import (
     QXY_HTML,
@@ -52,6 +55,9 @@ CHANNEL_DETECT_MIN_HEIGHT_FRACTION = 0.05
 ROI_COLOR_ARCH = "#f2a65a"
 ROI_COLOR_BOX_HORIZONTAL = "#3da5d9"
 ROI_COLOR_BOX_VERTICAL = "#2a9d8f"
+ROI_COLOR_SELECTED = "#facc15"
+ROI_BORDER_WIDTH = 2
+ROI_SELECTED_BORDER_WIDTH = 4
 ROI_COL_ID = 0
 ROI_COL_CHANNEL_1 = 1
 ROI_COL_CHANNEL_2 = 2
@@ -76,6 +82,7 @@ ROI_COL_L = 20
 ROI_COL_HKL_LABEL = 21
 ROI_COL_POLE_FIGURE = 22
 ROI_COL_COUPLED = 23
+ROI_COL_INTEGRATED_INTENSITY = 24
 ROI_HKL_EDIT_COLUMNS = {
     ROI_COL_H,
     ROI_COL_K,
@@ -108,6 +115,7 @@ ROI_TABLE_HEADERS = [
     "hkl label",
     "Pole figure",
     "Coupled",
+    "Integrated I",
 ]
 
 
@@ -1302,6 +1310,50 @@ def _trace_x_tolerance(trace: _IntegrationTrace) -> float:
     return max(abs(span) * 1.0e-9, 1.0e-9)
 
 
+CHANNEL_BUTTON_MIN_HEIGHT = 28
+CHANNEL_BUTTON_MIN_WIDTHS = {
+    "Clear": 64,
+    "Clear Marks": 96,
+    "Detect Peaks": 98,
+    "Autosnap": 84,
+    "Push Peaks": 92,
+    "Return": 76,
+}
+
+
+def _configure_channel_text_button(button: QtWidgets.QToolButton) -> None:
+    text = button.text()
+    button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly)
+    button.setMinimumWidth(
+        CHANNEL_BUTTON_MIN_WIDTHS.get(text, button.sizeHint().width())
+    )
+    button.setMinimumHeight(CHANNEL_BUTTON_MIN_HEIGHT)
+    button.setSizePolicy(
+        QtWidgets.QSizePolicy.Policy.Minimum,
+        QtWidgets.QSizePolicy.Policy.Fixed,
+    )
+
+
+def _configure_channel_icon_button(button: QtWidgets.QToolButton) -> None:
+    button.setMinimumSize(32, CHANNEL_BUTTON_MIN_HEIGHT)
+    button.setSizePolicy(
+        QtWidgets.QSizePolicy.Policy.Fixed,
+        QtWidgets.QSizePolicy.Policy.Fixed,
+    )
+
+
+def _channel_button_row(
+    buttons: tuple[QtWidgets.QToolButton, ...],
+) -> QtWidgets.QHBoxLayout:
+    row = QtWidgets.QHBoxLayout()
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(6)
+    for button in buttons:
+        row.addWidget(button)
+    row.addStretch(1)
+    return row
+
+
 class _IntegrationChannelPanel(QtWidgets.QFrame):
     """Reserved home slot for one ROI integration channel."""
 
@@ -1333,11 +1385,20 @@ class _IntegrationChannelPanel(QtWidgets.QFrame):
         self.setMinimumHeight(180)
 
         header = QtWidgets.QWidget()
-        header_layout = QtWidgets.QHBoxLayout(header)
-        header_layout.setContentsMargins(6, 4, 6, 2)
+        header_layout = QtWidgets.QVBoxLayout(header)
+        header_layout.setContentsMargins(6, 4, 6, 4)
+        header_layout.setSpacing(4)
+        title_layout = QtWidgets.QHBoxLayout()
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(6)
         self.drag_label = _DragHandleLabel(
             channel,
             _channel_header_text(channel, None),
+        )
+        self.drag_label.setMinimumWidth(130)
+        self.drag_label.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.MinimumExpanding,
+            QtWidgets.QSizePolicy.Policy.Fixed,
         )
         self.drag_label.dragFinished.connect(self._handle_home_drag_finished)
         self.clear_button = QtWidgets.QToolButton()
@@ -1384,16 +1445,35 @@ class _IntegrationChannelPanel(QtWidgets.QFrame):
         self.detach_button.clicked.connect(
             lambda _checked=False: self.detachRequested.emit(self.channel)
         )
-        header_layout.addWidget(self.drag_label)
-        header_layout.addStretch(1)
-        header_layout.addWidget(self.marker_count_label)
-        header_layout.addWidget(self.coordinate_readout_label)
-        header_layout.addWidget(self.clear_marks_button)
-        header_layout.addWidget(self.detect_peaks_button)
-        header_layout.addWidget(self.autosnap_button)
-        header_layout.addWidget(self.push_markers_button)
-        header_layout.addWidget(self.clear_button)
-        header_layout.addWidget(self.detach_button)
+        for button in (
+            self.clear_button,
+            self.clear_marks_button,
+            self.detect_peaks_button,
+            self.autosnap_button,
+            self.push_markers_button,
+        ):
+            _configure_channel_text_button(button)
+        _configure_channel_icon_button(self.detach_button)
+        title_layout.addWidget(self.drag_label, stretch=1)
+        title_layout.addWidget(self.marker_count_label)
+        title_layout.addWidget(self.coordinate_readout_label, stretch=1)
+        self.primary_button_row = _channel_button_row(
+            (
+                self.clear_marks_button,
+                self.detect_peaks_button,
+                self.autosnap_button,
+            )
+        )
+        self.secondary_button_row = _channel_button_row(
+            (
+                self.push_markers_button,
+                self.clear_button,
+                self.detach_button,
+            )
+        )
+        header_layout.addLayout(title_layout)
+        header_layout.addLayout(self.primary_button_row)
+        header_layout.addLayout(self.secondary_button_row)
 
         self.plot_widget = _MatplotlibIntegrationWidget(with_toolbar=False)
         self.plot_widget.peakMarked.connect(
@@ -1531,11 +1611,20 @@ class _DetachedIntegrationWindow(QtWidgets.QDialog):
         self.resize(640, 460)
 
         header = QtWidgets.QWidget()
-        header_layout = QtWidgets.QHBoxLayout(header)
-        header_layout.setContentsMargins(6, 4, 6, 2)
+        header_layout = QtWidgets.QVBoxLayout(header)
+        header_layout.setContentsMargins(6, 4, 6, 4)
+        header_layout.setSpacing(4)
+        title_layout = QtWidgets.QHBoxLayout()
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(6)
         self.drag_label = _DragHandleLabel(
             channel,
             _channel_header_text(channel, None),
+        )
+        self.drag_label.setMinimumWidth(130)
+        self.drag_label.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.MinimumExpanding,
+            QtWidgets.QSizePolicy.Policy.Fixed,
         )
         self.clear_button = QtWidgets.QToolButton()
         self.clear_button.setText("Clear")
@@ -1579,16 +1668,35 @@ class _DetachedIntegrationWindow(QtWidgets.QDialog):
         self.return_button.clicked.connect(
             lambda _checked=False: self.reattachRequested.emit(self.channel)
         )
-        header_layout.addWidget(self.drag_label)
-        header_layout.addStretch(1)
-        header_layout.addWidget(self.marker_count_label)
-        header_layout.addWidget(self.coordinate_readout_label)
-        header_layout.addWidget(self.clear_marks_button)
-        header_layout.addWidget(self.detect_peaks_button)
-        header_layout.addWidget(self.autosnap_button)
-        header_layout.addWidget(self.push_markers_button)
-        header_layout.addWidget(self.clear_button)
-        header_layout.addWidget(self.return_button)
+        for button in (
+            self.clear_button,
+            self.clear_marks_button,
+            self.detect_peaks_button,
+            self.autosnap_button,
+            self.push_markers_button,
+            self.return_button,
+        ):
+            _configure_channel_text_button(button)
+        title_layout.addWidget(self.drag_label, stretch=1)
+        title_layout.addWidget(self.marker_count_label)
+        title_layout.addWidget(self.coordinate_readout_label, stretch=1)
+        self.primary_button_row = _channel_button_row(
+            (
+                self.clear_marks_button,
+                self.detect_peaks_button,
+                self.autosnap_button,
+            )
+        )
+        self.secondary_button_row = _channel_button_row(
+            (
+                self.push_markers_button,
+                self.clear_button,
+                self.return_button,
+            )
+        )
+        header_layout.addLayout(title_layout)
+        header_layout.addLayout(self.primary_button_row)
+        header_layout.addLayout(self.secondary_button_row)
 
         self.plot_widget = _MatplotlibIntegrationWidget(with_toolbar=True)
         self.plot_widget.peakMarked.connect(
@@ -1684,6 +1792,7 @@ class DataViewerPane(QtWidgets.QWidget):
         parent: QtWidgets.QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         self.project = project
         self.data_id = data_id
         self.axis_ranges: tuple[float, float, float, float] | None = None
@@ -1774,6 +1883,7 @@ class DataViewerPane(QtWidgets.QWidget):
                 ),
             )
         stored = self.project.add_roi_region(roi)
+        self._refresh_roi_intensity_metadata(stored)
         self._add_roi_graphic(stored)
         self._sync_roi_table()
         self._select_roi(stored.roi_id)
@@ -1856,6 +1966,8 @@ class DataViewerPane(QtWidgets.QWidget):
         stored_box = self.project.add_roi_region(box)
         stored_arch = self.project.add_roi_region(arch)
         _couple_roi_pair(stored_box, stored_arch, group_id=group_id)
+        self._refresh_roi_intensity_metadata(stored_box)
+        self._refresh_roi_intensity_metadata(stored_arch)
         self._add_roi_graphic(stored_box)
         self._add_roi_graphic(stored_arch)
         self._sync_roi_table()
@@ -1979,7 +2091,10 @@ class DataViewerPane(QtWidgets.QWidget):
 
         self.add_roi_button = QtWidgets.QToolButton()
         self.add_roi_button.setText("Add ROI")
-        self.add_roi_button.clicked.connect(self._add_roi_from_view_range)
+        self.add_roi_button.setToolTip(
+            "Activate crosshair drawing for a new box ROI. Press A to toggle."
+        )
+        self.add_roi_button.clicked.connect(self._start_box_roi_drawing)
 
         self.add_coupled_roi_button = QtWidgets.QToolButton()
         self.add_coupled_roi_button.setText("Add Coupled Pair")
@@ -1988,6 +2103,15 @@ class DataViewerPane(QtWidgets.QWidget):
         )
         self.add_coupled_roi_button.clicked.connect(
             self._add_coupled_roi_pair_from_view_range
+        )
+
+        self.duplicate_roi_button = QtWidgets.QToolButton()
+        self.duplicate_roi_button.setText("Duplicate Box")
+        self.duplicate_roi_button.setToolTip(
+            "Duplicate the selected box ROI as an independent ROI."
+        )
+        self.duplicate_roi_button.clicked.connect(
+            self._duplicate_selected_box_roi
         )
 
         self.remove_roi_button = QtWidgets.QToolButton()
@@ -2023,10 +2147,13 @@ class DataViewerPane(QtWidgets.QWidget):
             self.image_item = None
             self.plot_widget = QtWidgets.QLabel("Corrected data")
             self.plot_widget.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            self._configure_plot_key_handling()
+            self._build_roi_crosshair_popup()
             return
 
         self.view_box = _DrawingViewBox(self.add_roi_from_bounds)
         self.plot_widget = pg.PlotWidget(viewBox=self.view_box)
+        self._configure_plot_key_handling()
         if self.coordinate_space == "qspace":
             set_qspace_axis_labels(self.plot_widget)
         else:
@@ -2036,6 +2163,35 @@ class DataViewerPane(QtWidgets.QWidget):
         set_data_aspect_locked(self.plot_widget)
         self.image_item = pg.ImageItem(axisOrder="row-major")
         self.plot_widget.addItem(self.image_item)
+        self._build_roi_crosshair_popup()
+
+    def _configure_plot_key_handling(self) -> None:
+        self.plot_widget.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        self.plot_widget.installEventFilter(self)
+
+    def _build_roi_crosshair_popup(self) -> None:
+        self.roi_crosshair_popup = QtWidgets.QLabel(self.plot_widget)
+        self.roi_crosshair_popup.setObjectName("RoiCrosshairPopup")
+        self.roi_crosshair_popup.setText(
+            "Crosshair ROI mode\n"
+            "Drag in the image to draw a box ROI. Press A to toggle."
+        )
+        self.roi_crosshair_popup.setAlignment(
+            QtCore.Qt.AlignmentFlag.AlignCenter
+        )
+        self.roi_crosshair_popup.setAttribute(
+            QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents
+        )
+        self.roi_crosshair_popup.setStyleSheet("""
+            QLabel#RoiCrosshairPopup {
+                background: rgba(17, 24, 39, 220);
+                border: 1px solid rgba(255, 255, 255, 160);
+                border-radius: 6px;
+                color: white;
+                padding: 8px 12px;
+            }
+            """)
+        self.roi_crosshair_popup.hide()
 
     def _build_channel_panels(self) -> None:
         self.channel_stack = QtWidgets.QWidget()
@@ -2123,6 +2279,7 @@ class DataViewerPane(QtWidgets.QWidget):
         roi_layout.addWidget(self.draw_toggle)
         roi_layout.addWidget(self.add_roi_button)
         roi_layout.addWidget(self.add_coupled_roi_button)
+        roi_layout.addWidget(self.duplicate_roi_button)
         roi_layout.addWidget(self.remove_roi_button)
         roi_layout.addWidget(self.remove_coupled_pair_button)
         roi_layout.addWidget(self.decouple_roi_button)
@@ -2177,6 +2334,7 @@ class DataViewerPane(QtWidgets.QWidget):
             )
         self._set_quantile_levels()
         self._add_low_q_feature_graphics()
+        self._refresh_all_roi_intensity_metadata()
         for roi in self.project.rois_for_target(self.data_id):
             self._add_roi_graphic(roi)
 
@@ -2269,12 +2427,73 @@ class DataViewerPane(QtWidgets.QWidget):
         self.coordinate_space = "qspace"
         return np.asarray(qmap.values, dtype=float)
 
+    def eventFilter(self, source: object, event: QtCore.QEvent) -> bool:
+        if (
+            source is getattr(self, "plot_widget", None)
+            and event.type() == QtCore.QEvent.Type.KeyPress
+            and isinstance(event, QtGui.QKeyEvent)
+            and self._handle_add_roi_key(event)
+        ):
+            return True
+        return super().eventFilter(source, event)
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        if self._handle_add_roi_key(event):
+            return
+        super().keyPressEvent(event)
+
+    def _handle_add_roi_key(self, event: QtGui.QKeyEvent) -> bool:
+        blocked_modifiers = (
+            QtCore.Qt.KeyboardModifier.ControlModifier
+            | QtCore.Qt.KeyboardModifier.AltModifier
+            | QtCore.Qt.KeyboardModifier.MetaModifier
+        )
+        if event.key() != QtCore.Qt.Key.Key_A:
+            return False
+        if event.modifiers() & blocked_modifiers:
+            return False
+        self._toggle_box_roi_drawing()
+        event.accept()
+        return True
+
     def _set_drawing_enabled(self, enabled: bool) -> None:
         if enabled and getattr(self, "pan_button", None) is not None:
             self.pan_button.setChecked(False)
         if self.view_box is not None:
             self.view_box.drawing_enabled = enabled
+        if enabled:
+            self._show_roi_crosshair_popup()
+            roi_kind = "arch" if self.arch_button.isChecked() else "box"
+            self._set_roi_status(
+                f"Crosshair ROI mode: drag in the image to draw a "
+                f"{roi_kind} ROI. Press A to toggle."
+            )
+        else:
+            self._hide_roi_crosshair_popup()
         self._sync_view_interaction_mode()
+
+    def _show_roi_crosshair_popup(self) -> None:
+        popup = getattr(self, "roi_crosshair_popup", None)
+        if popup is None:
+            return
+        roi_kind = "arch" if self.arch_button.isChecked() else "box"
+        popup.setText(
+            "Crosshair ROI mode\n"
+            f"Drag in the image to draw a {roi_kind} ROI. Press A to toggle."
+        )
+        popup.adjustSize()
+        parent = popup.parentWidget()
+        if parent is not None:
+            x = max(8, (parent.width() - popup.width()) // 2)
+            y = 12
+            popup.move(x, y)
+        popup.show()
+        popup.raise_()
+
+    def _hide_roi_crosshair_popup(self) -> None:
+        popup = getattr(self, "roi_crosshair_popup", None)
+        if popup is not None:
+            popup.hide()
 
     def _zoom_image(self, factor: float) -> None:
         if pg is None or self.view_box is None:
@@ -2339,6 +2558,9 @@ class DataViewerPane(QtWidgets.QWidget):
             widget.setEnabled(enabled)
 
     def _set_roi_controls_enabled(self, enabled: bool) -> None:
+        if not enabled and getattr(self, "draw_toggle", None) is not None:
+            self.draw_toggle.setChecked(False)
+            self._hide_roi_crosshair_popup()
         for widget in (
             self.box_button,
             self.arch_button,
@@ -2351,6 +2573,7 @@ class DataViewerPane(QtWidgets.QWidget):
             self.draw_toggle,
             self.add_roi_button,
             self.add_coupled_roi_button,
+            self.duplicate_roi_button,
             self.remove_roi_button,
             self.remove_coupled_pair_button,
             self.decouple_roi_button,
@@ -2367,6 +2590,27 @@ class DataViewerPane(QtWidgets.QWidget):
         self._sync_view_interaction_mode()
         self._update_pole_figure_button()
 
+    def _start_box_roi_drawing(self) -> None:
+        if not self.roi_controls_enabled:
+            return
+        if pg is None or self.view_box is None:
+            self._add_roi_from_view_range()
+            return
+        self.box_button.setChecked(True)
+        if not self.draw_toggle.isChecked():
+            self.draw_toggle.setChecked(True)
+        else:
+            self._show_roi_crosshair_popup()
+        self.plot_widget.setFocus(QtCore.Qt.FocusReason.ShortcutFocusReason)
+
+    def _toggle_box_roi_drawing(self) -> None:
+        if not self.roi_controls_enabled:
+            return
+        if self.draw_toggle.isChecked():
+            self.draw_toggle.setChecked(False)
+            return
+        self._start_box_roi_drawing()
+
     def _add_roi_from_view_range(self) -> None:
         if not self.roi_controls_enabled:
             return
@@ -2382,6 +2626,49 @@ class DataViewerPane(QtWidgets.QWidget):
             y_min + y_pad,
             y_max - y_pad,
         )
+
+    def _duplicate_selected_box_roi(self) -> None:
+        source = self._selected_roi_region()
+        if source is None:
+            self._set_roi_status("Select a box ROI before duplicating.")
+            return
+        if source.kind != "box":
+            self._set_roi_status("Only box ROIs can be duplicated.")
+            return
+        if None in {
+            source.qxy_min,
+            source.qxy_max,
+            source.qz_min,
+            source.qz_max,
+        }:
+            self._set_roi_status("The selected box ROI has no valid geometry.")
+            return
+        duplicate = ROIRegion(
+            target_id=self.data_id,
+            kind="box",
+            name=_duplicated_roi_name(
+                source,
+                self.project.rois_for_target(self.data_id),
+            ),
+            qxy_min=float(source.qxy_min),
+            qxy_max=float(source.qxy_max),
+            qz_min=float(source.qz_min),
+            qz_max=float(source.qz_max),
+            integration_axis=source.integration_axis,
+            integration_direction=source.integration_direction,
+            source="duplicated",
+            metadata={},
+        )
+        stored = self.project.add_roi_region(duplicate)
+        self._refresh_roi_intensity_metadata(stored)
+        self._add_roi_graphic(stored)
+        self._sync_roi_table()
+        self._select_roi(stored.roi_id)
+        self._set_roi_status(
+            f"Duplicated {source.name or 'box ROI'} as "
+            f"{stored.name or 'new box ROI'}."
+        )
+        self.roiRegionsChanged.emit(self.data_id)
 
     def _remove_selected_roi(self) -> None:
         row = self.roi_table.currentRow()
@@ -2473,6 +2760,18 @@ class DataViewerPane(QtWidgets.QWidget):
         self.roiRegionsChanged.emit(self.data_id)
         self._sync_arch_controls_from_selection()
 
+    def _refresh_all_roi_intensity_metadata(self) -> None:
+        for roi in self.project.rois_for_target(self.data_id):
+            self._refresh_roi_intensity_metadata(roi)
+
+    def _refresh_roi_intensity_metadata(self, roi: ROIRegion) -> None:
+        record = _roi_integrated_intensity_record(
+            roi,
+            self.image_data,
+            self.axis_ranges,
+        )
+        set_roi_intensity_metadata(roi, record)
+
     def _sync_roi_table(self) -> None:
         regions = self.project.rois_for_target(self.data_id)
         self._syncing_roi_table = True
@@ -2487,6 +2786,7 @@ class DataViewerPane(QtWidgets.QWidget):
         self._update_pole_figure_button()
 
     def _populate_roi_table_row(self, row: int, roi: ROIRegion) -> None:
+        intensity = roi_intensity_metadata(roi)
         values = {
             ROI_COL_ID: roi.name,
             ROI_COL_TYPE: roi.kind.title(),
@@ -2505,6 +2805,9 @@ class DataViewerPane(QtWidgets.QWidget):
             ROI_COL_QZ_CENTER: _format_float(_roi_qz_center(roi)),
             ROI_COL_POLE_FIGURE: roi_pole_figure_status(roi),
             ROI_COL_COUPLED: _coupled_roi_label(roi),
+            ROI_COL_INTEGRATED_INTENSITY: _format_float(
+                intensity.get("integrated_intensity")
+            ),
         }
         hkl = roi_hkl_metadata(roi)
         values.update(
@@ -2578,6 +2881,8 @@ class DataViewerPane(QtWidgets.QWidget):
                 ROI_COL_INTEGRATE,
             }:
                 item.setForeground(color)
+            if column == ROI_COL_INTEGRATED_INTENSITY and intensity:
+                item.setToolTip(_roi_intensity_tooltip(intensity))
             if column not in _editable_roi_columns(roi):
                 item.setFlags(
                     item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable
@@ -2781,6 +3086,7 @@ class DataViewerPane(QtWidgets.QWidget):
 
     def _select_roi(self, roi_id: str | None) -> None:
         if roi_id is None:
+            self._sync_selected_roi_graphics()
             return
         for row in range(self.roi_table.rowCount()):
             item = self.roi_table.item(row, 0)
@@ -2788,6 +3094,7 @@ class DataViewerPane(QtWidgets.QWidget):
                 continue
             if item.data(QtCore.Qt.ItemDataRole.UserRole) == roi_id:
                 self.roi_table.selectRow(row)
+                self._sync_selected_roi_graphics()
                 return
 
     def _selected_roi_region(self) -> ROIRegion | None:
@@ -2804,8 +3111,25 @@ class DataViewerPane(QtWidgets.QWidget):
         return None
 
     def _handle_roi_selection_changed(self) -> None:
+        self._sync_selected_roi_graphics()
         self._sync_arch_controls_from_selection()
         self._update_pole_figure_button()
+
+    def _sync_selected_roi_graphics(self) -> None:
+        if pg is None:
+            return
+        selected = self._selected_roi_region()
+        selected_roi_id = selected.roi_id if selected is not None else None
+        for roi in self.project.rois_for_target(self.data_id):
+            roi_id = roi.roi_id
+            if roi_id is None:
+                continue
+            graphic = self.roi_graphics.get(roi_id)
+            if graphic is None:
+                continue
+            selected_graphic = roi_id == selected_roi_id
+            _set_roi_graphic_pen(graphic, roi, selected=selected_graphic)
+            graphic.setZValue(20 if selected_graphic else 10)
 
     def _update_pole_figure_button(self) -> None:
         if not hasattr(self, "open_pole_figure_button"):
@@ -2849,6 +3173,10 @@ class DataViewerPane(QtWidgets.QWidget):
 
     def _sync_arch_controls_from_selection(self) -> None:
         roi = self._selected_roi_region()
+        can_duplicate = (
+            self.roi_controls_enabled and roi is not None and roi.kind == "box"
+        )
+        self.duplicate_roi_button.setEnabled(can_duplicate)
         is_coupled = bool(self._coupled_rois_for(roi))
         self.decouple_roi_button.setEnabled(
             self.roi_controls_enabled and is_coupled
@@ -2955,14 +3283,12 @@ class DataViewerPane(QtWidgets.QWidget):
             self.channel_assignments[channel].add(roi_id)
         else:
             self.channel_assignments[channel].discard(roi_id)
-            self._remove_channel_markers(channel, roi_id=roi_id)
         self._refresh_channel(channel)
         self._sync_roi_table()
 
     def _clear_channel(self, channel: int) -> None:
         self.channel_assignments[channel].clear()
         self.channel_modes[channel] = None
-        self.integration_peak_markers[channel].clear()
         self._set_channel_peak_readout(channel, "")
         self._refresh_channel(channel)
         self._sync_roi_table()
@@ -3063,7 +3389,7 @@ class DataViewerPane(QtWidgets.QWidget):
             channel,
             _channel_peak_readout_text(channel, roi, marker),
         )
-        self._refresh_channel(channel)
+        self._refresh_channels_for_roi(roi.roi_id)
 
     def _preview_channel_peak_marker_coordinate(
         self,
@@ -3093,6 +3419,7 @@ class DataViewerPane(QtWidgets.QWidget):
             self._set_roi_status(f"Channel {channel} has no ROI trace.")
             return
         added = 0
+        changed_roi_ids: set[str] = set()
         existing_ids = {
             marker.marker_id
             for markers in self.integration_peak_markers.values()
@@ -3122,7 +3449,11 @@ class DataViewerPane(QtWidgets.QWidget):
                     continue
                 self.integration_peak_markers[channel].append(marker)
                 added += 1
-        self._refresh_channel(channel)
+                changed_roi_ids.add(trace.roi_id)
+        for roi_id in changed_roi_ids:
+            self._refresh_channels_for_roi(roi_id)
+        if not changed_roi_ids:
+            self._refresh_channel(channel)
         suffix = "peak" if added == 1 else "peaks"
         self._set_roi_status(f"Detected {added} channel {channel} {suffix}.")
 
@@ -3148,67 +3479,80 @@ class DataViewerPane(QtWidgets.QWidget):
         integration_x: float,
         integrated_intensity: float,
     ) -> None:
-        markers = self.integration_peak_markers.get(channel)
-        if markers is None:
+        location = self._channel_marker_storage_location(marker_id)
+        if location is None:
             return
-        for index, marker in enumerate(markers):
-            if marker.marker_id != marker_id:
-                continue
-            roi = self._roi_by_id(marker.roi_id)
-            if roi is None:
-                return
-            coordinate = _integration_peak_qspace_coordinate(
-                roi,
-                integration_x,
-            )
-            if coordinate is None:
-                return
-            qxy, qz = coordinate
-            roi_name = roi.name or roi.roi_id or marker.roi_name
-            markers[index] = replace(
-                marker,
-                roi_name=roi_name,
-                mode=_roi_integration_mode(roi),
-                integration_x=float(integration_x),
-                integrated_intensity=float(integrated_intensity),
-                qxy=qxy,
-                qz=qz,
-                label=(
-                    f"Ch {channel} {roi_name} "
-                    f"@ {_format_float(float(integration_x))}"
-                ),
-            )
-            self._refresh_channel(channel)
-            self._set_channel_peak_readout(
+        source_channel, index, marker = location
+        roi = self._roi_by_id(marker.roi_id)
+        if roi is None:
+            return
+        coordinate = _integration_peak_qspace_coordinate(
+            roi,
+            integration_x,
+        )
+        if coordinate is None:
+            return
+        qxy, qz = coordinate
+        roi_name = roi.name or roi.roi_id or marker.roi_name
+        updated = replace(
+            marker,
+            roi_name=roi_name,
+            mode=_roi_integration_mode(roi),
+            integration_x=float(integration_x),
+            integrated_intensity=float(integrated_intensity),
+            qxy=qxy,
+            qz=qz,
+            label=_integration_marker_label(
                 channel,
-                _channel_peak_readout_text(channel, roi, markers[index]),
-            )
-            return
+                roi_name,
+                float(integration_x),
+            ),
+        )
+        self.integration_peak_markers[source_channel][index] = updated
+        self._refresh_channels_for_roi(marker.roi_id)
+        self._set_channel_peak_readout(
+            channel,
+            _channel_peak_readout_text(channel, roi, updated),
+        )
 
     def _delete_channel_peak_marker(
         self,
         channel: int,
         marker_id: str,
     ) -> None:
-        markers = self.integration_peak_markers.get(channel)
-        if markers is None:
+        location = self._channel_marker_storage_location(marker_id)
+        if location is None:
             return
-        before = len(markers)
-        self.integration_peak_markers[channel] = [
-            marker for marker in markers if marker.marker_id != marker_id
+        source_channel, _index, marker = location
+        self.integration_peak_markers[source_channel] = [
+            candidate
+            for candidate in self.integration_peak_markers[source_channel]
+            if candidate.marker_id != marker_id
         ]
-        if len(self.integration_peak_markers[channel]) != before:
-            self._set_channel_peak_readout(channel, "")
-            self._refresh_channel(channel)
+        self._set_channel_peak_readout(channel, "")
+        self._refresh_channels_for_roi(marker.roi_id)
 
     def _channel_marker_by_id(
         self,
         channel: int,
         marker_id: str,
     ) -> IntegrationPeakMarker | None:
-        for marker in self.integration_peak_markers.get(channel, []):
+        for marker in self._markers_for_channel(
+            channel,
+            roi_ids=set(self.channel_assignments[channel]),
+        ):
             if marker.marker_id == marker_id:
                 return marker
+        return None
+
+    def _channel_marker_storage_location(
+        self,
+        marker_id: str,
+    ) -> tuple[int, int, IntegrationPeakMarker] | None:
+        for channel, markers in self.integration_peak_markers.items():
+            for index, marker in enumerate(markers):
+                if marker.marker_id == marker_id:
+                    return channel, index, marker
         return None
 
     def _channel_has_marker_near(
@@ -3218,7 +3562,7 @@ class DataViewerPane(QtWidgets.QWidget):
         integration_x: float,
         tolerance: float,
     ) -> bool:
-        for marker in self.integration_peak_markers.get(channel, []):
+        for marker in self._markers_for_channel(channel, roi_ids={roi_id}):
             if marker.roi_id != roi_id:
                 continue
             if abs(marker.integration_x - integration_x) <= tolerance:
@@ -3231,15 +3575,74 @@ class DataViewerPane(QtWidgets.QWidget):
         *,
         roi_ids: set[str] | None = None,
     ) -> list[IntegrationPeakMarker]:
-        markers = list(self.integration_peak_markers.get(channel, []))
+        markers: list[IntegrationPeakMarker] = []
+        seen_marker_ids: set[str] = set()
         if roi_ids is None:
-            return markers
-        return [marker for marker in markers if marker.roi_id in roi_ids]
+            source_channels = [channel]
+        else:
+            source_channels = [
+                channel,
+                *sorted(
+                    source_channel
+                    for source_channel in self.integration_peak_markers
+                    if source_channel != channel
+                ),
+            ]
+        for source_channel in source_channels:
+            for marker in self.integration_peak_markers.get(
+                source_channel,
+                [],
+            ):
+                if marker.marker_id in seen_marker_ids:
+                    continue
+                if roi_ids is not None and marker.roi_id not in roi_ids:
+                    continue
+                markers.append(
+                    self._integration_marker_for_channel(marker, channel)
+                )
+                seen_marker_ids.add(marker.marker_id)
+        return markers
+
+    def _integration_marker_for_channel(
+        self,
+        marker: IntegrationPeakMarker,
+        channel: int,
+    ) -> IntegrationPeakMarker:
+        roi = self._roi_by_id(marker.roi_id)
+        if roi is None:
+            return replace(
+                marker,
+                channel=channel,
+                label=_integration_marker_label(
+                    channel,
+                    marker.roi_name,
+                    marker.integration_x,
+                ),
+            )
+        coordinate = _integration_peak_qspace_coordinate(
+            roi,
+            marker.integration_x,
+        )
+        qxy, qz = (marker.qxy, marker.qz)
+        if coordinate is not None:
+            qxy, qz = coordinate
+        roi_name = roi.name or roi.roi_id or marker.roi_name
+        return replace(
+            marker,
+            channel=channel,
+            roi_name=roi_name,
+            mode=_roi_integration_mode(roi),
+            qxy=qxy,
+            qz=qz,
+            label=_integration_marker_label(
+                channel,
+                roi_name,
+                marker.integration_x,
+            ),
+        )
 
     def _clear_channel_markers(self, channel: int) -> None:
-        self.integration_peak_markers[channel].clear()
-        self._set_channel_peak_readout(channel, "")
-        self._refresh_channel(channel)
+        self._remove_channel_markers(channel)
 
     def _remove_channel_markers(
         self,
@@ -3247,19 +3650,47 @@ class DataViewerPane(QtWidgets.QWidget):
         *,
         roi_id: str | None = None,
     ) -> None:
+        changed_roi_ids: set[str] = set()
         if roi_id is None:
-            self.integration_peak_markers[channel].clear()
-            self._set_channel_peak_readout(channel, "")
-            self._refresh_channel(channel)
-            return
-        before = len(self.integration_peak_markers[channel])
-        self.integration_peak_markers[channel] = [
-            marker
-            for marker in self.integration_peak_markers[channel]
-            if marker.roi_id != roi_id
-        ]
-        if len(self.integration_peak_markers[channel]) != before:
-            self._set_channel_peak_readout(channel, "")
+            visible_roi_ids = set(self.channel_assignments[channel])
+            if not visible_roi_ids:
+                changed_roi_ids.update(
+                    marker.roi_id
+                    for marker in self.integration_peak_markers[channel]
+                )
+                self.integration_peak_markers[channel].clear()
+            else:
+                for (
+                    source_channel,
+                    markers,
+                ) in self.integration_peak_markers.items():
+                    retained = [
+                        marker
+                        for marker in markers
+                        if marker.roi_id not in visible_roi_ids
+                    ]
+                    changed_roi_ids.update(
+                        marker.roi_id
+                        for marker in markers
+                        if marker.roi_id in visible_roi_ids
+                    )
+                    self.integration_peak_markers[source_channel] = retained
+        else:
+            for (
+                source_channel,
+                markers,
+            ) in self.integration_peak_markers.items():
+                retained = [
+                    marker for marker in markers if marker.roi_id != roi_id
+                ]
+                if len(retained) != len(markers):
+                    changed_roi_ids.add(roi_id)
+                self.integration_peak_markers[source_channel] = retained
+        self._set_channel_peak_readout(channel, "")
+        if changed_roi_ids:
+            for changed_roi_id in changed_roi_ids:
+                self._refresh_channels_for_roi(changed_roi_id)
+        else:
             self._refresh_channel(channel)
 
     def _set_channel_peak_readout(self, channel: int, text: str) -> None:
@@ -3332,6 +3763,8 @@ class DataViewerPane(QtWidgets.QWidget):
         for changed_id in changed_ids:
             changed_roi = self._roi_by_id(changed_id)
             graphic = self.roi_graphics.get(changed_id)
+            if changed_roi is not None:
+                self._refresh_roi_intensity_metadata(changed_roi)
             if changed_roi is not None and graphic is not None:
                 _set_graphic_bounds(
                     graphic,
@@ -3387,7 +3820,7 @@ class DataViewerPane(QtWidgets.QWidget):
         if bounds is None:
             return
         x_min, x_max, y_min, y_max = bounds
-        pen = pg.mkPen(_roi_color(roi), width=2)
+        pen = _roi_pen(roi, selected=False)
         if roi.kind == "arch":
             graphic = _ArchROI(roi, pen=pen)
         else:
@@ -3408,6 +3841,7 @@ class DataViewerPane(QtWidgets.QWidget):
         graphic.sigRegionChangeFinished.connect(sync_bounds)
         self.plot_widget.addItem(graphic)
         self.roi_graphics[roi.roi_id] = graphic
+        self._sync_selected_roi_graphics()
 
     def _handle_roi_graphic_changed(self, roi_id: str, graphic: Any) -> None:
         self._set_view_drag_enabled(False)
@@ -3665,6 +4099,21 @@ def _is_checked_state(state: Any) -> bool:
     }
 
 
+def _duplicated_roi_name(
+    source: ROIRegion,
+    regions: list[ROIRegion],
+) -> str:
+    source_name = str(source.name or source.roi_id or "Box ROI").strip()
+    base = f"{source_name or 'Box ROI'} copy"
+    used_names = {str(region.name or "") for region in regions}
+    if base not in used_names:
+        return base
+    index = 2
+    while f"{base} {index}" in used_names:
+        index += 1
+    return f"{base} {index}"
+
+
 def _metadata_id_set(value: Any) -> set[str]:
     if value is None:
         return set()
@@ -3815,6 +4264,28 @@ def _roi_color(roi: ROIRegion) -> str:
     return ROI_COLOR_BOX_VERTICAL
 
 
+def _roi_pen(roi: ROIRegion, *, selected: bool):
+    color = ROI_COLOR_SELECTED if selected else _roi_color(roi)
+    width = ROI_SELECTED_BORDER_WIDTH if selected else ROI_BORDER_WIDTH
+    return pg.mkPen(color, width=width)
+
+
+def _set_roi_graphic_pen(
+    graphic: Any,
+    roi: ROIRegion,
+    *,
+    selected: bool,
+) -> None:
+    pen = _roi_pen(roi, selected=selected)
+    if hasattr(graphic, "setPen"):
+        graphic.setPen(pen)
+    else:
+        graphic.pen = pen
+        graphic.currentPen = pen
+    if hasattr(graphic, "update"):
+        graphic.update()
+
+
 def _roi_direction_label(roi: ROIRegion) -> str:
     if roi.kind == "arch":
         return "azimuthal"
@@ -3887,6 +4358,116 @@ def _image_axes(
     return (
         np.linspace(x_min, x_max, max(width, 1)),
         np.linspace(y_min, y_max, max(height, 1)),
+    )
+
+
+def _roi_integrated_intensity_record(
+    roi: ROIRegion,
+    image_data: np.ndarray | None,
+    axis_ranges: tuple[float, float, float, float] | None,
+) -> dict[str, Any] | None:
+    if image_data is None or axis_ranges is None:
+        return None
+    image = np.asarray(image_data, dtype=float)
+    if image.ndim != 2:
+        return None
+    x_axis, y_axis = _image_axes(image.shape, axis_ranges)
+    if roi.kind == "arch":
+        mask = _arch_roi_intensity_mask(roi, x_axis, y_axis)
+    else:
+        mask = _box_roi_intensity_mask(roi, x_axis, y_axis)
+    if mask is None or not np.any(mask):
+        return None
+    values = image[mask]
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return None
+    pixel_area = _axis_pixel_area(x_axis, y_axis)
+    integrated = float(np.nansum(finite))
+    record = {
+        "method": "finite_pixel_sum",
+        "coordinate_space": "qxy_qz",
+        "geometry_signature": roi_geometry_signature(roi),
+        "integrated_intensity": integrated,
+        "area_scaled_integrated_intensity": integrated * pixel_area,
+        "mean_intensity": float(np.nanmean(finite)),
+        "max_intensity": float(np.nanmax(finite)),
+        "min_intensity": float(np.nanmin(finite)),
+        "pixel_count": int(values.size),
+        "finite_pixel_count": int(finite.size),
+        "pixel_area": pixel_area,
+        "qspace_area": float(finite.size * pixel_area),
+    }
+    return record
+
+
+def _box_roi_intensity_mask(
+    roi: ROIRegion,
+    x_axis: np.ndarray,
+    y_axis: np.ndarray,
+) -> np.ndarray | None:
+    values = (roi.qxy_min, roi.qxy_max, roi.qz_min, roi.qz_max)
+    if any(value is None for value in values):
+        return None
+    qxy_min, qxy_max = sorted((float(roi.qxy_min), float(roi.qxy_max)))
+    qz_min, qz_max = sorted((float(roi.qz_min), float(roi.qz_max)))
+    x_mask = (x_axis >= qxy_min) & (x_axis <= qxy_max)
+    y_mask = (y_axis >= qz_min) & (y_axis <= qz_max)
+    if not np.any(x_mask) or not np.any(y_mask):
+        return None
+    return y_mask[:, np.newaxis] & x_mask[np.newaxis, :]
+
+
+def _arch_roi_intensity_mask(
+    roi: ROIRegion,
+    x_axis: np.ndarray,
+    y_axis: np.ndarray,
+) -> np.ndarray | None:
+    values = (roi.qr_min, roi.qr_max, roi.chi_min, roi.chi_max)
+    if any(value is None for value in values):
+        return None
+    qr_min, qr_max = sorted((float(roi.qr_min), float(roi.qr_max)))
+    chi_min, chi_max = sorted((float(roi.chi_min), float(roi.chi_max)))
+    if qr_max <= qr_min or chi_max <= chi_min:
+        return None
+    qxy_grid, qz_grid = np.meshgrid(x_axis, y_axis)
+    qxy_relative = qxy_grid - roi.qxy_center
+    qz_relative = qz_grid - roi.qz_center
+    radius = np.hypot(qxy_relative, qz_relative)
+    chi = np.degrees(np.arctan2(qxy_relative, qz_relative))
+    mask = (
+        (radius >= qr_min)
+        & (radius <= qr_max)
+        & (chi >= chi_min)
+        & (chi <= chi_max)
+    )
+    return mask if np.any(mask) else None
+
+
+def _axis_pixel_area(x_axis: np.ndarray, y_axis: np.ndarray) -> float:
+    x_step = (
+        float(np.nanmedian(np.abs(np.diff(x_axis))))
+        if x_axis.size > 1
+        else 1.0
+    )
+    y_step = (
+        float(np.nanmedian(np.abs(np.diff(y_axis))))
+        if y_axis.size > 1
+        else 1.0
+    )
+    if not np.isfinite(x_step) or x_step <= 0.0:
+        x_step = 1.0
+    if not np.isfinite(y_step) or y_step <= 0.0:
+        y_step = 1.0
+    return float(x_step * y_step)
+
+
+def _roi_intensity_tooltip(record: dict[str, Any]) -> str:
+    return (
+        f"Integrated I: {_format_float(record.get('integrated_intensity'))}\n"
+        f"Mean I: {_format_float(record.get('mean_intensity'))}\n"
+        f"Finite pixels: {record.get('finite_pixel_count', '')}\n"
+        f"q-space area: {_format_float(record.get('qspace_area'))}"
     )
 
 
@@ -4003,11 +4584,20 @@ def _integration_peak_marker(
         integrated_intensity=float(integrated_intensity),
         qxy=qxy,
         qz=qz,
-        label=(
-            f"Ch {channel} {roi_name} "
-            f"@ {_format_float(float(integration_x))}"
+        label=_integration_marker_label(
+            channel,
+            roi_name,
+            float(integration_x),
         ),
     )
+
+
+def _integration_marker_label(
+    channel: int,
+    roi_name: str,
+    integration_x: float,
+) -> str:
+    return f"Ch {channel} {roi_name} @ {_format_float(float(integration_x))}"
 
 
 def _channel_peak_readout_text(

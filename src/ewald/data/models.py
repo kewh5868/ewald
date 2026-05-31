@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Any
 PROJECT_EXTENSION = ".ewld"
 PROJECT_SCHEMA_VERSION = "0.1"
 ROI_HKL_METADATA_KEY = "hkl"
+ROI_INTENSITY_METADATA_KEY = "integrated_intensity"
 ROI_POLE_FIGURE_METADATA_KEY = "pole_figure"
 PEAK_POINT_KIND_RAW = "raw-point"
 PEAK_POINT_KIND_TEMPORARY_CHANNEL = "temporary-channel-point"
@@ -395,6 +397,60 @@ def roi_hkl_label(roi: ROIRegion) -> str:
     return ""
 
 
+def roi_intensity_metadata(roi: ROIRegion) -> dict[str, Any]:
+    """Return normalized optional integrated-intensity metadata for an ROI."""
+
+    raw = roi.metadata.get(ROI_INTENSITY_METADATA_KEY, {})
+    if not isinstance(raw, dict):
+        return {}
+    normalized: dict[str, Any] = {}
+    for key, value in raw.items():
+        if key in {
+            "integrated_intensity",
+            "mean_intensity",
+            "max_intensity",
+            "min_intensity",
+            "pixel_area",
+            "qspace_area",
+            "area_scaled_integrated_intensity",
+        }:
+            parsed = _optional_float(value)
+            if parsed is not None:
+                normalized[key] = parsed
+        elif key in {"pixel_count", "finite_pixel_count"}:
+            try:
+                parsed_int = _optional_int(value)
+            except ValueError:
+                parsed_int = None
+            if parsed_int is not None:
+                normalized[key] = parsed_int
+        elif key in {"geometry_signature", "method", "coordinate_space"}:
+            normalized[key] = _clean_optional_label(value)
+        else:
+            normalized[key] = value
+    return normalized
+
+
+def set_roi_intensity_metadata(
+    roi: ROIRegion,
+    record: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Attach or clear computed integrated-intensity metadata for an ROI."""
+
+    if not record:
+        roi.metadata.pop(ROI_INTENSITY_METADATA_KEY, None)
+        return {}
+    normalized = dict(record)
+    integrated = _optional_float(normalized.get("integrated_intensity"))
+    if integrated is None:
+        roi.metadata.pop(ROI_INTENSITY_METADATA_KEY, None)
+        return {}
+    normalized["integrated_intensity"] = integrated
+    normalized.setdefault("geometry_signature", roi_geometry_signature(roi))
+    roi.metadata[ROI_INTENSITY_METADATA_KEY] = normalized
+    return normalized
+
+
 def roi_geometry_signature(roi: ROIRegion) -> str:
     """Return a stable signature for geometry fields that affect
     reduction."""
@@ -491,6 +547,22 @@ def _optional_int(value: Any | None) -> int | None:
         raise ValueError("hkl values must be integers or blank.") from exc
     if isinstance(value, float) and not value.is_integer():
         raise ValueError("hkl values must be integers or blank.")
+    return numeric
+
+
+def _optional_float(value: Any | None) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric):
+        return None
     return numeric
 
 
@@ -817,6 +889,61 @@ class ProjectState:
         """Clear all remembered film material entries."""
 
         self.film_material_memory.clear()
+
+    def remember_loaded_cif(
+        self,
+        path: str | Path,
+        *,
+        cif_text: str,
+        lattice: dict[str, Any],
+        crystal_system: str | None = None,
+        label: str | None = None,
+        target_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Store a user-loaded CIF in the project-scoped CIF library."""
+
+        cif_path = Path(path)
+        cif_id = _loaded_cif_id(cif_path, cif_text)
+        loaded = self.reference_cifs.setdefault("loaded", {})
+        if not isinstance(loaded, dict):
+            loaded = {}
+            self.reference_cifs["loaded"] = loaded
+        target_ids: list[str] = []
+        existing = loaded.get(cif_id)
+        if isinstance(existing, dict):
+            target_ids = [str(item) for item in existing.get("target_ids", [])]
+        if target_id:
+            target_text = str(target_id)
+            if target_text not in target_ids:
+                target_ids.append(target_text)
+        record = {
+            "cif_id": cif_id,
+            "label": label or cif_path.stem,
+            "path": str(cif_path),
+            "structure_path": str(cif_path),
+            "source": "loaded",
+            "cif_text": cif_text,
+            "lattice": {
+                key: float(lattice[key])
+                for key in ("a", "b", "c", "alpha", "beta", "gamma")
+            },
+            "crystal_system": crystal_system or "Triclinic",
+            "target_ids": target_ids,
+        }
+        loaded[cif_id] = record
+        self.processing_history.append(
+            ProcessingRecord(
+                stage="reference_cif.loaded",
+                parameters={
+                    "cif_id": cif_id,
+                    "path": str(cif_path),
+                    "target_id": target_id,
+                    "lattice": record["lattice"],
+                    "crystal_system": record["crystal_system"],
+                },
+            )
+        )
+        return record
 
     def image_corrections_confirmed(self, target_id: str | None) -> bool:
         """Return True when corrections are permanently confirmed."""
@@ -1463,6 +1590,12 @@ class ProjectState:
 def _slug_name(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "_", value).strip("_").lower()
     return slug or "asset"
+
+
+def _loaded_cif_id(path: Path, cif_text: str) -> str:
+    basis = f"{path.expanduser()}::{cif_text}"
+    digest = hashlib.sha1(basis.encode("utf-8")).hexdigest()[:10]
+    return f"{_slug_name(path.stem)}_{digest}"
 
 
 def _unique_memory_id(items: list[dict[str, Any]], value: str) -> str:

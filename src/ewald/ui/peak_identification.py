@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 from qtpy import QtCore, QtGui, QtWidgets
 
+from ewald.crystallography.cif import (
+    extract_cif_lattice_parameters,
+    infer_crystal_system_from_lattice,
+)
 from ewald.crystallography import (
     CRYSTAL_SYSTEMS,
     CrystalOverlayCalculator,
@@ -26,6 +31,7 @@ from ewald.data.models import (
     ProjectState,
 )
 from ewald.processing.peak_detection import (
+    GapAwarePeakInferenceConfig,
     LocalMaxPeakFinderConfig,
     find_local_maxima_peaks,
 )
@@ -119,9 +125,11 @@ ORIENTATION_ANGLE_LIMITS_DEG = (-180.0, 180.0)
 ORIENTATION_SLIDER_SCALE = 10.0
 PEAK_UNDO_LIMIT = 50
 PEAK_ACTION_ICON_SIZE = QtCore.QSize(18, 18)
+REFERENCE_CIF_FILE_FILTER = "CIF Files (*.cif *.mcif);;All Files (*)"
 MIRROR_SOURCE_SELECTED = "selected"
 MIRROR_SOURCE_POSITIVE_QXY = "positive-qxy"
 MIRROR_SOURCE_NEGATIVE_QXY = "negative-qxy"
+MIRROR_POINT_COLOR = "#16a34a"
 ROI_RESIZE_SYMMETRIC = "symmetric"
 ROI_RESIZE_QZ = "qz"
 ROI_RESIZE_QXY = "qxy"
@@ -162,6 +170,11 @@ PEAK_FINDER_PRESETS: dict[str, dict[str, float | int | bool]] = {
         "neighborhood_radius_px": 2,
     },
 }
+PEAK_TEXTURE_MODES = [
+    ("Auto texture", "auto"),
+    ("Textured / fibril", "anisotropic"),
+    ("Isotropic rings", "isotropic"),
+]
 PEAK_FINDER_PRESET_TOOLTIPS = {
     "global": (
         "Use one image-wide intensity cutoff. Best when the background is "
@@ -217,6 +230,11 @@ PEAK_FINDER_SETTING_TOOLTIPS = {
     "consolidate": (
         "Move compatible manual or channel-derived peaks onto detected local "
         "maxima instead of creating duplicates nearby."
+    ),
+    "sample_texture": (
+        "Controls detector-gap peak inference. Isotropic rings disable gap "
+        "bridging because a ring crossing a gap is not necessarily a hidden "
+        "Bragg-spot center."
     ),
     "find_peaks": (
         "Run peak detection using the current settings and update the peak "
@@ -901,6 +919,12 @@ class PeakIdentificationPane(QtWidgets.QWidget):
                 min_distance_px=self.min_distance_px.value(),
                 neighborhood_radius_px=self.neighborhood_radius_px.value(),
                 ignore_nonpositive=self.ignore_nonpositive_check.isChecked(),
+                gap_inference=GapAwarePeakInferenceConfig(
+                    enabled=True,
+                    sample_texture=str(
+                        self.peak_texture_combo.currentData() or "auto"
+                    ),
+                ),
             ),
         )
         records = copy.deepcopy(self.peaks())
@@ -911,12 +935,17 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         consolidated_count = 0
         skipped_nearby_count = 0
         for candidate in candidates:
+            candidate_metadata = getattr(candidate, "metadata", {}) or {}
+            candidate_is_gap = bool(candidate_metadata.get("gap_estimate"))
             nearby = self._nearby_peak_records_for_candidate(
                 candidate,
                 records,
             )
             consolidate_target = None
-            if self.consolidate_peaks_check.isChecked():
+            if (
+                self.consolidate_peaks_check.isChecked()
+                and not candidate_is_gap
+            ):
                 for record, _distance in nearby:
                     peak_id = _peak_id(record)
                     if peak_id in consolidated_ids:
@@ -931,14 +960,23 @@ class PeakIdentificationPane(QtWidgets.QWidget):
                 changed_peak_ids.append(peak_id)
                 consolidated_count += 1
                 continue
-            if nearby:
+            if nearby and not (
+                candidate_is_gap
+                and self._nearby_records_are_gap_anchors(
+                    candidate_metadata,
+                    nearby,
+                )
+            ):
                 skipped_nearby_count += 1
                 continue
+            source = (
+                "gap estimate" if candidate_is_gap else "auto-local-maximum"
+            )
             record = self._peak_record(
                 candidate.x,
                 candidate.y,
                 candidate.intensity,
-                source="auto-local-maximum",
+                source=source,
                 used_ids=used,
             )
             self._store_peak_finder_metadata(record, candidate)
@@ -1087,6 +1125,9 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             "background_radius_px": int(self.background_radius_px.value()),
             "min_distance_px": int(self.min_distance_px.value()),
             "neighborhood_radius_px": int(self.neighborhood_radius_px.value()),
+            "sample_texture": str(
+                self.peak_texture_combo.currentData() or "auto"
+            ),
         }
         for key in ("background", "noise", "snr", "prominence", "score"):
             value = getattr(candidate, key, None)
@@ -1096,8 +1137,46 @@ class PeakIdentificationPane(QtWidgets.QWidget):
                 finder[key] = float(value)
             except (TypeError, ValueError):
                 continue
+        candidate_metadata = getattr(candidate, "metadata", None)
+        if isinstance(candidate_metadata, dict):
+            metadata.update(candidate_metadata)
+            if candidate_metadata.get("gap_estimate"):
+                record["source"] = "gap estimate"
+                record["point_kind"] = PEAK_POINT_KIND_GAP_ESTIMATED
+                record["gap_estimated"] = True
+                record["phase_tag"] = "gap-estimated"
         metadata["peak_finder"] = finder
         record["metadata"] = metadata
+
+    def _nearby_records_are_gap_anchors(
+        self,
+        candidate_metadata: dict[str, Any],
+        nearby: list[tuple[dict[str, Any], float]],
+    ) -> bool:
+        anchors: list[tuple[float, float]] = []
+        for key in ("minus_anchor", "plus_anchor"):
+            anchor = candidate_metadata.get(key)
+            if not isinstance(anchor, dict):
+                continue
+            try:
+                anchors.append((float(anchor["x"]), float(anchor["y"])))
+            except (KeyError, TypeError, ValueError):
+                continue
+        if not anchors:
+            return False
+        x_step, y_step = self._axis_pixel_steps()
+        x_tolerance = max(x_step * 1.5, 1.0e-12)
+        y_tolerance = max(y_step * 1.5, 1.0e-12)
+        for record, _distance in nearby:
+            qxy = _peak_qxy(record)
+            qz = _peak_qz(record)
+            if not any(
+                abs(qxy - anchor_qxy) <= x_tolerance
+                and abs(qz - anchor_qz) <= y_tolerance
+                for anchor_qxy, anchor_qz in anchors
+            ):
+                return False
+        return True
 
     def add_peak_at(
         self,
@@ -1135,8 +1214,20 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         if target is not None:
             self._apply_peak_target_metadata(record, target)
         records.append(record)
-        self._set_peaks(records)
-        self.active_peak_id = _peak_id(record)
+        stored_records = self._set_peaks(records)
+        active_record = _find_peak_record_by_id(
+            stored_records,
+            _peak_id(record),
+        )
+        if active_record is None:
+            active_record = _find_peak_record_at_exact_coordinate(
+                stored_records,
+                qxy,
+                qz,
+            )
+        self.active_peak_id = (
+            _peak_id(active_record) if active_record is not None else None
+        )
         self._sync_after_peak_change()
         if target is not None and target.get("kind") == "masked-gap":
             self.snap_feedback_label.setText(
@@ -1195,8 +1286,20 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             return []
         if not pushed_history:
             self._push_undo_state()
-        self._set_peaks(records)
-        self.active_peak_id = _peak_id(added[0])
+        stored_records = self._set_peaks(records)
+        active_record = _find_peak_record_by_id(
+            stored_records,
+            _peak_id(added[0]),
+        )
+        if active_record is None:
+            active_record = _find_peak_record_at_exact_coordinate(
+                stored_records,
+                _peak_qxy(added[0]),
+                _peak_qz(added[0]),
+            )
+        self.active_peak_id = (
+            _peak_id(active_record) if active_record is not None else None
+        )
         self._sync_after_peak_change()
         return added
 
@@ -1398,6 +1501,16 @@ class PeakIdentificationPane(QtWidgets.QWidget):
                 target_qz,
                 used_ids=used,
             )
+            self._snap_mirrored_peak_record_to_local_maximum(mirrored)
+            if self._has_peak_near(
+                updated_records,
+                _peak_qxy(mirrored),
+                _peak_qz(mirrored),
+                qxy_tolerance=qxy_tolerance,
+                qz_tolerance=qz_tolerance,
+            ):
+                skipped_existing += 1
+                continue
             updated_records.append(mirrored)
             added.append(mirrored)
 
@@ -1499,6 +1612,34 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             "mirror_source_qz": _peak_qz(source),
         }
         return record
+
+    def _snap_mirrored_peak_record_to_local_maximum(
+        self,
+        record: dict[str, Any],
+    ) -> None:
+        """Snap one generated mirror peak without touching source peaks."""
+
+        maximum = self._local_maximum_near(_peak_qxy(record), _peak_qz(record))
+        if maximum is None:
+            return
+        peak_qxy, peak_qz, intensity = maximum
+        current_intensity = self._intensity_at(
+            _peak_qxy(record),
+            _peak_qz(record),
+        )
+        if (
+            np.isfinite(current_intensity)
+            and np.isfinite(intensity)
+            and intensity <= current_intensity
+        ):
+            record["intensity"] = float(current_intensity)
+            return
+        record["qxy"] = float(peak_qxy)
+        record["qz"] = float(peak_qz)
+        record["intensity"] = float(intensity)
+        metadata = record.setdefault("metadata", {})
+        metadata["snapped_to_local_maximum"] = True
+        metadata["snap_source"] = "mirror generated point"
 
     def apply_roi_to_selected_peak(self) -> None:
         record = self._active_record()
@@ -1668,8 +1809,21 @@ class PeakIdentificationPane(QtWidgets.QWidget):
     def peaks(self) -> list[dict[str, Any]]:
         return list(self.project.peak_sets.get(self.data_id, []))
 
-    def _set_peaks(self, records: list[dict[str, Any]]) -> None:
+    def _set_peaks(
+        self, records: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        records, duplicate_count = _deduplicate_peak_records(records)
         self.project.peak_sets[self.data_id] = records
+        if duplicate_count and hasattr(self, "snap_feedback_label"):
+            self.snap_feedback_label.setText(
+                f"Removed {duplicate_count} duplicate point(s) at identical "
+                "coordinates."
+            )
+        if self.active_peak_id is not None:
+            ids = {_peak_id(record) for record in records}
+            if self.active_peak_id not in ids:
+                self.active_peak_id = _peak_id(records[0]) if records else None
+        return records
 
     def _snapshot_peaks(self) -> list[dict[str, Any]]:
         return copy.deepcopy(self.peaks())
@@ -1820,6 +1974,10 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             "Consolidate manual/channel"
         )
         self.consolidate_peaks_check.setChecked(True)
+        self.peak_texture_combo = QtWidgets.QComboBox()
+        for label, value in PEAK_TEXTURE_MODES:
+            self.peak_texture_combo.addItem(label, value)
+        self.peak_texture_combo.setCurrentIndex(0)
 
         self.find_peaks_button = QtWidgets.QToolButton()
         self.find_peaks_button.setText("Find Peaks")
@@ -1994,6 +2152,9 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             f"{QXY_HTML} < 0",
             MIRROR_SOURCE_NEGATIVE_QXY,
         )
+        self.mirror_source_combo.setCurrentIndex(
+            self.mirror_source_combo.findData(MIRROR_SOURCE_POSITIVE_QXY)
+        )
         self.mirror_missing_button = QtWidgets.QToolButton()
         self.mirror_missing_button.setText("Mirror Missing")
         self.mirror_missing_button.setToolTip(
@@ -2022,6 +2183,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             self.min_qz: "min_qz",
             self.ignore_nonpositive_check: "ignore_nonpositive",
             self.consolidate_peaks_check: "consolidate",
+            self.peak_texture_combo: "sample_texture",
             self.find_peaks_button: "find_peaks",
         }
         for widget, key in controls.items():
@@ -2144,6 +2306,28 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.fit_detail_tree.setMinimumHeight(180)
 
     def _build_crystal_overlay_controls(self) -> None:
+        self.loaded_cif_combo = QtWidgets.QComboBox()
+        self.loaded_cif_combo.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        self.loaded_cif_combo.setToolTip(
+            "Recall a CIF loaded into this project and apply its lattice "
+            "constants to the overlay."
+        )
+        self.loaded_cif_combo.currentIndexChanged.connect(
+            self._handle_loaded_cif_changed
+        )
+        self.load_reference_cif_button = QtWidgets.QToolButton()
+        self.load_reference_cif_button.setText("Load CIF")
+        self.load_reference_cif_button.setToolTip(
+            "Load a reference CIF, extract its lattice constants, and remember "
+            "it with this project."
+        )
+        self.load_reference_cif_button.clicked.connect(self.load_reference_cif)
+        self.loaded_cif_status_label = QtWidgets.QLabel("")
+        self.loaded_cif_status_label.setWordWrap(True)
+
         self.crystal_system_combo = QtWidgets.QComboBox()
         self.crystal_system_combo.addItems(CRYSTAL_SYSTEMS.keys())
 
@@ -2218,6 +2402,10 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.orientation_label.setTextInteractionFlags(
             QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
         )
+        self.orientation_label.setToolTip(
+            "X/Y use the same theta X/theta Y rotation convention as GIWAXS "
+            "Simulation; Z is an overlay-only roll."
+        )
         self.orientation_label.setWordWrap(True)
 
         self.crystal_peak_table = QtWidgets.QTableWidget(
@@ -2253,7 +2441,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             self._schedule_crystal_overlay_update
         )
         self.show_crystal_overlay_check.toggled.connect(
-            self._schedule_crystal_overlay_update
+            self._handle_crystal_overlay_visibility_toggled
         )
         self.show_crystal_hkl_labels_check.toggled.connect(
             self._handle_hkl_label_check_toggled
@@ -2306,6 +2494,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.reset_orientation_button.clicked.connect(
             self._reset_crystal_orientation
         )
+        self._refresh_loaded_cif_combo()
 
     def _build_plot(self) -> None:
         if pg is None:
@@ -2315,6 +2504,8 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             self.plot_widget.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             self.peak_scatter = None
             self.active_peak_scatter = None
+            self.mirror_peak_scatter = None
+            self.active_mirror_peak_scatter = None
             self.gap_peak_scatter = None
             self.active_gap_peak_scatter = None
             self.crystal_overlay_scatter = None
@@ -2340,6 +2531,18 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             brush=pg.mkBrush("#2f80ed"),
             pen=pg.mkPen("#ffffff", width=1.0),
         )
+        self.mirror_peak_scatter = _DraggablePeakScatter(
+            size=8,
+            symbol="o",
+            brush=pg.mkBrush(MIRROR_POINT_COLOR),
+            pen=pg.mkPen("#ffffff", width=0.5),
+        )
+        self.active_mirror_peak_scatter = _DraggablePeakScatter(
+            size=8,
+            symbol="o",
+            brush=pg.mkBrush(MIRROR_POINT_COLOR),
+            pen=pg.mkPen("#064e3b", width=1.0),
+        )
         self.gap_peak_scatter = _DraggablePeakScatter(
             size=9,
             symbol="d",
@@ -2359,12 +2562,16 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         )
         self.peak_scatter.setZValue(12)
         self.active_peak_scatter.setZValue(13)
+        self.mirror_peak_scatter.setZValue(12.6)
+        self.active_mirror_peak_scatter.setZValue(13.6)
         self.gap_peak_scatter.setZValue(12.5)
         self.active_gap_peak_scatter.setZValue(13.5)
         self.crystal_overlay_scatter.setZValue(10)
         for scatter in (
             self.peak_scatter,
             self.active_peak_scatter,
+            self.mirror_peak_scatter,
+            self.active_mirror_peak_scatter,
             self.gap_peak_scatter,
             self.active_gap_peak_scatter,
         ):
@@ -2503,6 +2710,10 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         )
         finder_form.addRow(self.ignore_nonpositive_check)
         finder_form.addRow(self.consolidate_peaks_check)
+        finder_form.addRow(
+            self._peak_finder_label("Texture", "sample_texture"),
+            self.peak_texture_combo,
+        )
         finder_layout = QtWidgets.QVBoxLayout(finder_group)
         preset_row = QtWidgets.QHBoxLayout()
         preset_row.addWidget(self.global_peak_preset_button)
@@ -2731,6 +2942,14 @@ class PeakIdentificationPane(QtWidgets.QWidget):
 
         lattice_group = QtWidgets.QGroupBox("Lattice & Overlay Peaks")
         lattice_form = QtWidgets.QFormLayout(lattice_group)
+        cif_row = QtWidgets.QWidget()
+        cif_layout = QtWidgets.QHBoxLayout(cif_row)
+        cif_layout.setContentsMargins(0, 0, 0, 0)
+        cif_layout.setSpacing(4)
+        cif_layout.addWidget(self.loaded_cif_combo, stretch=1)
+        cif_layout.addWidget(self.load_reference_cif_button)
+        lattice_form.addRow("Reference CIF", cif_row)
+        lattice_form.addRow(self.loaded_cif_status_label)
         lattice_form.addRow("Crystal system", self.crystal_system_combo)
         lattice_form.addRow("a", self.lattice_a)
         lattice_form.addRow("b", self.lattice_b)
@@ -2764,14 +2983,14 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         orientation_controls_layout.setContentsMargins(0, 0, 0, 0)
         slider_form = QtWidgets.QFormLayout()
         slider_form.addRow(
-            "X",
+            "theta X",
             _orientation_control_row(
                 self.orientation_x_slider,
                 self.orientation_x_spin,
             ),
         )
         slider_form.addRow(
-            "Y",
+            "theta Y",
             _orientation_control_row(
                 self.orientation_y_slider,
                 self.orientation_y_spin,
@@ -2989,6 +3208,10 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         finally:
             for control in controls:
                 control.blockSignals(False)
+        loaded_cif_id = state.get("loaded_cif_id")
+        self._refresh_loaded_cif_combo(
+            selected_cif_id=str(loaded_cif_id) if loaded_cif_id else None
+        )
         angles = _orientation_angles_from_state(
             state.get("orientation_angles_deg"),
             params.orientation_quaternion,
@@ -3004,6 +3227,131 @@ class PeakIdentificationPane(QtWidgets.QWidget):
 
         self._restore_crystal_overlay_state()
         self._update_crystal_overlay_now()
+
+    def load_reference_cif(self) -> None:
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Load Reference CIF",
+            str(self._reference_cif_dialog_directory()),
+            REFERENCE_CIF_FILE_FILTER,
+        )
+        if path:
+            try:
+                self.load_reference_cif_path(path)
+            except Exception:
+                return
+
+    def load_reference_cif_path(self, path: str | Path) -> dict[str, Any]:
+        cif_path = Path(path)
+        try:
+            cif_text = cif_path.read_text(encoding="utf-8")
+            lattice = extract_cif_lattice_parameters(cif_path)
+        except Exception as exc:
+            message = f"Could not load CIF lattice constants: {exc}"
+            self.loaded_cif_status_label.setText(message)
+            QtWidgets.QMessageBox.warning(self, "Load CIF", message)
+            raise
+        crystal_system = infer_crystal_system_from_lattice(lattice)
+        record = self.project.remember_loaded_cif(
+            cif_path,
+            cif_text=cif_text,
+            lattice=lattice,
+            crystal_system=crystal_system,
+            target_id=self.data_id,
+        )
+        self._refresh_loaded_cif_combo(selected_cif_id=str(record["cif_id"]))
+        self._apply_loaded_cif_record(record)
+        return record
+
+    def _refresh_loaded_cif_combo(
+        self,
+        *,
+        selected_cif_id: str | None = None,
+    ) -> None:
+        current_id = (
+            selected_cif_id
+            if selected_cif_id is not None
+            else self.loaded_cif_combo.currentData()
+        )
+        self.loaded_cif_combo.blockSignals(True)
+        try:
+            self.loaded_cif_combo.clear()
+            self.loaded_cif_combo.addItem("Manual lattice", None)
+            selected_index = 0
+            for index, (cif_id, record) in enumerate(
+                _loaded_cif_records(self.project),
+                start=1,
+            ):
+                self.loaded_cif_combo.addItem(
+                    _loaded_cif_label(record, cif_id),
+                    cif_id,
+                )
+                if cif_id == current_id:
+                    selected_index = index
+            self.loaded_cif_combo.setCurrentIndex(selected_index)
+        finally:
+            self.loaded_cif_combo.blockSignals(False)
+
+    def _handle_loaded_cif_changed(self, *_args: Any) -> None:
+        cif_id = self.loaded_cif_combo.currentData()
+        if cif_id is None:
+            self.loaded_cif_status_label.setText("")
+            return
+        record = _loaded_cif_record(self.project, str(cif_id))
+        if record is not None:
+            self._apply_loaded_cif_record(record)
+
+    def _apply_loaded_cif_record(self, record: dict[str, Any]) -> None:
+        lattice = record.get("lattice")
+        if not isinstance(lattice, dict):
+            self.loaded_cif_status_label.setText(
+                "Loaded CIF has no lattice constants."
+            )
+            return
+        values = {
+            key: float(lattice[key])
+            for key in ("a", "b", "c", "alpha", "beta", "gamma")
+        }
+        controls = [
+            self.crystal_system_combo,
+            *self._lattice_spinboxes().values(),
+        ]
+        for control in controls:
+            control.blockSignals(True)
+        try:
+            crystal_system = str(
+                record.get("crystal_system")
+                or infer_crystal_system_from_lattice(values)
+            )
+            if crystal_system not in CRYSTAL_SYSTEMS:
+                crystal_system = "Triclinic"
+            self.crystal_system_combo.setCurrentText(crystal_system)
+            for key, spinbox in self._lattice_spinboxes().items():
+                spinbox.setValue(values[key])
+        finally:
+            for control in controls:
+                control.blockSignals(False)
+        self._apply_crystal_constraints_to_controls()
+        self.loaded_cif_status_label.setText(
+            "Using "
+            f"{_loaded_cif_label(record, str(record.get('cif_id', 'cif')))}: "
+            f"a {values['a']:.4g}, b {values['b']:.4g}, c {values['c']:.4g}; "
+            f"alpha {values['alpha']:.4g}, beta {values['beta']:.4g}, "
+            f"gamma {values['gamma']:.4g}."
+        )
+        self._update_crystal_overlay_now()
+
+    def _reference_cif_dialog_directory(self) -> Path:
+        for _cif_id, record in _loaded_cif_records(self.project):
+            for key in ("local_path", "path", "structure_path"):
+                path_text = record.get(key)
+                if not path_text:
+                    continue
+                path = Path(str(path_text)).expanduser()
+                directory = path if path.is_dir() else path.parent
+                if directory.exists():
+                    return directory
+        return Path.home()
 
     def _lattice_spinboxes(
         self,
@@ -3034,11 +3382,26 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         ).constrained()
 
     def _handle_crystal_system_changed(self, *_args: Any) -> None:
+        self._select_manual_lattice_source()
         self._apply_crystal_constraints_to_controls()
         self._update_crystal_overlay_now()
 
     def _handle_crystal_lattice_changed(self, *_args: Any) -> None:
+        self._select_manual_lattice_source()
         self._apply_crystal_constraints_to_controls()
+        self._update_crystal_overlay_now()
+
+    def _select_manual_lattice_source(self) -> None:
+        if self.loaded_cif_combo.currentData() is None:
+            return
+        self.loaded_cif_combo.blockSignals(True)
+        try:
+            self.loaded_cif_combo.setCurrentIndex(0)
+        finally:
+            self.loaded_cif_combo.blockSignals(False)
+        self.loaded_cif_status_label.setText("Manual lattice editing.")
+
+    def _handle_crystal_overlay_visibility_toggled(self, *_args: Any) -> None:
         self._update_crystal_overlay_now()
 
     def _handle_hkl_label_check_toggled(self, checked: bool) -> None:
@@ -3173,9 +3536,9 @@ class PeakIdentificationPane(QtWidgets.QWidget):
 
     def _handle_orientation_slider_changed(self, *_args: Any) -> None:
         self._set_crystal_orientation_angles(
-            _slider_value_to_degrees(self.orientation_x_slider.value()),
-            _slider_value_to_degrees(self.orientation_y_slider.value()),
-            _slider_value_to_degrees(self.orientation_z_slider.value()),
+            self.orientation_x_spin.value(),
+            self.orientation_y_spin.value(),
+            self.orientation_z_spin.value(),
         )
 
     def _set_crystal_orientation_angles(
@@ -3195,7 +3558,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self._set_orientation_control_values(*angles)
         self._update_orientation_label()
         if schedule_update:
-            self._schedule_crystal_overlay_update()
+            self._update_crystal_overlay_now()
 
     def _handle_orientation_view_drag(
         self,
@@ -3264,7 +3627,9 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         result = self.crystal_calculator.project(params)
         self._clear_crystal_overlay_graphics()
         if pg is not None and self.crystal_overlay_scatter is not None:
-            if self.show_crystal_overlay_check.isChecked():
+            overlay_visible = self.show_crystal_overlay_check.isChecked()
+            self.crystal_overlay_scatter.setVisible(overlay_visible)
+            if overlay_visible:
                 self.crystal_overlay_scatter.setData(
                     spots=_crystal_overlay_spots(result),
                     hoverable=True,
@@ -3274,7 +3639,7 @@ class PeakIdentificationPane(QtWidgets.QWidget):
                 if mode != HKL_LABEL_MODE_NONE:
                     self._add_crystal_hkl_labels(result, mode=mode)
             else:
-                self.crystal_overlay_scatter.setData(spots=[])
+                self.crystal_overlay_scatter.setData([], [])
         self._update_crystal_preview(result)
         self._sync_crystal_peak_table(result)
         self._store_crystal_overlay_state(params, result)
@@ -3454,6 +3819,8 @@ class PeakIdentificationPane(QtWidgets.QWidget):
             "auto_update_overlay": (
                 self.auto_update_crystal_overlay_button.isChecked()
             ),
+            "loaded_cif_id": self.loaded_cif_combo.currentData(),
+            "rotation_convention": "giwaxs-simulation-theta-x-theta-y",
             "orientation_angles_deg": [
                 float(value) for value in self.crystal_orientation_angles
             ],
@@ -3767,6 +4134,8 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self.roi_graphics.clear()
         measured_spots: list[dict[str, Any]] = []
         active_measured_spots: list[dict[str, Any]] = []
+        mirror_spots: list[dict[str, Any]] = []
+        active_mirror_spots: list[dict[str, Any]] = []
         gap_spots: list[dict[str, Any]] = []
         active_gap_spots: list[dict[str, Any]] = []
         for record in self.peaks():
@@ -3777,14 +4146,19 @@ class PeakIdentificationPane(QtWidgets.QWidget):
                 "pos": (qxy, qz),
                 "data": peak_id,
             }
+            is_mirror = _is_mirror_generated_peak(record)
             is_gap = _is_gap_estimated_peak(record)
             if peak_id == self.active_peak_id:
-                if is_gap:
+                if is_mirror:
+                    active_mirror_spots.append(spot)
+                elif is_gap:
                     active_gap_spots.append(spot)
                 else:
                     active_measured_spots.append(spot)
             else:
-                if is_gap:
+                if is_mirror:
+                    mirror_spots.append(spot)
+                elif is_gap:
                     gap_spots.append(spot)
                 else:
                     measured_spots.append(spot)
@@ -3797,6 +4171,8 @@ class PeakIdentificationPane(QtWidgets.QWidget):
                 )
         self.peak_scatter.setData(spots=measured_spots)
         self.active_peak_scatter.setData(spots=active_measured_spots)
+        self.mirror_peak_scatter.setData(spots=mirror_spots)
+        self.active_mirror_peak_scatter.setData(spots=active_mirror_spots)
         self.gap_peak_scatter.setData(spots=gap_spots)
         self.active_gap_peak_scatter.setData(spots=active_gap_spots)
 
@@ -5310,6 +5686,102 @@ def _peak_qz(record: dict[str, Any]) -> float:
     return float(record.get("qz", record.get("y", 0.0)))
 
 
+def _peak_exact_coordinate_key(
+    record: dict[str, Any],
+) -> tuple[float, float] | None:
+    try:
+        qxy = _peak_qxy(record)
+        qz = _peak_qz(record)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(qxy) or not np.isfinite(qz):
+        return None
+    return qxy, qz
+
+
+def _deduplicate_peak_records(
+    records: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    seen: set[tuple[float, float]] = set()
+    deduplicated: list[dict[str, Any]] = []
+    duplicate_count = 0
+    for record in records:
+        key = _peak_exact_coordinate_key(record)
+        if key is not None and key in seen:
+            duplicate_count += 1
+            continue
+        if key is not None:
+            seen.add(key)
+        deduplicated.append(record)
+    return deduplicated, duplicate_count
+
+
+def _find_peak_record_by_id(
+    records: list[dict[str, Any]],
+    peak_id: str,
+) -> dict[str, Any] | None:
+    for record in records:
+        if _peak_id(record) == peak_id:
+            return record
+    return None
+
+
+def _find_peak_record_at_exact_coordinate(
+    records: list[dict[str, Any]],
+    qxy: float,
+    qz: float,
+) -> dict[str, Any] | None:
+    key = (float(qxy), float(qz))
+    for record in records:
+        if _peak_exact_coordinate_key(record) == key:
+            return record
+    return None
+
+
+def _loaded_cif_records(
+    project: ProjectState,
+) -> list[tuple[str, dict[str, Any]]]:
+    loaded = project.reference_cifs.get("loaded", {})
+    if not isinstance(loaded, dict):
+        return []
+    records = [
+        (str(record.get("cif_id") or cif_id), record)
+        for cif_id, record in loaded.items()
+        if isinstance(record, dict)
+    ]
+    return sorted(records, key=lambda item: item[0])
+
+
+def _loaded_cif_record(
+    project: ProjectState,
+    cif_id: str,
+) -> dict[str, Any] | None:
+    for record_id, record in _loaded_cif_records(project):
+        if record_id == cif_id:
+            return record
+    return None
+
+
+def _loaded_cif_label(record: dict[str, Any], cif_id: str) -> str:
+    label = (
+        record.get("label")
+        or record.get("name")
+        or record.get("cif_id")
+        or cif_id
+    )
+    lattice = record.get("lattice")
+    if isinstance(lattice, dict) and all(
+        key in lattice for key in ("a", "b", "c")
+    ):
+        return (
+            f"{label} "
+            f"(a {float(lattice['a']):.4g}, "
+            f"b {float(lattice['b']):.4g}, "
+            f"c {float(lattice['c']):.4g})"
+        )
+    return str(label)
+
+
 def _contiguous_true_span(values: np.ndarray, index: int) -> tuple[int, int]:
     start = int(index)
     end = int(index)
@@ -5352,6 +5824,11 @@ def _is_gap_estimated_peak(record: dict[str, Any]) -> bool:
         or record.get("point_kind") == PEAK_POINT_KIND_GAP_ESTIMATED
         or str(record.get("source", "")).lower() == "gap estimate"
     )
+
+
+def _is_mirror_generated_peak(record: dict[str, Any]) -> bool:
+    metadata = record.get("metadata", {})
+    return bool(metadata.get("mirror_source_peak_id"))
 
 
 def _peak_tip(record: dict[str, Any]) -> str:

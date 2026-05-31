@@ -25,6 +25,7 @@ from ewald.ui.data_viewer import (
     ROI_COL_COUPLED,
     ROI_COL_H,
     ROI_COL_HKL_LABEL,
+    ROI_COL_INTEGRATED_INTENSITY,
     ROI_COL_K,
     ROI_COL_L,
     ROI_COL_POLE_FIGURE,
@@ -44,6 +45,7 @@ from ewald.ui.main_window import (
 )
 from ewald.ui.metadata_dialog import ManualMetadataDialog
 from ewald.ui.orientation import sample_orientation_for_image_transform
+from ewald.ui.theme import THEME_PROPERTY
 from ewald.version import __version__
 
 
@@ -81,6 +83,24 @@ def test_data_tree_renders_groups_files_metadata_and_fits(qtbot, repo_root):
     group, _ = build_data_group_from_paths([path], group_name="Example")
     project = ProjectState()
     project.add_data_group(group)
+    data_id = group.data_files[0].data_id
+    project.add_roi_region(
+        ROIRegion(
+            target_id=data_id,
+            kind="box",
+            name="Peak box",
+            qxy_min=0.1,
+            qxy_max=0.2,
+            qz_min=0.3,
+            qz_max=0.4,
+            metadata={
+                "integrated_intensity": {
+                    "integrated_intensity": 123.4,
+                    "finite_pixel_count": 6,
+                }
+            },
+        )
+    )
     project.fits[group.data_files[0].data_id] = [
         {"model_name": "gaussian-2d", "center_qx": 1.0, "center_qz": 0.5}
     ]
@@ -108,6 +128,12 @@ def test_data_tree_renders_groups_files_metadata_and_fits(qtbot, repo_root):
     )
     assert _child_with_text(metadata_item, "Sample number").text(1) == "22"
     assert _child_with_text(metadata_item, "Parse delimiter").text(1) == "_"
+    rois_item = _child_with_text(file_item, "ROIs")
+    peak_box_item = _child_with_text(rois_item, "Peak box")
+    assert (
+        _child_with_text(peak_box_item, "Integrated intensity").text(1)
+        == "123.4"
+    )
 
 
 def test_data_tree_registers_peak_fits_and_computed_cifs(
@@ -167,6 +193,24 @@ def test_data_tree_registers_peak_fits_and_computed_cifs(
             "cif_text": "data_candidate_001\n",
         }
     }
+    project.reference_cifs["loaded"] = {
+        "reference_001": {
+            "cif_id": "reference_001",
+            "label": "Reference 001",
+            "path": str(cif_path),
+            "source": "loaded",
+            "crystal_system": "Tetragonal",
+            "lattice": {
+                "a": 4.2,
+                "b": 4.2,
+                "c": 7.1,
+                "alpha": 90.0,
+                "beta": 90.0,
+                "gamma": 90.0,
+            },
+            "cif_text": "data_reference_001\n",
+        }
+    }
     project.structures["candidate_001"] = {
         "structure_id": "candidate_001",
         "source": "structure_analysis_generated_cif",
@@ -201,14 +245,23 @@ def test_data_tree_registers_peak_fits_and_computed_cifs(
     assert (
         _child_with_text(cif_item, "CIF text").text(1) == "embedded, 1 lines"
     )
+    loaded_item = _child_with_text(root, "Loaded CIFs")
+    assert loaded_item.text(1) == "1"
+    loaded_cif_item = _child_with_text(loaded_item, "Reference 001")
+    assert _child_with_text(loaded_cif_item, "Crystal system").text(1) == (
+        "Tetragonal"
+    )
+    assert _child_with_text(loaded_cif_item, "a").text(1) == "4.2"
 
 
 def test_main_window_has_left_data_dock(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
+    app = QtWidgets.QApplication.instance()
 
     assert APP_TITLE == "EWALD"
     assert window.windowTitle() == APP_TITLE
+    assert app is None or app.property(THEME_PROPERTY)
     assert window.data_dock.windowTitle() == "Experimental Data"
     assert window.data_tree.tree.headerItem().text(0) == "Experimental Data"
     assert window.data_tree.new_button.toolTip() == "New Project"
@@ -284,29 +337,65 @@ def test_main_window_has_left_data_dock(qtbot):
     assert window.save_project_action.shortcut() == QtGui.QKeySequence(
         QtGui.QKeySequence.StandardKey.Save
     )
+    assert window.new_project_action.shortcut() == QtGui.QKeySequence(
+        QtGui.QKeySequence.StandardKey.New
+    )
+    assert window.open_project_action.shortcut() == QtGui.QKeySequence(
+        QtGui.QKeySequence.StandardKey.Open
+    )
+    toolbar_actions = [
+        action.text()
+        for action in window.workflow_toolbar.actions()
+        if action.text()
+    ]
+    assert toolbar_actions == [
+        "New Project",
+        "Open Project",
+        "Save Project",
+        "Import Data File",
+        "Import Data Folder",
+        "PyFAI Calibration/Mask Tool",
+        "GIWAXS Simulation",
+        "Pole Figure Generator",
+    ]
     assert window.workflow_context_label.text() == "No Project"
+    assert window.save_status_label.text() == "No project saved"
     assert not window.load_files_action.isEnabled()
-    assert not window.giwaxs_simulation_action.isEnabled()
+    assert window.giwaxs_simulation_action.isEnabled()
     assert window.pyfai_calibration_action.isEnabled()
     assert not window.data_tree.import_file_button.isEnabled()
 
 
-def test_new_project_enables_import_and_save_actions(qtbot, monkeypatch):
+def test_new_project_enables_import_and_save_actions(
+    qtbot, tmp_path, monkeypatch
+):
     window = MainWindow()
     qtbot.addWidget(window)
+    project_path = tmp_path / "named_project.ewld"
     monkeypatch.setattr(
         QtWidgets.QInputDialog,
         "getText",
         lambda *args, **kwargs: ("Named Project", True),
+    )
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(project_path), "EWALD Projects (*.ewld)"),
     )
 
     window.new_project()
 
     assert window.project_active
     assert window.project.name == "Named Project"
+    assert window.project_path == project_path
+    assert load_project(project_path).name == "Named Project"
+    assert window.save_status_label.text().startswith("Last saved:")
     assert window.load_files_action.isEnabled()
     assert window.save_project_action.isEnabled()
     assert window.data_tree.import_file_button.isEnabled()
+    assert [
+        window.tabs.tabText(index) for index in range(window.tabs.count())
+    ] == ["Project", "GIWAXS Simulation"]
 
 
 def test_load_file_prompts_for_display_name_and_preserves_original_filename(
@@ -397,6 +486,7 @@ def test_new_project_offers_to_save_current_project(
     window = MainWindow(project=project)
     qtbot.addWidget(window)
     window.project_path = tmp_path / "current_project.ewld"
+    next_path = tmp_path / "fresh_project.ewld"
     monkeypatch.setattr(
         QtWidgets.QMessageBox,
         "question",
@@ -407,14 +497,20 @@ def test_new_project_offers_to_save_current_project(
         "getText",
         lambda *args, **kwargs: ("Fresh Project", True),
     )
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(next_path), "EWALD Projects (*.ewld)"),
+    )
 
     window.new_project()
 
     saved = load_project(tmp_path / "current_project.ewld")
     assert saved.name == "Current Project"
     assert window.project_active
-    assert window.project_path is None
+    assert window.project_path == next_path
     assert window.project.name == "Fresh Project"
+    assert load_project(next_path).name == "Fresh Project"
 
 
 def test_new_project_cancel_keeps_current_project(
@@ -483,6 +579,37 @@ def test_new_project_cancelled_name_keeps_current_state(qtbot, monkeypatch):
     assert window.project.name == "Current Project"
 
 
+def test_new_project_cancelled_initial_save_keeps_current_state(
+    qtbot, tmp_path, monkeypatch
+):
+    project = ProjectState(name="Current Project")
+    window = MainWindow(
+        project=project, project_path=tmp_path / "current.ewld"
+    )
+    qtbot.addWidget(window)
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "question",
+        lambda *args, **kwargs: QtWidgets.QMessageBox.StandardButton.Discard,
+    )
+    monkeypatch.setattr(
+        QtWidgets.QInputDialog,
+        "getText",
+        lambda *args, **kwargs: ("Fresh Project", True),
+    )
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: ("", ""),
+    )
+
+    window.new_project()
+
+    assert window.project is project
+    assert window.project_path == tmp_path / "current.ewld"
+    assert window.project.name == "Current Project"
+
+
 def test_loaded_project_window_saves_back_to_project_path(qtbot, tmp_path):
     saved_path = write_project(
         ProjectState(name="Reloaded Project"),
@@ -494,9 +621,53 @@ def test_loaded_project_window_saves_back_to_project_path(qtbot, tmp_path):
 
     window.project.name = "Reloaded Project Updated"
 
+    assert window.save_status_label.text() == f"Saved: {saved_path.name}"
     assert window.save_project()
     assert window.project_path == saved_path
+    assert window.save_status_label.text().startswith("Last saved:")
     assert load_project(saved_path).name == "Reloaded Project Updated"
+
+
+def test_recent_project_menu_tracks_saved_and_opened_projects(
+    qtbot,
+    tmp_path,
+):
+    settings = QtCore.QSettings(
+        str(tmp_path / "settings.ini"),
+        QtCore.QSettings.Format.IniFormat,
+    )
+    first_path = write_project(
+        ProjectState(name="First Recent"),
+        tmp_path / "first_recent",
+    )
+    second_path = write_project(
+        ProjectState(name="Second Recent"),
+        tmp_path / "second_recent",
+    )
+    window = MainWindow(settings=settings)
+    qtbot.addWidget(window)
+
+    window._remember_recent_project(first_path)
+    window._remember_recent_project(second_path)
+
+    recent_actions = [
+        action
+        for action in window.recent_projects_menu.actions()
+        if action.text() and action.text() != "Clear Recent"
+    ]
+    assert [action.toolTip() for action in recent_actions] == [
+        str(second_path),
+        str(first_path),
+    ]
+
+    window._open_recent_project(str(first_path))
+
+    assert window.project_active
+    assert window.project.name == "First Recent"
+    assert window.project_path == first_path
+    assert window.recent_projects_menu.actions()[0].toolTip() == str(
+        first_path
+    )
 
 
 def test_save_project_as_defaults_and_remembers_project_folder(
@@ -529,6 +700,7 @@ def test_save_project_as_defaults_and_remembers_project_folder(
     assert window.save_project_as()
     assert Path(first_capture["path"]).parent == repo_root / "example/projects"
     assert window.project_path == custom_path
+    assert window.save_status_label.text().startswith("Last saved:")
 
     next_settings = QtCore.QSettings(
         str(settings_path),
@@ -731,14 +903,19 @@ def test_uncorrected_data_file_shows_raw_viewer_and_corrections_tab(
     file_item = window.data_tree.tree.topLevelItem(0).child(0)
     window.data_tree.tree.setCurrentItem(file_item)
 
-    assert window.tabs.count() == 2
+    assert window.tabs.count() == 3
     assert window.tabs.tabText(0) == "Data Viewer"
     assert window.tabs.tabText(1) == "Apply Image Corrections"
+    assert window.tabs.tabText(2) == "GIWAXS Simulation"
     viewer = window.tabs.widget(0)
     assert viewer.coordinate_space == "pixel"
     assert viewer.axis_ranges is None
     assert not viewer.roi_table.isEnabled()
     pane = window.tabs.widget(1)
+    assert (
+        window.tabs.widget(2).selected_data_id()
+        == group.data_files[0].data_id
+    )
     assert pane.load_mask_button.defaultAction() is window.load_mask_action
     assert (
         pane.load_mask_button.toolButtonStyle()
@@ -873,7 +1050,13 @@ def test_raw_preview_orientation_buttons_update_pyfai_state(qtbot, repo_root):
     assert pane.sample_orientation_combo.currentData() == 2
 
 
-def test_confirming_image_corrections_unlocks_analysis_tabs(qtbot, repo_root):
+def test_confirming_image_corrections_unlocks_analysis_tabs(
+    qtbot,
+    repo_root,
+    monkeypatch,
+):
+    from ewald.ui import corrections as corrections_ui
+
     path = next((repo_root / "example").glob("*.tiff"))
     group, _ = build_data_group_from_paths([path], group_name="Example")
     project = ProjectState()
@@ -887,6 +1070,66 @@ def test_confirming_image_corrections_unlocks_analysis_tabs(qtbot, repo_root):
     file_item = window.data_tree.tree.topLevelItem(0).child(0)
     window.data_tree.tree.setCurrentItem(file_item)
     pane = window.tabs.widget(1)
+    progress_dialogs = []
+
+    class FakeProgressDialog:
+        def __init__(self, label, cancel, minimum, maximum, parent):
+            self.label = label
+            self.cancel = cancel
+            self.range = (minimum, maximum)
+            self.parent = parent
+            self.window_title = ""
+            self.modality = None
+            self.cancel_button = "unset"
+            self.minimum_duration = None
+            self.auto_close = None
+            self.auto_reset = None
+            self.shown = False
+            self.value = None
+            self.closed = False
+            self.deleted = False
+            progress_dialogs.append(self)
+
+        def setWindowTitle(self, title):
+            self.window_title = title
+
+        def setWindowModality(self, modality):
+            self.modality = modality
+
+        def setCancelButton(self, button):
+            self.cancel_button = button
+
+        def setMinimumDuration(self, duration):
+            self.minimum_duration = duration
+
+        def setAutoClose(self, enabled):
+            self.auto_close = enabled
+
+        def setAutoReset(self, enabled):
+            self.auto_reset = enabled
+
+        def show(self):
+            self.shown = True
+            assert not pane.confirm_button.isEnabled()
+            assert not project.image_corrections_confirmed(data_id)
+
+        def setRange(self, minimum, maximum):
+            self.range = (minimum, maximum)
+
+        def setValue(self, value):
+            self.value = value
+
+        def close(self):
+            self.closed = True
+
+        def deleteLater(self):
+            self.deleted = True
+
+    monkeypatch.setattr(
+        corrections_ui.QtWidgets,
+        "QProgressDialog",
+        FakeProgressDialog,
+    )
     correction_tooltip_widgets = [
         pane.load_mask_button,
         pane.load_calibrant_button,
@@ -948,6 +1191,23 @@ def test_confirming_image_corrections_unlocks_analysis_tabs(qtbot, repo_root):
     pane.add_artifact_region()
     pane.confirm_corrections()
 
+    assert pane.confirm_button.isEnabled()
+    assert len(progress_dialogs) == 1
+    progress = progress_dialogs[0]
+    assert progress.label == "Applying image corrections..."
+    assert progress.cancel == ""
+    assert progress.parent is pane
+    assert progress.window_title == "Applying Corrections"
+    assert progress.modality == QtCore.Qt.WindowModality.WindowModal
+    assert progress.cancel_button is None
+    assert progress.minimum_duration == 0
+    assert progress.auto_close is False
+    assert progress.auto_reset is False
+    assert progress.shown
+    assert progress.range == (0, 1)
+    assert progress.value == 1
+    assert progress.closed
+    assert progress.deleted
     assert project.image_corrections[data_id].confirmed
     assert project.image_corrections[data_id].critical_angle_deg == 0.12
     assert project.image_corrections[data_id].xray_energy_kev == 13.5
@@ -1616,8 +1876,43 @@ def test_peak_finder_presets_update_detection_controls(qtbot):
     assert pane.adaptive_peak_threshold_check.isChecked()
 
 
-def test_peak_finder_mirrors_selected_missing_peaks(qtbot):
+def test_peak_identification_removes_exact_coordinate_duplicates(qtbot):
     from ewald.ui.peak_identification import PeakIdentificationPane
+
+    project = ProjectState()
+    pane = PeakIdentificationPane(project, "synthetic")
+    qtbot.addWidget(pane)
+
+    pane.image_data = np.zeros((9, 9), dtype=float)
+    pane.axis_ranges = (-1.0, 1.0, -1.0, 1.0)
+    pane.coordinate_space = "qspace"
+
+    first = pane.add_peak_at(0.25, -0.5, record_history=False)
+    duplicate = pane.add_peak_at(0.25, -0.5, record_history=False)
+
+    records = project.peak_sets["synthetic"]
+    assert len(records) == 1
+    assert records[0]["peak_id"] == first["peak_id"]
+    assert duplicate["peak_id"] not in {
+        record["peak_id"] for record in records
+    }
+    assert pane.active_peak_id == first["peak_id"]
+    assert "Removed 1 duplicate point" in pane.snap_feedback_label.text()
+
+    nearby = pane.add_peak_at(0.2500001, -0.5, record_history=False)
+    records = project.peak_sets["synthetic"]
+    assert len(records) == 2
+    assert {record["peak_id"] for record in records} == {
+        first["peak_id"],
+        nearby["peak_id"],
+    }
+
+
+def test_peak_finder_mirrors_selected_missing_peaks(qtbot):
+    from ewald.ui.peak_identification import (
+        MIRROR_SOURCE_POSITIVE_QXY,
+        PeakIdentificationPane,
+    )
 
     project = ProjectState()
     pane = PeakIdentificationPane(project, "synthetic")
@@ -1626,8 +1921,10 @@ def test_peak_finder_mirrors_selected_missing_peaks(qtbot):
     pane.image_data = np.zeros((41, 41), dtype=float)
     pane.axis_ranges = (-1.0, 1.0, 0.0, 2.0)
     pane.coordinate_space = "qspace"
+    pane.image_data[25, 8] = 10.0
     pane.symmetry_qxy_tolerance.setValue(0.02)
     pane.symmetry_qz_tolerance.setValue(0.02)
+    assert pane.mirror_source_combo.currentData() == MIRROR_SOURCE_POSITIVE_QXY
 
     matched_source = pane.add_peak_at(
         0.35,
@@ -1666,14 +1963,38 @@ def test_peak_finder_mirrors_selected_missing_peaks(qtbot):
     ]
     assert len(mirrored) == 1
     mirrored_peak = mirrored[0]
-    assert mirrored_peak["qxy"] == pytest.approx(-0.65)
-    assert mirrored_peak["qz"] == pytest.approx(1.2)
+    assert mirrored_peak["qxy"] == pytest.approx(-0.6)
+    assert mirrored_peak["qz"] == pytest.approx(1.25)
+    assert mirrored_peak["intensity"] == pytest.approx(10.0)
     assert mirrored_peak["source"] == "gap estimate"
     assert mirrored_peak["point_kind"] == PEAK_POINT_KIND_GAP_ESTIMATED
     assert mirrored_peak["gap_estimated"] is True
     assert mirrored_peak["metadata"]["estimate_method"] == (
         "mirror across qz axis"
     )
+    assert mirrored_peak["metadata"]["mirror_source_qxy"] == pytest.approx(
+        0.65
+    )
+    assert mirrored_peak["metadata"]["snapped_to_local_maximum"] is True
+    assert missing_source["qxy"] == pytest.approx(0.65)
+    assert matched_source["qxy"] == pytest.approx(0.35)
+    assert len(pane.mirror_peak_scatter.points()) == 0
+    assert len(pane.active_mirror_peak_scatter.points()) == 1
+    assert pane.mirror_peak_scatter.opts["symbol"] == "o"
+    assert pane.active_mirror_peak_scatter.opts["symbol"] == "o"
+    assert (
+        pane.mirror_peak_scatter.opts["size"] == pane.peak_scatter.opts["size"]
+    )
+    assert (
+        pane.active_mirror_peak_scatter.opts["size"]
+        == pane.peak_scatter.opts["size"]
+    )
+    assert (
+        pane.active_mirror_peak_scatter.opts["brush"].color().name()
+        == QtGui.QColor("#16a34a").name()
+    )
+    assert len(pane.gap_peak_scatter.points()) == 0
+    assert len(pane.active_gap_peak_scatter.points()) == 0
     assert not any(
         record.get("metadata", {}).get("mirror_source_peak_id")
         == matched_source["peak_id"]
@@ -1859,7 +2180,9 @@ def test_batch_peak_fit_flags_and_sorts_problem_fits(qtbot):
     )
 
 
-def test_peak_identification_crystal_overlay_updates_project(qtbot, repo_root):
+def test_peak_identification_crystal_overlay_updates_project(
+    qtbot, repo_root, tmp_path
+):
     path = next((repo_root / "example").glob("*.tiff"))
     group, _ = build_data_group_from_paths([path], group_name="Example")
     data_id = group.data_files[0].data_id
@@ -1919,7 +2242,42 @@ def test_peak_identification_crystal_overlay_updates_project(qtbot, repo_root):
     assert pane.auto_update_crystal_overlay_button.isCheckable()
     assert pane.auto_update_crystal_overlay_button.isChecked()
 
+    reference_cif = tmp_path / "reference_tetragonal.cif"
+    reference_cif.write_text(
+        "\n".join(
+            [
+                "data_reference",
+                "_cell_length_a 4.2(1)",
+                "_cell_length_b 4.2",
+                "_cell_length_c 7.1",
+                "_cell_angle_alpha 90",
+                "_cell_angle_beta 90",
+                "_cell_angle_gamma 90",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    loaded_record = pane.load_reference_cif_path(reference_cif)
+
+    assert loaded_record["cif_id"] in project.reference_cifs["loaded"]
+    assert loaded_record["lattice"]["a"] == pytest.approx(4.2)
+    assert loaded_record["lattice"]["c"] == pytest.approx(7.1)
+    assert loaded_record["crystal_system"] == "Tetragonal"
+    assert pane.loaded_cif_combo.currentData() == loaded_record["cif_id"]
+    assert pane.crystal_system_combo.currentText() == "Tetragonal"
+    assert pane.lattice_a.value() == pytest.approx(4.2)
+    assert pane.lattice_b.value() == pytest.approx(4.2)
+    assert pane.lattice_c.value() == pytest.approx(7.1)
+    overlay_state = project.analysis_results["crystal_overlays"][data_id]
+    assert overlay_state["loaded_cif_id"] == loaded_record["cif_id"]
+    assert overlay_state["rotation_convention"] == (
+        "giwaxs-simulation-theta-x-theta-y"
+    )
+
     pane.crystal_system_combo.setCurrentText("Cubic")
+    assert pane.loaded_cif_combo.currentData() is None
     pane.lattice_a.setValue(10.0)
     pane.h_max.setValue(1)
     pane.k_max.setValue(0)
@@ -1940,6 +2298,7 @@ def test_peak_identification_crystal_overlay_updates_project(qtbot, repo_root):
 
     assert pane.crystal_overlay_scatter is not None
     assert len(pane.crystal_overlay_scatter.points()) == 2
+    assert pane.crystal_overlay_scatter.isVisible()
     assert [
         point.data() for point in pane.crystal_overlay_scatter.points()
     ] == [
@@ -1950,8 +2309,27 @@ def test_peak_identification_crystal_overlay_updates_project(qtbot, repo_root):
         "(-1 0 0)",
         "(1 0 0)",
     ]
-    qxy_before, _ = pane.crystal_overlay_scatter.getData()
+    qxy_before, qz_before = pane.crystal_overlay_scatter.getData()
     assert np.max(np.abs(qxy_before)) == pytest.approx(2 * np.pi / 10.0)
+    assert np.max(np.abs(qz_before)) < 1.0e-8
+
+    pane.orientation_y_spin.setValue(90.0)
+    qxy_spin_rotated, qz_spin_rotated = pane.crystal_overlay_scatter.getData()
+    assert np.max(np.abs(qxy_spin_rotated)) < 1.0e-8
+    assert np.max(np.abs(qz_spin_rotated)) == pytest.approx(2 * np.pi / 10.0)
+
+    pane.reset_orientation_button.click()
+    qxy_reset, qz_reset = pane.crystal_overlay_scatter.getData()
+    assert np.max(np.abs(qxy_reset)) == pytest.approx(2 * np.pi / 10.0)
+    assert np.max(np.abs(qz_reset)) < 1.0e-8
+
+    pane.orientation_y_slider.setValue(900)
+    qxy_slider_rotated, qz_slider_rotated = (
+        pane.crystal_overlay_scatter.getData()
+    )
+    assert np.max(np.abs(qxy_slider_rotated)) < 1.0e-8
+    assert np.max(np.abs(qz_slider_rotated)) == pytest.approx(2 * np.pi / 10.0)
+    pane.reset_orientation_button.click()
 
     pane.show_crystal_hkl_labels_check.setChecked(False)
     pane._update_crystal_overlay()
@@ -1974,7 +2352,9 @@ def test_peak_identification_crystal_overlay_updates_project(qtbot, repo_root):
     assert overlay_state["auto_update_overlay"] is False
 
     pane._rotate_crystal((0.0, 1.0, 0.0), 90.0)
-    pane._update_crystal_overlay()
+    qxy_rotated, qz_rotated = pane.crystal_overlay_scatter.getData()
+    assert np.max(np.abs(qxy_rotated)) < 1.0e-8
+    assert np.max(np.abs(qz_rotated)) == pytest.approx(2 * np.pi / 20.0)
     quaternion = project.analysis_results["crystal_overlays"][data_id][
         "parameters"
     ]["orientation_quaternion"]
@@ -1983,6 +2363,24 @@ def test_peak_identification_crystal_overlay_updates_project(qtbot, repo_root):
     assert project.analysis_results["crystal_overlays"][data_id][
         "orientation_angles_deg"
     ][1] == pytest.approx(90.0)
+
+    pane.show_crystal_overlay_check.setChecked(False)
+    qxy_hidden, qz_hidden = pane.crystal_overlay_scatter.getData()
+    assert len(qxy_hidden) == 0
+    assert len(qz_hidden) == 0
+    assert not pane.crystal_overlay_scatter.isVisible()
+    overlay_state = project.analysis_results["crystal_overlays"][data_id]
+    assert overlay_state["show_overlay"] is False
+    assert overlay_state["auto_update_overlay"] is False
+
+    pane.show_crystal_overlay_check.setChecked(True)
+    qxy_visible, qz_visible = pane.crystal_overlay_scatter.getData()
+    assert len(qxy_visible) == 2
+    assert pane.crystal_overlay_scatter.isVisible()
+    assert np.max(np.abs(qxy_visible)) < 1.0e-8
+    assert np.max(np.abs(qz_visible)) == pytest.approx(2 * np.pi / 20.0)
+    overlay_state = project.analysis_results["crystal_overlays"][data_id]
+    assert overlay_state["show_overlay"] is True
 
     pane._update_crystal_overlay()
     pane.h_max.setValue(2)
@@ -2053,6 +2451,12 @@ def test_data_viewer_persists_box_and_arch_rois(qtbot, repo_root):
     assert viewer.roi_table.horizontalHeaderItem(ROI_COL_H).text() == "h"
     assert viewer.roi_table.horizontalHeaderItem(ROI_COL_K).text() == "k"
     assert viewer.roi_table.horizontalHeaderItem(ROI_COL_L).text() == "l"
+    assert (
+        viewer.roi_table.horizontalHeaderItem(
+            ROI_COL_INTEGRATED_INTENSITY
+        ).text()
+        == "Integrated I"
+    )
     assert viewer.roi_table.item(0, 4).text() == "vertical"
 
 
@@ -2075,6 +2479,16 @@ def test_data_viewer_edits_hkl_and_emits_pole_figure_context(qtbot, repo_root):
 
     roi = viewer.add_roi_from_bounds(2.0, 4.0, 3.0, 7.0)
     assert roi is not None
+    intensity = roi.metadata["integrated_intensity"]
+    assert intensity["integrated_intensity"] == pytest.approx(795.0)
+    assert intensity["finite_pixel_count"] == 15
+    assert (
+        viewer.roi_table.item(
+            0,
+            ROI_COL_INTEGRATED_INTENSITY,
+        ).text()
+        == "795"
+    )
 
     viewer.roi_table.item(0, ROI_COL_H).setText("1")
     viewer.roi_table.item(0, ROI_COL_K).setText("0")
@@ -2109,6 +2523,16 @@ def test_data_viewer_edits_hkl_and_emits_pole_figure_context(qtbot, repo_root):
     viewer.roi_table.item(0, ROI_COL_QXY_MAX).setText("5.0")
 
     assert roi.qxy_max == pytest.approx(5.0)
+    assert roi.metadata["integrated_intensity"][
+        "integrated_intensity"
+    ] == pytest.approx(1070.0)
+    assert (
+        viewer.roi_table.item(
+            0,
+            ROI_COL_INTEGRATED_INTENSITY,
+        ).text()
+        == "1070"
+    )
     assert viewer.roi_table.item(0, ROI_COL_POLE_FIGURE).text() == "Stale"
     if roi.roi_id in viewer.roi_graphics:
         graphic = viewer.roi_graphics[roi.roi_id]
@@ -2163,6 +2587,155 @@ def test_data_viewer_coupled_box_arch_pair_shares_center_and_decouples(qtbot):
     assert "coupled_roi_ids" not in box.metadata
     assert "coupled_roi_ids" not in arch.metadata
     assert viewer.roi_table.item(0, ROI_COL_COUPLED).text() == ""
+
+
+def test_data_viewer_duplicates_box_roi_independently(qtbot):
+    project = ProjectState()
+    data_id = "synthetic"
+    project.set_image_corrections(
+        ImageCorrectionState(target_id=data_id, confirmed=True)
+    )
+    viewer = DataViewerPane(project, data_id)
+    qtbot.addWidget(viewer)
+    viewer.image_data = np.arange(100, dtype=float).reshape(10, 10)
+    viewer.axis_ranges = (0.0, 9.0, 0.0, 9.0)
+    viewer.coordinate_space = "qspace"
+    viewer.roi_controls_enabled = True
+    viewer._set_roi_controls_enabled(True)
+
+    pair = viewer.add_coupled_roi_pair_from_bounds(2.0, 4.0, 3.0, 7.0)
+    assert pair is not None
+    box, arch = pair
+    viewer._toggle_roi_channel(box.roi_id, 1, True)
+    viewer._select_roi(box.roi_id)
+    viewer._sync_arch_controls_from_selection()
+
+    assert viewer.duplicate_roi_button.isEnabled()
+    viewer.duplicate_roi_button.click()
+
+    rois = project.rois_for_target(data_id)
+    assert len(rois) == 3
+    duplicate = rois[-1]
+    assert duplicate.kind == "box"
+    assert duplicate.roi_id != box.roi_id
+    assert duplicate.name == f"{box.name} copy"
+    assert duplicate.source == "duplicated"
+    assert duplicate.integration_axis == box.integration_axis
+    assert duplicate.integration_direction == box.integration_direction
+    assert duplicate.qxy_min == pytest.approx(box.qxy_min)
+    assert duplicate.qxy_max == pytest.approx(box.qxy_max)
+    assert duplicate.qz_min == pytest.approx(box.qz_min)
+    assert duplicate.qz_max == pytest.approx(box.qz_max)
+    assert duplicate.roi_id not in viewer.channel_assignments[1]
+    assert viewer.roi_table.item(2, ROI_COL_COUPLED).text() == ""
+    for metadata_key in (
+        "coupling_id",
+        "coupled_roi_id",
+        "coupled_roi_ids",
+        "shared_center",
+        "pole_figure",
+    ):
+        assert metadata_key not in duplicate.metadata
+
+    duplicate_graphic = viewer.roi_graphics[duplicate.roi_id]
+    duplicate_graphic.setPos((5.0, 1.0))
+    duplicate_graphic.setSize((1.0, 2.0))
+    viewer._handle_roi_graphic_changed(duplicate.roi_id, duplicate_graphic)
+
+    assert duplicate.qxy_min == pytest.approx(5.0)
+    assert duplicate.qxy_max == pytest.approx(6.0)
+    assert duplicate.qz_min == pytest.approx(1.0)
+    assert duplicate.qz_max == pytest.approx(3.0)
+    assert box.qxy_min == pytest.approx(2.0)
+    assert box.qxy_max == pytest.approx(4.0)
+    assert box.qz_min == pytest.approx(3.0)
+    assert box.qz_max == pytest.approx(7.0)
+    assert arch.qxy_center == pytest.approx(3.0)
+    assert arch.qz_center == pytest.approx(5.0)
+
+    viewer._select_roi(arch.roi_id)
+    viewer._sync_arch_controls_from_selection()
+    assert not viewer.duplicate_roi_button.isEnabled()
+
+
+def test_data_viewer_add_roi_button_and_a_toggle_crosshair_draw_mode(qtbot):
+    project = ProjectState()
+    data_id = "synthetic"
+    project.set_image_corrections(
+        ImageCorrectionState(target_id=data_id, confirmed=True)
+    )
+    viewer = DataViewerPane(project, data_id)
+    qtbot.addWidget(viewer)
+    viewer.image_data = np.arange(100, dtype=float).reshape(10, 10)
+    viewer.axis_ranges = (0.0, 9.0, 0.0, 9.0)
+    viewer.coordinate_space = "qspace"
+    viewer.roi_controls_enabled = True
+    viewer._set_roi_controls_enabled(True)
+
+    viewer.arch_button.setChecked(True)
+    assert not viewer.draw_toggle.isChecked()
+    assert viewer.roi_crosshair_popup.isHidden()
+
+    viewer.add_roi_button.click()
+
+    assert viewer.box_button.isChecked()
+    assert viewer.draw_toggle.isChecked()
+    assert viewer.view_box.drawing_enabled
+    assert viewer.plot_widget.cursor().shape() == (
+        QtCore.Qt.CursorShape.CrossCursor
+    )
+    assert not viewer.roi_crosshair_popup.isHidden()
+    assert "draw a box ROI" in viewer.roi_crosshair_popup.text()
+    assert "Press A" in viewer.roi_crosshair_popup.text()
+    assert project.rois_for_target(data_id) == []
+
+    qtbot.keyClick(viewer, QtCore.Qt.Key.Key_A)
+
+    assert not viewer.draw_toggle.isChecked()
+    assert not viewer.view_box.drawing_enabled
+    assert viewer.roi_crosshair_popup.isHidden()
+
+    qtbot.keyClick(viewer, QtCore.Qt.Key.Key_A)
+
+    assert viewer.draw_toggle.isChecked()
+    assert viewer.view_box.drawing_enabled
+    assert not viewer.roi_crosshair_popup.isHidden()
+
+
+def test_data_viewer_table_selection_illuminates_roi_border(qtbot):
+    project = ProjectState()
+    data_id = "synthetic"
+    project.set_image_corrections(
+        ImageCorrectionState(target_id=data_id, confirmed=True)
+    )
+    viewer = DataViewerPane(project, data_id)
+    qtbot.addWidget(viewer)
+    viewer.image_data = np.arange(100, dtype=float).reshape(10, 10)
+    viewer.axis_ranges = (0.0, 9.0, 0.0, 9.0)
+    viewer.coordinate_space = "qspace"
+    viewer.roi_controls_enabled = True
+    viewer._set_roi_controls_enabled(True)
+
+    first = viewer.add_roi_from_bounds(1.0, 3.0, 1.0, 3.0)
+    assert first is not None
+    second = viewer.add_roi_from_bounds(4.0, 6.0, 4.0, 6.0)
+    assert second is not None
+
+    first_graphic = viewer.roi_graphics[first.roi_id]
+    second_graphic = viewer.roi_graphics[second.roi_id]
+    selected_color = QtGui.QColor("#facc15").name()
+    normal_color = QtGui.QColor("#2a9d8f").name()
+
+    assert second_graphic.currentPen.color().name() == selected_color
+    assert second_graphic.currentPen.widthF() == pytest.approx(4.0)
+    assert first_graphic.currentPen.color().name() == normal_color
+
+    viewer.roi_table.selectRow(0)
+
+    assert first_graphic.currentPen.color().name() == selected_color
+    assert first_graphic.currentPen.widthF() == pytest.approx(4.0)
+    assert second_graphic.currentPen.color().name() == normal_color
+    assert second_graphic.currentPen.widthF() == pytest.approx(2.0)
 
 
 def test_data_viewer_roi_graphics_are_draggable_and_resizable(
@@ -2451,6 +3024,19 @@ def test_roi_integration_channels_lock_axes_and_clear(qtbot, repo_root):
     viewer = window.tabs.widget(0)
     assert viewer.channel_panels[1].drag_label.text() == "Channel 1"
     assert viewer.channel_panels[2].drag_label.text() == "Channel 2"
+    panel = viewer.channel_panels[1]
+    assert panel.primary_button_row.indexOf(panel.detect_peaks_button) >= 0
+    assert panel.secondary_button_row.indexOf(panel.push_markers_button) >= 0
+    for button in (
+        panel.clear_marks_button,
+        panel.detect_peaks_button,
+        panel.autosnap_button,
+        panel.push_markers_button,
+        panel.clear_button,
+    ):
+        assert button.minimumWidth() >= (
+            button.fontMetrics().horizontalAdvance(button.text()) + 16
+        )
 
     vertical = viewer.add_roi_from_bounds(0.1, 0.4, -1.5, -0.7)
     assert vertical is not None
@@ -2622,7 +3208,7 @@ def test_integration_channel_peak_markers_push_to_peak_identification(
 
     viewer._push_channel_markers(1)
 
-    assert window.tabs.currentWidget() is pane
+    assert window.tabs.currentWidget() is viewer
     assert len(project.peak_sets[data_id]) == 1
     pushed = project.peak_sets[data_id][0]
     assert pushed["source"] == "integration-channel"
@@ -2673,6 +3259,87 @@ def test_integration_channel_peak_markers_push_to_peak_identification(
         project.peak_sets[data_id][0]["point_kind"]
         == PEAK_POINT_KIND_COMMITTED
     )
+
+
+def test_integration_channel_markers_survive_roi_channel_toggles(
+    qtbot,
+    tmp_path,
+):
+    project = ProjectState()
+    data_file = project.add_data_file(tmp_path / "synthetic.tiff")
+    data_id = data_file.data_id
+    assert data_id is not None
+    project.set_image_corrections(
+        ImageCorrectionState(target_id=data_id, confirmed=True)
+    )
+    viewer = DataViewerPane(project, data_id)
+    qtbot.addWidget(viewer)
+    viewer.image_data = np.arange(100, dtype=float).reshape(10, 10)
+    viewer.axis_ranges = (0.0, 9.0, 0.0, 9.0)
+    viewer.coordinate_space = "qspace"
+    viewer.roi_controls_enabled = True
+    viewer._set_roi_controls_enabled(True)
+
+    roi = viewer.add_roi_from_bounds(2.0, 4.0, 3.0, 7.0)
+    assert roi is not None
+    viewer._toggle_roi_channel(roi.roi_id, 1, True)
+    viewer._add_channel_peak_marker(1, roi.roi_id, 5.0, 123.0)
+
+    marker = viewer.integration_peak_markers[1][0]
+    marker_id = marker.marker_id
+    assert viewer.channel_panels[1].marker_count_label.text() == "1 mark"
+
+    viewer._toggle_roi_channel(roi.roi_id, 1, False)
+
+    assert viewer.integration_peak_markers[1][0].marker_id == marker_id
+    assert viewer.channel_panels[1].marker_count_label.text() == "0 marks"
+    assert viewer.channel_panels[1].plot_widget.markers == []
+
+    viewer._toggle_roi_channel(roi.roi_id, 1, True)
+
+    replotted = viewer.channel_panels[1].plot_widget.markers
+    assert [marker.marker_id for marker in replotted] == [marker_id]
+    assert replotted[0].channel == 1
+    assert replotted[0].label.startswith("Ch 1")
+    assert viewer.channel_panels[1].marker_count_label.text() == "1 mark"
+
+    viewer._toggle_roi_channel(roi.roi_id, 1, False)
+    viewer._toggle_roi_channel(roi.roi_id, 2, True)
+
+    cross_channel = viewer.channel_panels[2].plot_widget.markers
+    assert [marker.marker_id for marker in cross_channel] == [marker_id]
+    assert cross_channel[0].channel == 2
+    assert cross_channel[0].label.startswith("Ch 2")
+    assert viewer.channel_panels[2].marker_count_label.text() == "1 mark"
+
+    viewer._clear_channel_markers(2)
+
+    assert all(
+        marker.marker_id != marker_id
+        for markers in viewer.integration_peak_markers.values()
+        for marker in markers
+    )
+    assert viewer.channel_panels[2].marker_count_label.text() == "0 marks"
+
+    viewer._add_channel_peak_marker(2, roi.roi_id, 6.0, 456.0)
+    moved_marker_id = viewer.integration_peak_markers[2][0].marker_id
+    viewer._toggle_roi_channel(roi.roi_id, 2, False)
+    viewer._toggle_roi_channel(roi.roi_id, 1, True)
+    assert (
+        viewer.channel_panels[1].plot_widget.markers[0].marker_id
+        == moved_marker_id
+    )
+
+    graphic = viewer.roi_graphics[roi.roi_id]
+    graphic.setPos((3.0, 4.0))
+    viewer._handle_roi_graphic_changed(roi.roi_id, graphic)
+
+    assert all(
+        marker.marker_id != moved_marker_id
+        for markers in viewer.integration_peak_markers.values()
+        for marker in markers
+    )
+    assert viewer.channel_panels[1].marker_count_label.text() == "0 marks"
 
 
 def test_integration_channel_clicks_snap_and_detect_local_maxima(
@@ -2866,6 +3533,18 @@ def test_integration_channel_detaches_and_reattaches(qtbot, repo_root):
     assert detached_window.drag_label.text() == "Channel 1 (Vertical Box)"
     assert not detached_window.autosnap_button.isChecked()
     assert not detached_window.plot_widget.autosnap_enabled
+    assert (
+        detached_window.primary_button_row.indexOf(
+            detached_window.detect_peaks_button
+        )
+        >= 0
+    )
+    assert (
+        detached_window.secondary_button_row.indexOf(
+            detached_window.return_button
+        )
+        >= 0
+    )
 
     detached_window.autosnap_button.setChecked(True)
 
