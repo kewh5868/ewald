@@ -1,11 +1,12 @@
 """Headless experimental GIWAXS structure-refinement workflow.
 
-The synthetic benchmark harness creates controlled measurements.  This module
-starts from real detector data plus calibration assets, maps the image into
-q-space, detects peak families, generates chemically plausible inorganic
-scaffold hypotheses, and then runs the same staged scaffold/molecule refinement
-used by the benchmark.  Reference CIFs are accepted only as validation targets;
-their cell constants, coordinates, and stoichiometry are not fed to the solver.
+The synthetic benchmark harness creates controlled measurements.  This
+module starts from real detector data plus calibration assets, maps the
+image into q-space, detects peak families, generates chemically
+plausible inorganic scaffold hypotheses, and then runs the same staged
+scaffold/molecule refinement used by the benchmark.  Reference CIFs are
+accepted only as validation targets; their cell constants, coordinates,
+and stoichiometry are not fed to the solver.
 """
 
 from __future__ import annotations
@@ -48,9 +49,9 @@ from ewald.benchmark.structure_benchmark import (
     _write_json,
 )
 from ewald.data.models import (
+    CorrectionAssetRef,
     ImageCorrectionState,
     ProjectState,
-    CorrectionAssetRef,
 )
 from ewald.io.project import save_project
 from ewald.processing.qspace import (
@@ -201,7 +202,8 @@ PEROVSKITE_MOTIF_LIBRARY: tuple[dict[str, Any], ...] = (
 
 @dataclass(slots=True)
 class ExperimentalRefinementConfig:
-    """Controls for solving a real detector image with validation CIF."""
+    """Controls for solving a real detector image with validation
+    CIF."""
 
     output_dir: Path = DEFAULT_EXPERIMENTAL_OUTPUT_DIR
     qspace_shape: tuple[int, int] = (180, 220)
@@ -369,7 +371,8 @@ def run_experimental_refinement(
     config: ExperimentalRefinementConfig | None = None,
     label: str | None = None,
 ) -> ExperimentalRefinementResult:
-    """Solve one real detector image and validate against a known CIF."""
+    """Solve one real detector image and validate against a known
+    CIF."""
 
     cfg = config or ExperimentalRefinementConfig()
     reference_path = Path(reference_cif)
@@ -687,10 +690,11 @@ def perovskite_scaffold_hypotheses(
 ) -> list[dict[str, Any]]:
     """Return named perovskite/perovskitoid scaffold hypotheses.
 
-    The motifs are formulated for divalent Pb/Sn/Ge centers and monovalent
-    halides.  Organic and inorganic A-site cations are used for charge balance
-    when available, while neutral coordinating solvents are retained as
-    solvate/structure-directing species without contributing charge.
+    The motifs are formulated for divalent Pb/Sn/Ge centers and
+    monovalent halides.  Organic and inorganic A-site cations are used
+    for charge balance when available, while neutral coordinating
+    solvents are retained as solvate/structure-directing species without
+    contributing charge.
     """
 
     atoms = [

@@ -38,4 +38,3 @@ fi
 run_python "${args[@]}" | tee "$RUN_ROOT/feedback.log"
 echo "$OUTPUT" > "$RUN_ROOT/metrics_path.txt"
 echo "metrics=$OUTPUT"
-

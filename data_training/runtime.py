@@ -1,4 +1,5 @@
-"""Runtime and cluster path configuration for training-data generation."""
+"""Runtime and cluster path configuration for training-data
+generation."""
 
 from __future__ import annotations
 
@@ -11,7 +12,8 @@ from .config_io import load_config, tuple_of_strings
 
 @dataclass(frozen=True, slots=True)
 class ClusterRuntimeConfig:
-    """Cluster execution settings without opening network connections."""
+    """Cluster execution settings without opening network
+    connections."""
 
     cluster_name: str
     scheduler: str = "slurm"
@@ -95,7 +97,8 @@ class ClusterRuntimeConfig:
         }
 
     def link_commands(self) -> list[str]:
-        """Return shell commands that establish remote runtime folders."""
+        """Return shell commands that establish remote runtime
+        folders."""
 
         runtime_link_root = f"{self.remote_repo_root}/data_training/runtime"
         return [

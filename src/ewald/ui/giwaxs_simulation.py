@@ -679,11 +679,7 @@ class GIWAXSSimulationResultPane(QtWidgets.QWidget):
         )
         indexable_count = count - forbidden_count
         noun = "point" if indexable_count == 1 else "points"
-        suffix = (
-            f", {forbidden_count} forbidden"
-            if forbidden_count
-            else ""
-        )
+        suffix = f", {forbidden_count} forbidden" if forbidden_count else ""
         self.hkl_count_label.setText(
             f"{indexable_count} indexable {noun}{suffix}"
         )
@@ -1644,7 +1640,8 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
         project_path: Path | None = None,
         target_data_id: str | None = None,
     ) -> None:
-        """Refresh project-derived structures, links, and cached results."""
+        """Refresh project-derived structures, links, and cached
+        results."""
 
         if project_path is not None:
             self.project_path = project_path
@@ -4023,9 +4020,7 @@ def _peak_tooltip(
         lines.append(f"Intensity: {_format_peak_info_float(intensity)}")
     if _is_forbidden_peak_row(row):
         lines.append("Forbidden reflection; excluded from indexing/training")
-    return qt_tooltip(
-        "<br>".join(lines)
-    )
+    return qt_tooltip("<br>".join(lines))
 
 
 def _set_equal_3d_limits(axes: Any, points: np.ndarray) -> None:

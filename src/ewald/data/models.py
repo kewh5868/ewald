@@ -398,7 +398,8 @@ def roi_hkl_label(roi: ROIRegion) -> str:
 
 
 def roi_intensity_metadata(roi: ROIRegion) -> dict[str, Any]:
-    """Return normalized optional integrated-intensity metadata for an ROI."""
+    """Return normalized optional integrated-intensity metadata for an
+    ROI."""
 
     raw = roi.metadata.get(ROI_INTENSITY_METADATA_KEY, {})
     if not isinstance(raw, dict):
@@ -435,7 +436,8 @@ def set_roi_intensity_metadata(
     roi: ROIRegion,
     record: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Attach or clear computed integrated-intensity metadata for an ROI."""
+    """Attach or clear computed integrated-intensity metadata for an
+    ROI."""
 
     if not record:
         roi.metadata.pop(ROI_INTENSITY_METADATA_KEY, None)

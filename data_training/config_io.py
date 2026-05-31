@@ -11,8 +11,9 @@ def load_config(path: str | Path) -> dict[str, Any]:
     """Load a JSON or YAML mapping from ``path``.
 
     YAML support intentionally stays optional at import time. The EWALD
-    environment already includes PyYAML, but keeping the import lazy makes the
-    data-training modules cheap to inspect in minimal Python sessions.
+    environment already includes PyYAML, but keeping the import lazy
+    makes the data-training modules cheap to inspect in minimal Python
+    sessions.
     """
 
     config_path = Path(path)
@@ -51,7 +52,8 @@ def write_json(path: str | Path, payload: dict[str, Any]) -> Path:
 
 
 def require_mapping(payload: Any, *, context: str) -> dict[str, Any]:
-    """Return ``payload`` as a mapping or raise a clear validation error."""
+    """Return ``payload`` as a mapping or raise a clear validation
+    error."""
 
     if not isinstance(payload, dict):
         raise ValueError(f"{context} must be a mapping.")
@@ -59,7 +61,8 @@ def require_mapping(payload: Any, *, context: str) -> dict[str, Any]:
 
 
 def require_sequence(payload: Any, *, context: str) -> list[Any]:
-    """Return ``payload`` as a list or raise a clear validation error."""
+    """Return ``payload`` as a list or raise a clear validation
+    error."""
 
     if not isinstance(payload, list):
         raise ValueError(f"{context} must be a list.")
@@ -67,7 +70,8 @@ def require_sequence(payload: Any, *, context: str) -> list[Any]:
 
 
 def tuple_of_strings(value: Any) -> tuple[str, ...]:
-    """Normalize scalar/list config values to an immutable string tuple."""
+    """Normalize scalar/list config values to an immutable string
+    tuple."""
 
     if value is None:
         return ()

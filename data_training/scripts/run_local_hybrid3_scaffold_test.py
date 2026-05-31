@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# flake8: noqa: E402
 """Run a local HybriD3 2D lead-iodide GIWAXS scaffold smoke study."""
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "data_training" / "src"))
 
+from ewald_data_training.artifacts import apply_artifacts  # noqa: E402
 from ewald_data_training.hybrid3 import (  # noqa: E402
     HYBRID3_BASE_URL,
     Hybrid3DatasetRecord,
@@ -26,11 +28,10 @@ from ewald_data_training.hybrid3 import (  # noqa: E402
     fetch_atomic_structure_datasets,
 )
 from ewald_data_training.manifests import read_jsonl_manifest  # noqa: E402
-from ewald_data_training.artifacts import apply_artifacts  # noqa: E402
-from ewald_data_training.schemas import (
+from ewald_data_training.schemas import (  # noqa: E402
     ArtifactProfile,
     DetectorGeometry,
-)  # noqa: E402
+)
 
 DEFAULT_DATASET_IDS = [
     2788,

@@ -1,4 +1,5 @@
-"""Artifact-aware labels and ranking masks for synthetic GIWAXS training."""
+"""Artifact-aware labels and ranking masks for synthetic GIWAXS
+training."""
 
 from __future__ import annotations
 
@@ -24,7 +25,8 @@ def build_artifact_assessment(
     detector: DetectorGeometry | Mapping[str, Any] | None = None,
     image_shape: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
-    """Return compact artifact labels for model training and peak assessment."""
+    """Return compact artifact labels for model training and peak
+    assessment."""
 
     metadata = dict(artifact_metadata or {})
     profile = _profile_dict(artifact_profile)
@@ -198,7 +200,8 @@ def estimate_retrieval_quality(
     artifact_assessment: Mapping[str, Any] | None = None,
     detector: DetectorGeometry | Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Estimate whether an augmented image still contains retrievable signal."""
+    """Estimate whether an augmented image still contains retrievable
+    signal."""
 
     clean = _normalize_quality_image(clean_image)
     artifact = _normalize_quality_image(artifact_image)
@@ -322,7 +325,8 @@ def artifact_weight_map_from_assessment(
     detector: DetectorGeometry | Mapping[str, Any] | None = None,
     image_shape: tuple[int, int],
 ) -> np.ndarray:
-    """Rasterize artifact labels into multiplicative training weights."""
+    """Rasterize artifact labels into multiplicative training
+    weights."""
 
     geometry = _detector_geometry(detector)
     weights = np.ones(image_shape, dtype=np.float32)
@@ -575,7 +579,9 @@ def _detector_geometry(
     return DetectorGeometry.from_mapping(detector)
 
 
-def _detector_from_labels(labels: Mapping[str, Any]) -> DetectorGeometry | None:
+def _detector_from_labels(
+    labels: Mapping[str, Any]
+) -> DetectorGeometry | None:
     condition = labels.get("condition") or {}
     if not isinstance(condition, Mapping):
         return None

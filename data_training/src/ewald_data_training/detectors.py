@@ -1,4 +1,5 @@
-"""Detector presets and geometry utilities for training-data augmentation."""
+"""Detector presets and geometry utilities for training-data
+augmentation."""
 
 from __future__ import annotations
 
@@ -12,7 +13,8 @@ from .schemas import DetectorGeometry
 
 @dataclass(frozen=True, slots=True)
 class DetectorPreset:
-    """Physical detector footprint used to mask synthetic detector frames."""
+    """Physical detector footprint used to mask synthetic detector
+    frames."""
 
     preset_id: str
     aliases: tuple[str, ...]
@@ -174,7 +176,9 @@ def choose_detector_preset(
         "random_common",
         "common",
     }:
-        return resolve_detector_preset(str(rng.choice(RANDOM_COMMON_DETECTOR_IDS)))
+        return resolve_detector_preset(
+            str(rng.choice(RANDOM_COMMON_DETECTOR_IDS))
+        )
     preset = resolve_detector_preset(requested)
     if preset is not None:
         return preset
@@ -256,7 +260,8 @@ def flat_detector_solid_angle(
     detector: DetectorGeometry,
     image_shape: tuple[int, int],
 ) -> np.ndarray:
-    """Approximate flat-detector solid-angle response on a q-space grid."""
+    """Approximate flat-detector solid-angle response on a q-space
+    grid."""
 
     wavelength = detector.wavelength_angstrom
     if wavelength is None or wavelength <= 0.0:
@@ -273,8 +278,12 @@ def _infer_module_size(preset: DetectorPreset) -> tuple[int, int]:
     module_cols, module_rows = preset.module_grid
     gap_x, gap_z = preset.module_gap
     native_x, native_z = preset.pixel_array
-    module_x = int(round((native_x - max(0, module_cols - 1) * gap_x) / module_cols))
-    module_z = int(round((native_z - max(0, module_rows - 1) * gap_z) / module_rows))
+    module_x = int(
+        round((native_x - max(0, module_cols - 1) * gap_x) / module_cols)
+    )
+    module_z = int(
+        round((native_z - max(0, module_rows - 1) * gap_z) / module_rows)
+    )
     return max(1, module_x), max(1, module_z)
 
 
@@ -312,7 +321,9 @@ def _mask_scaled_span(
     if rng is not None and jitter_pixels > 0:
         scaled_start += int(rng.integers(-jitter_pixels, jitter_pixels + 1))
     scaled_start = max(0, min(extent - 1, scaled_start))
-    scaled_stop = max(scaled_start + 1, min(extent, scaled_start + scaled_width))
+    scaled_stop = max(
+        scaled_start + 1, min(extent, scaled_start + scaled_width)
+    )
     if axis == "x":
         mask[:, scaled_start:scaled_stop] = True
     else:

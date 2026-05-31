@@ -7,9 +7,12 @@ from pathlib import Path
 
 from .catalog import load_structure_catalog, validate_catalog_paths
 from .conditions import load_generation_plan
-from .manifests import read_jsonl_manifest, validate_manifest_files
+from .manifests import (
+    read_jsonl_manifest,
+    validate_manifest_files,
+    write_jsonl_manifest,
+)
 from .simulator import generate_dataset
-from .manifests import write_jsonl_manifest
 
 
 def main(argv: list[str] | None = None) -> int:

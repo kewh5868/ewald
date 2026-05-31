@@ -41,4 +41,3 @@ fi
 cd \"$EWALD_RUNTIME_DIR/repo\"
 $REMOTE_COMMAND
 '"
-

@@ -2182,7 +2182,8 @@ class DataViewerPane(QtWidgets.QWidget):
         self.roi_crosshair_popup.setAttribute(
             QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents
         )
-        self.roi_crosshair_popup.setStyleSheet("""
+        self.roi_crosshair_popup.setStyleSheet(
+            """
             QLabel#RoiCrosshairPopup {
                 background: rgba(17, 24, 39, 220);
                 border: 1px solid rgba(255, 255, 255, 160);
@@ -2190,7 +2191,8 @@ class DataViewerPane(QtWidgets.QWidget):
                 color: white;
                 padding: 8px 12px;
             }
-            """)
+            """
+        )
         self.roi_crosshair_popup.hide()
 
     def _build_channel_panels(self) -> None:

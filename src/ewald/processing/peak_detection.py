@@ -43,10 +43,11 @@ class PeakCandidate:
 class GapAwarePeakInferenceConfig:
     """Settings for detector-gap peak inference.
 
-    Gap bridging is deliberately conservative. It is meant for narrow module
-    gaps where two anchor maxima on either side are plausibly clipped halves of
-    one Bragg spot, not for broad missing wedges, beamstops, substrate horizon
-    shadows, or isotropic powder/ring patterns.
+    Gap bridging is deliberately conservative. It is meant for narrow
+    module gaps where two anchor maxima on either side are plausibly
+    clipped halves of one Bragg spot, not for broad missing wedges,
+    beamstops, substrate horizon shadows, or isotropic powder/ring
+    patterns.
     """
 
     enabled: bool = True

@@ -1,4 +1,5 @@
-"""Detector and sample artifact augmentation for synthetic GIWAXS images."""
+"""Detector and sample artifact augmentation for synthetic GIWAXS
+images."""
 
 from __future__ import annotations
 
@@ -23,7 +24,8 @@ def apply_artifacts(
     detector: DetectorGeometry | None = None,
     sample_context: dict[str, Any] | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
-    """Apply reproducible detector-like artifacts to a simulated image."""
+    """Apply reproducible detector-like artifacts to a simulated
+    image."""
 
     base = _as_float_image(image)
     if not profile.enabled:
@@ -55,7 +57,9 @@ def apply_artifacts(
     augmented = _apply_poisson_noise(augmented, profile, rng, metadata)
     augmented = _apply_read_noise(augmented, profile, rng, metadata)
     augmented = _apply_hot_dead_pixels(augmented, profile, rng, metadata)
-    augmented = _apply_detector_gaps(augmented, profile, rng, metadata, detector)
+    augmented = _apply_detector_gaps(
+        augmented, profile, rng, metadata, detector
+    )
     augmented = _apply_beamstop(augmented, profile, metadata)
     augmented = np.clip(augmented, 0.0, profile.saturation_level)
     metadata["operations"].append("saturation_clip")
@@ -120,7 +124,9 @@ def _add_diffuse_rings(
         rng=rng,
     )
     if not centers:
-        centers = _fallback_ring_centers(radius, profile.diffuse_ring_count, rng)
+        centers = _fallback_ring_centers(
+            radius, profile.diffuse_ring_count, rng
+        )
     width_min, width_max = sorted(profile.diffuse_ring_width_range)
     out = image.copy()
     ring_metadata: list[dict[str, float]] = []
@@ -250,14 +256,10 @@ def _surface_geometry(
     k0 = 2.0 * np.pi / max(wavelength, 1.0e-9)
     incident_rad = np.radians(incident_angle_deg)
     critical_rad = np.radians(float(critical_angle_deg))
-    direct_qz = k0 * (
-        np.sin(incident_rad) + np.sin(-incident_rad)
-    )
+    direct_qz = k0 * (np.sin(incident_rad) + np.sin(-incident_rad))
     specular_qz = k0 * (np.sin(incident_rad) + np.sin(incident_rad))
     yoneda_qz = k0 * (np.sin(incident_rad) + np.sin(critical_rad))
-    critical_q_shift = k0 * abs(
-        np.sin(critical_rad) - np.sin(incident_rad)
-    )
+    critical_q_shift = k0 * abs(np.sin(critical_rad) - np.sin(incident_rad))
     horizon_qz = k0 * np.sin(incident_rad)
     return {
         "incident_angle_deg": float(incident_angle_deg),
@@ -359,7 +361,11 @@ def _apply_substrate_horizon(
     attenuation = below + (1.0 - below) * transition
     edge = np.exp(-0.5 * ((qz_grid - horizon) / width) ** 2)
     out = image * attenuation
-    out += float(profile.substrate_horizon_strength) * (1.0 + gain * spillage) * edge
+    out += (
+        float(profile.substrate_horizon_strength)
+        * (1.0 + gain * spillage)
+        * edge
+    )
     return out, {
         "substrate_horizon_qz": float(horizon_qz),
         "substrate_horizon_width_qz": float(width),
@@ -425,7 +431,9 @@ def _apply_spillage_broadening(
     return (1.0 - strength) * image + strength * blurred
 
 
-def _vertical_gaussian_blur(image: np.ndarray, sigma_pixels: float) -> np.ndarray:
+def _vertical_gaussian_blur(
+    image: np.ndarray, sigma_pixels: float
+) -> np.ndarray:
     radius = max(1, int(np.ceil(3.0 * sigma_pixels)))
     offsets = np.arange(-radius, radius + 1)
     weights = np.exp(-0.5 * (offsets / sigma_pixels) ** 2)
@@ -631,7 +639,9 @@ def _structure_correlated_ring_centers(
         center = float(centers[index])
         if center <= q_min:
             continue
-        if any(abs(center - existing) < min_separation for existing in selected):
+        if any(
+            abs(center - existing) < min_separation for existing in selected
+        ):
             continue
         jitter = rng.normal(0.0, min_separation * 0.12)
         selected.append(float(np.clip(center + jitter, q_min, q_max)))

@@ -197,7 +197,8 @@ def discover_dataset_file_links(
     timeout: float = 20.0,
     session: requests.Session | None = None,
 ) -> list[str]:
-    """Find downloadable structure-like files from a dataset HTML page."""
+    """Find downloadable structure-like files from a dataset HTML
+    page."""
 
     client = session or retry_session()
     html_url = urljoin(base_url, f"/materials/dataset/{dataset_id}")
@@ -312,7 +313,8 @@ def convert_structure_file(
     raw_file: str | Path,
     output_dir: str | Path,
 ) -> Path | None:
-    """Convert a downloaded structure file into a simulator-readable file."""
+    """Convert a downloaded structure file into a simulator-readable
+    file."""
 
     raw_path = Path(raw_file)
     output_path = Path(output_dir)
@@ -373,7 +375,8 @@ def is_archive_path(raw_path: str | Path) -> bool:
 
 
 def is_gzip_structure_path(raw_path: str | Path) -> bool:
-    """Return whether a path is a gzip-wrapped supported structure file."""
+    """Return whether a path is a gzip-wrapped supported structure
+    file."""
 
     parsed = urlparse(str(raw_path))
     path = Path(parsed.path or str(raw_path))
@@ -424,7 +427,8 @@ def infer_structure_format(
 def extract_structure_file_metadata(
     structure_file: str | Path,
 ) -> dict[str, Any]:
-    """Extract lightweight crystallographic metadata from a structure file."""
+    """Extract lightweight crystallographic metadata from a structure
+    file."""
 
     path = Path(structure_file)
     text = _read_text(path)
@@ -460,7 +464,8 @@ def retry_session(
     retries: int = 4,
     backoff_factor: float = 1.0,
 ) -> requests.Session:
-    """Return a requests session with conservative read-timeout retries."""
+    """Return a requests session with conservative read-timeout
+    retries."""
 
     retry = Retry(
         total=retries,
@@ -1232,7 +1237,8 @@ def _summarize_atom_site_rows(
 
 
 def parse_formula_counts(formula: Any) -> dict[str, int]:
-    """Return approximate element counts from a simple chemical formula."""
+    """Return approximate element counts from a simple chemical
+    formula."""
 
     text = _clean_cif_value(formula)
     if not text:

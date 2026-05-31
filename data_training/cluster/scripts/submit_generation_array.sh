@@ -25,4 +25,3 @@ export EWALD_MODULES=\"${EWALD_MODULES:-}\"
 cd \"$EWALD_RUNTIME_DIR/repo\"
 sbatch data_training/cluster/slurm/generate_dataset_array.sbatch
 '"
-

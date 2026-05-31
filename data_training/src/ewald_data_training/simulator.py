@@ -9,12 +9,12 @@ from typing import Any, Iterable
 import numpy as np
 import tifffile
 
-from .artifacts import apply_artifacts
 from .artifact_features import (
     annotate_peaks_with_artifacts,
     build_artifact_assessment,
     estimate_retrieval_quality,
 )
+from .artifacts import apply_artifacts
 from .conditions import iter_structure_conditions
 from .schemas import (
     ArtifactProfile,

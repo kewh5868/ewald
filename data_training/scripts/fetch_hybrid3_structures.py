@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Fetch and parse HybriD3 atomic-structure records into an EWALD catalog."""
+"""Fetch and parse HybriD3 atomic-structure records into an EWALD
+catalog."""
 
 from __future__ import annotations
 
@@ -11,9 +12,9 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "data_training" / "src"))
 
 from ewald_data_training.hybrid3 import (  # noqa: E402
+    download_structure_files,
     fetch_atomic_structure_datasets,
     load_fixture_records,
-    download_structure_files,
 )
 
 

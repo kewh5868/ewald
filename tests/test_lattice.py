@@ -69,9 +69,7 @@ def test_crystal_overlay_projects_qxy_from_full_in_plane_vector():
 
     unrotated = calculator.project(base)
     assert len(unrotated.hkl) == 2
-    assert np.max(np.abs(unrotated.qxy)) == pytest.approx(
-        2 * np.pi / 10.0
-    )
+    assert np.max(np.abs(unrotated.qxy)) == pytest.approx(2 * np.pi / 10.0)
     assert np.max(np.abs(unrotated.qz)) < 1.0e-8
 
     rotated = calculator.project(

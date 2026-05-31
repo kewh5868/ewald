@@ -3030,7 +3030,8 @@ def _symmetry_fractional_sites(
     pair_offset: int = 0,
     self_offset: int = 0,
 ) -> list[tuple[np.ndarray, tuple[float, float, float]]]:
-    """Return deterministic inversion-symmetric unit-cell placement sites."""
+    """Return deterministic inversion-symmetric unit-cell placement
+    sites."""
 
     count = max(1, int(total))
     sites: list[tuple[np.ndarray, tuple[float, float, float]]] = []

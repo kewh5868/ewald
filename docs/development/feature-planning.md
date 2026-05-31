@@ -1,8 +1,7 @@
 # EWALD Feature Planning
 
 !!! warning "Documentation notice"
-    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
-
+This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
 
 This document collects planned development work for EWALD's GIWAXS/WAXS
 analysis workflow. It is intentionally project-facing: each note should be

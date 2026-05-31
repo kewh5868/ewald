@@ -1,8 +1,9 @@
+# flake8: noqa: E402
 from __future__ import annotations
 
-import json
 import gzip
 import importlib.util
+import json
 import sys
 import zipfile
 from pathlib import Path
@@ -13,13 +14,13 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "data_training" / "src"))
 
-from ewald_data_training.artifacts import apply_artifacts
 from ewald_data_training.artifact_features import (
     annotate_peaks_with_artifacts,
     artifact_weight_map_from_assessment,
     build_artifact_assessment,
     estimate_retrieval_quality,
 )
+from ewald_data_training.artifacts import apply_artifacts
 from ewald_data_training.conditions import load_generation_plan
 from ewald_data_training.detectors import (
     resolve_detector_preset,
@@ -38,7 +39,10 @@ from ewald_data_training.manifests import (
     read_jsonl_manifest,
     write_jsonl_manifest,
 )
-from ewald_data_training.ranking import peak_table_vector, rank_image_candidates
+from ewald_data_training.ranking import (
+    peak_table_vector,
+    rank_image_candidates,
+)
 from ewald_data_training.schemas import (
     ArtifactProfile,
     DatasetSample,

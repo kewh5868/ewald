@@ -8,7 +8,8 @@ THEME_PROPERTY = "_ewald_theme_applied"
 
 
 def apply_application_theme(app: QtWidgets.QApplication | None) -> None:
-    """Apply a consistent EWALD palette and widget polish once per app."""
+    """Apply a consistent EWALD palette and widget polish once per
+    app."""
 
     if app is None or app.property(THEME_PROPERTY):
         return

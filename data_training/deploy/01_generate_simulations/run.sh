@@ -32,4 +32,3 @@ fi
 run_python "${args[@]}" | tee "$RUN_ROOT/generate.log"
 echo "$MANIFEST" > "$RUN_ROOT/manifest_path.txt"
 echo "manifest=$MANIFEST"
-

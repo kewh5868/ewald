@@ -34,4 +34,3 @@ export EWALD_RUN_BASE="${EWALD_RUN_BASE:-$EWALD_SCRATCH_DIR/runs}"
 
 cd "$EWALD_RUNTIME_DIR/repo"
 bash "$EWALD_TRIGGER_DIR/run.sh"
-

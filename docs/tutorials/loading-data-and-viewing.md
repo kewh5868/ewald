@@ -1,8 +1,7 @@
 # Tutorial: Loading data and viewing a GIWAXS image
 
 !!! warning "Documentation notice"
-    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
-
+This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
 
 Use this tutorial as the first run-through when you have local TIFF data.
 

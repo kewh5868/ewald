@@ -1,8 +1,7 @@
 # UI Workflow Regression Checklist
 
 !!! warning "Documentation notice"
-    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
-
+This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
 
 Use this checklist for workflows that are too GUI-heavy for stable headless
 coverage. Run it after ROI, peak, structure-analysis, pole-figure, or

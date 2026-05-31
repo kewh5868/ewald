@@ -28,4 +28,3 @@ structures:
     source: local EWALD example structure
     license: project-local
     tags: [precursor, solvate, demo]
-

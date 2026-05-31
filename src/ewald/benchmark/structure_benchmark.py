@@ -1,9 +1,10 @@
 """Headless structure-solution benchmark harness.
 
-This module wires together the existing EWALD simulation, peak detection,
-lattice indexing, CIF generation, and project I/O primitives.  The benchmark
-uses reference CIFs only to generate synthetic measurements and validate the
-result afterward.  The solving path receives only the allowed material labels.
+This module wires together the existing EWALD simulation, peak
+detection, lattice indexing, CIF generation, and project I/O primitives.
+The benchmark uses reference CIFs only to generate synthetic
+measurements and validate the result afterward.  The solving path
+receives only the allowed material labels.
 """
 
 from __future__ import annotations
@@ -44,9 +45,8 @@ from ewald.processing.peak_detection import (
     find_local_maxima_peaks,
 )
 from ewald.simulation.giwaxs import (
-    GIWAXSSimulationParameters,
     PEAK_TABLE_ATTR,
-    calculate_giwaxs_peak_rows,
+    GIWAXSSimulationParameters,
     compare_giwaxs_images,
     save_giwaxs_comparison_plot,
     simulate_giwaxs_image,
@@ -1033,7 +1033,8 @@ def _score_bragg_peak_intensity_match(
     tolerance: float,
     max_peaks: int,
 ) -> dict[str, Any]:
-    """Compare relative observed and simulated Bragg peak intensities."""
+    """Compare relative observed and simulated Bragg peak
+    intensities."""
 
     observed = [
         (peak, _observed_peak_intensity(peak))
@@ -1055,7 +1056,9 @@ def _score_bragg_peak_intensity_match(
         )
 
     rows = [
-        row for row in simulated_peak_rows if _simulated_peak_intensity(row) > 0.0
+        row
+        for row in simulated_peak_rows
+        if _simulated_peak_intensity(row) > 0.0
     ]
     if not rows:
         return {
@@ -1124,7 +1127,9 @@ def _score_bragg_peak_intensity_match(
     observed_array = np.asarray(observed_values, dtype=float)
     predicted_array = np.asarray(predicted_values, dtype=float)
     matched = predicted_array > 0.0
-    observed_norm = observed_array / max(float(np.sum(observed_array)), 1.0e-12)
+    observed_norm = observed_array / max(
+        float(np.sum(observed_array)), 1.0e-12
+    )
     if float(np.sum(predicted_array)) > 0.0:
         predicted_norm = predicted_array / float(np.sum(predicted_array))
     else:
@@ -1193,17 +1198,11 @@ def _bragg_intensity_metric_summary(
 ) -> dict[str, Any]:
     return {
         "bragg_intensity_weighted_penalty": float(weighted_penalty),
-        "bragg_intensity_match_penalty": match.get(
-            "intensity_match_penalty"
-        ),
+        "bragg_intensity_match_penalty": match.get("intensity_match_penalty"),
         "bragg_intensity_relative_l1": match.get("relative_l1"),
         "bragg_intensity_log_rmse": match.get("log_intensity_rmse"),
-        "bragg_intensity_correlation": match.get(
-            "log_intensity_correlation"
-        ),
-        "bragg_intensity_matched_fraction": match.get(
-            "matched_peak_fraction"
-        ),
+        "bragg_intensity_correlation": match.get("log_intensity_correlation"),
+        "bragg_intensity_matched_fraction": match.get("matched_peak_fraction"),
     }
 
 
@@ -1486,13 +1485,10 @@ def _rank_generated_cifs(
                     simulated,
                     cfg,
                 )
-                bragg_intensity_penalty = (
-                    cfg.bragg_intensity_weight
-                    * float(
-                        bragg_intensity_match.get(
-                            "intensity_match_penalty",
-                            0.0,
-                        )
+                bragg_intensity_penalty = cfg.bragg_intensity_weight * float(
+                    bragg_intensity_match.get(
+                        "intensity_match_penalty",
+                        0.0,
                     )
                 )
                 comparison.metrics.update(
@@ -2287,7 +2283,9 @@ def _improve_halide_coordination_assignment(
     for _ in range(3):
         improved = False
         for halide_index, current in enumerate(list(assignments)):
-            current_key = tuple(int(round(value * 1000.0)) for value in current)
+            current_key = tuple(
+                int(round(value * 1000.0)) for value in current
+            )
             used.discard(current_key)
             local_best = current
             local_score = best_score
@@ -2311,9 +2309,7 @@ def _improve_halide_coordination_assignment(
                     local_score = score
                     local_best = candidate % 1.0
             assignments[halide_index] = local_best
-            used.add(
-                tuple(int(round(value * 1000.0)) for value in local_best)
-            )
+            used.add(tuple(int(round(value * 1000.0)) for value in local_best))
             if local_score + 1.0e-9 < best_score:
                 best_score = local_score
                 improved = True
@@ -2338,7 +2334,9 @@ def _halide_assignment_score(
             _pbc_distance(assignment, center, lattice)
             for assignment in assignments
         )
-        near = [distance for distance in distances if lower <= distance <= upper]
+        near = [
+            distance for distance in distances if lower <= distance <= upper
+        ]
         deficit = max(0, target_min - len(near))
         score += 5.0 * deficit * deficit
         if distances:
@@ -2729,7 +2727,9 @@ def _molecule_center_steric_score(
                 clash_penalty += (minimum - distance) / max(minimum, 1.0e-9)
     min_body = math.inf
     for center in occupied_centers:
-        min_body = min(min_body, _pbc_distance(candidate_center, center, lattice))
+        min_body = min(
+            min_body, _pbc_distance(candidate_center, center, lattice)
+        )
     for occupied_coords, occupied_elements, _ in occupied_bodies:
         for left_coord, left_element in zip(coords, elements, strict=True):
             for right_coord, right_element in zip(
@@ -2745,9 +2745,13 @@ def _molecule_center_steric_score(
                     True,
                 )
                 if distance < minimum:
-                    clash_penalty += 0.75 * (minimum - distance) / max(
-                        minimum,
-                        1.0e-9,
+                    clash_penalty += (
+                        0.75
+                        * (minimum - distance)
+                        / max(
+                            minimum,
+                            1.0e-9,
+                        )
                     )
     if not np.isfinite(min_distance):
         min_distance = 3.0
@@ -4487,7 +4491,9 @@ def _pair_distribution_validation_metrics(
             "status": "computed",
             "max_distance": max_distance,
             "bin_width": bin_width,
-            "weighted_l1_distance": float(weighted_l1 / max(total_weight, 1.0)),
+            "weighted_l1_distance": float(
+                weighted_l1 / max(total_weight, 1.0)
+            ),
             "weighted_rmse": float(weighted_rmse / max(total_weight, 1.0)),
             "worst_partial_pairs": records[:12],
             "policy": (

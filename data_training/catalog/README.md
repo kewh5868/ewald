@@ -16,4 +16,3 @@ Minimal fields:
 Do not copy collaborator code or datasets into this directory unless the license
 and redistribution permissions are clear. Use local paths for private structures
 and let cluster staging copy only the files needed for a run.
-

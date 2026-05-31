@@ -14,10 +14,10 @@ import tifffile
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "data_training" / "src"))
 
-from ewald_data_training.manifests import read_jsonl_manifest  # noqa: E402
 from ewald_data_training.artifact_features import (  # noqa: E402
     artifact_weight_map_from_labels,
 )
+from ewald_data_training.manifests import read_jsonl_manifest  # noqa: E402
 from ewald_data_training.ranking import rank_image_candidates  # noqa: E402
 
 

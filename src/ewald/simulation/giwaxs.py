@@ -95,7 +95,9 @@ class GIWAXSSimulationParameters:
         if values.get("wavelength_angstrom") in {"", None}:
             values["wavelength_angstrom"] = None
         else:
-            values["wavelength_angstrom"] = float(values["wavelength_angstrom"])
+            values["wavelength_angstrom"] = float(
+                values["wavelength_angstrom"]
+            )
         if values.get("incident_angle_deg") in {"", None}:
             values["incident_angle_deg"] = None
         else:
@@ -1139,13 +1141,14 @@ def recommend_hkl_extent_for_q_range(
     min_extent: int = 4,
     max_extent: int = 64,
 ) -> int:
-    """Recommend a reciprocal-lattice search extent for a q-space detector.
+    """Recommend a reciprocal-lattice search extent for a q-space
+    detector.
 
     Large 2D hybrid structures often have long real-space axes. A small
-    symmetric h/k/l search can therefore truncate high-q out-of-plane peaks
-    even when the detector grid extends to 3-4 inverse angstroms. This helper
-    chooses an extent large enough for the smallest reciprocal-basis spacing to
-    cover the requested detector range.
+    symmetric h/k/l search can therefore truncate high-q out-of-plane
+    peaks even when the detector grid extends to 3-4 inverse angstroms.
+    This helper chooses an extent large enough for the smallest
+    reciprocal-basis spacing to cover the requested detector range.
     """
 
     structure = load_structure(structure_path)
@@ -1171,7 +1174,9 @@ def recommend_hkl_extent_for_q_range(
         abs(float(qz_range[0])),
         abs(float(qz_range[1])),
     )
-    extent = int(math.ceil(q_limit * max(float(margin), 1.0) / reciprocal_step))
+    extent = int(
+        math.ceil(q_limit * max(float(margin), 1.0) / reciprocal_step)
+    )
     return max(int(min_extent), min(int(max_extent), extent))
 
 
@@ -1303,14 +1308,19 @@ def _calculated_peak_rows(
         if qxy < 0.0 or qxy > max_abs_qxy:
             continue
         for signed_qxy in _signed_qxy_positions(qxy, qxy_limits):
-            if params.missing_wedge_correction and not _fiber_q_points_accessible(
-                signed_qxy,
-                qz,
-                params,
+            if (
+                params.missing_wedge_correction
+                and not _fiber_q_points_accessible(
+                    signed_qxy,
+                    qz,
+                    params,
+                )
             ):
                 continue
             phi_weight = _azimuthal_weight(q_vector, signed_qxy, sigma_phi)
-            amplitude = 0.0 if forbidden else float(intensity_value * phi_weight)
+            amplitude = (
+                0.0 if forbidden else float(intensity_value * phi_weight)
+            )
             rows.append(
                 {
                     "h": int(miller[0]),

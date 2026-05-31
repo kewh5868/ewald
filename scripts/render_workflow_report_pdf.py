@@ -1,8 +1,9 @@
 """Render the EWALD workflow report Markdown page to PDF.
 
-This script avoids optional system tools such as pandoc or wkhtmltopdf. It uses
-the repository's Python Markdown and PySide6/Qt WebEngine dependencies to
-produce a reproducible, styled PDF from the maintainable Markdown source.
+This script avoids optional system tools such as pandoc or wkhtmltopdf.
+It uses the repository's Python Markdown and PySide6/Qt WebEngine
+dependencies to produce a reproducible, styled PDF from the maintainable
+Markdown source.
 """
 
 from __future__ import annotations

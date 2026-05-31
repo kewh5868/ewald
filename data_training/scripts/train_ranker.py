@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Build a lightweight vector-ranker checkpoint from clean simulations."""
+"""Build a lightweight vector-ranker checkpoint from clean
+simulations."""
 
 from __future__ import annotations
 
@@ -11,10 +12,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "data_training" / "src"))
 
-from ewald_data_training.manifests import read_jsonl_manifest  # noqa: E402
 from ewald_data_training.artifact_features import (  # noqa: E402
     ARTIFACT_ASSESSMENT_SCHEMA,
 )
+from ewald_data_training.manifests import read_jsonl_manifest  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -8,10 +8,10 @@ PDF version: [workflow-execution-report.pdf](workflow-execution-report.pdf)
 
 EWALD is organized around two complementary operating modes:
 
-| Mode | Primary user | Main outcome |
-| --- | --- | --- |
-| Desktop analysis | GIWAXS/WAXS researchers | Correct detector data, define ROIs, fit peaks, compare structures, simulate patterns, and export analysis products. |
-| Data training | Developers and model builders | Generate labeled synthetic detector images, apply realistic artifacts, rank candidate structures, and prepare cluster-scale training workflows. |
+| Mode             | Primary user                  | Main outcome                                                                                                                                    |
+| ---------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Desktop analysis | GIWAXS/WAXS researchers       | Correct detector data, define ROIs, fit peaks, compare structures, simulate patterns, and export analysis products.                             |
+| Data training    | Developers and model builders | Generate labeled synthetic detector images, apply realistic artifacts, rank candidate structures, and prepare cluster-scale training workflows. |
 
 The desktop workflow is the production-facing scientific workbench. The
 `data_training/` workflow is intentionally isolated so large simulation sweeps,
@@ -43,17 +43,17 @@ dataset-generation stages.
 
 ## Repository Map
 
-| Path | Role | Notes |
-| --- | --- | --- |
-| `src/ewald/app/` | CLI and application startup | `ewald` and `python -m ewald.app` launch the Qt app. |
-| `src/ewald/ui/` | Desktop interface | Main window, data viewer, ROI tools, simulation, structure analysis, and themed controls. |
-| `src/ewald/processing/` | Analysis kernels | Calibration, q-space conversion, fitting, peak detection, and pole figures. |
-| `src/ewald/crystallography/` | Structure utilities | Lattice, CIF, reciprocal-space overlays, and candidate comparison helpers. |
-| `src/ewald/simulation/` | Forward models | GIWAXS simulation and refinement tools used by the app and training scaffold. |
-| `docs/` | Public documentation | MkDocs Material site with tutorials, mathematical foundations, and developer notes. |
-| `data_training/` | Isolated training scaffold | Structure catalogs, HybriD3 parser, simulation plans, artifact recipes, trigger folders, and Alpine templates. |
-| `tests/` | Main test suite | Unit and workflow coverage for application and scientific behavior. |
-| `data_training/tests/` | Training scaffold tests | Focused tests for manifests, parser behavior, artifacts, ranking, and trigger contracts. |
+| Path                         | Role                        | Notes                                                                                                          |
+| ---------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `src/ewald/app/`             | CLI and application startup | `ewald` and `python -m ewald.app` launch the Qt app.                                                           |
+| `src/ewald/ui/`              | Desktop interface           | Main window, data viewer, ROI tools, simulation, structure analysis, and themed controls.                      |
+| `src/ewald/processing/`      | Analysis kernels            | Calibration, q-space conversion, fitting, peak detection, and pole figures.                                    |
+| `src/ewald/crystallography/` | Structure utilities         | Lattice, CIF, reciprocal-space overlays, and candidate comparison helpers.                                     |
+| `src/ewald/simulation/`      | Forward models              | GIWAXS simulation and refinement tools used by the app and training scaffold.                                  |
+| `docs/`                      | Public documentation        | MkDocs Material site with tutorials, mathematical foundations, and developer notes.                            |
+| `data_training/`             | Isolated training scaffold  | Structure catalogs, HybriD3 parser, simulation plans, artifact recipes, trigger folders, and Alpine templates. |
+| `tests/`                     | Main test suite             | Unit and workflow coverage for application and scientific behavior.                                            |
+| `data_training/tests/`       | Training scaffold tests     | Focused tests for manifests, parser behavior, artifacts, ranking, and trigger contracts.                       |
 
 ## End-To-End Workflow Plan
 
@@ -142,14 +142,14 @@ ewald path/to/project.ewld
 The training scaffold is designed as six independent triggers. Each trigger is
 a run folder with a single `run.sh` entry point.
 
-| Trigger | Command | Output |
-| --- | --- | --- |
-| Fetch structures | `bash data_training/deploy/00_fetch_hybrid3_structures/run.sh` | HybriD3 catalog, raw downloads, converted structures, ingest manifest. |
-| Generate simulations | `bash data_training/deploy/01_generate_simulations/run.sh` | Clean 2D TIFF images, peak truth tables, detector/orientation labels, simulation manifest. |
-| Apply artifacts | `bash data_training/deploy/02_apply_artifacts/run.sh` | Artifact TIFF images, artifact-layer labels, quality labels, artifact manifest. |
-| Train ranker | `bash data_training/deploy/03_train_ranker/run.sh` | Baseline vector-ranker checkpoint now; future learned trainer hook later. |
-| Feedback evaluation | `bash data_training/deploy/04_feedback_evaluate/run.sh` | Top-k ranking metrics and failure summaries. |
-| Export guesses | `bash data_training/deploy/05_export_structure_guesses/run.sh` | Top-k copied structure files and `ranked_guesses.json`. |
+| Trigger              | Command                                                        | Output                                                                                     |
+| -------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Fetch structures     | `bash data_training/deploy/00_fetch_hybrid3_structures/run.sh` | HybriD3 catalog, raw downloads, converted structures, ingest manifest.                     |
+| Generate simulations | `bash data_training/deploy/01_generate_simulations/run.sh`     | Clean 2D TIFF images, peak truth tables, detector/orientation labels, simulation manifest. |
+| Apply artifacts      | `bash data_training/deploy/02_apply_artifacts/run.sh`          | Artifact TIFF images, artifact-layer labels, quality labels, artifact manifest.            |
+| Train ranker         | `bash data_training/deploy/03_train_ranker/run.sh`             | Baseline vector-ranker checkpoint now; future learned trainer hook later.                  |
+| Feedback evaluation  | `bash data_training/deploy/04_feedback_evaluate/run.sh`        | Top-k ranking metrics and failure summaries.                                               |
+| Export guesses       | `bash data_training/deploy/05_export_structure_guesses/run.sh` | Top-k copied structure files and `ranked_guesses.json`.                                    |
 
 ### Local Smoke Run
 
@@ -246,16 +246,16 @@ bash data_training/deploy/04_feedback_evaluate/run.sh
 The HybriD3 parser handles common structure-file variants encountered on the
 website:
 
-| Family | Supported variants |
-| --- | --- |
-| Crystallographic text | `.cif`, `.mcif` |
-| VASP-style | `POSCAR`, `CONTCAR`, `.vasp`, `.poscar` |
-| FHI-aims | `geometry.in` and compatible lattice-vector files |
-| CASTEP | `.cell` files with lattice and fractional or absolute positions |
-| Molecular/crystal interchange | Extended `.xyz` with `Lattice`, `.pdb` with `CRYST1` |
-| SHELX | Simple `.res` and `.ins` files |
-| Archives | `.zip`, `.tar`, `.tgz`, `.tar.gz` containing supported structures |
-| Gzip wrappers | `.cif.gz`, `POSCAR.gz`, and related gzip-wrapped structure files |
+| Family                        | Supported variants                                                |
+| ----------------------------- | ----------------------------------------------------------------- |
+| Crystallographic text         | `.cif`, `.mcif`                                                   |
+| VASP-style                    | `POSCAR`, `CONTCAR`, `.vasp`, `.poscar`                           |
+| FHI-aims                      | `geometry.in` and compatible lattice-vector files                 |
+| CASTEP                        | `.cell` files with lattice and fractional or absolute positions   |
+| Molecular/crystal interchange | Extended `.xyz` with `Lattice`, `.pdb` with `CRYST1`              |
+| SHELX                         | Simple `.res` and `.ins` files                                    |
+| Archives                      | `.zip`, `.tar`, `.tgz`, `.tar.gz` containing supported structures |
+| Gzip wrappers                 | `.cif.gz`, `POSCAR.gz`, and related gzip-wrapped structure files  |
 
 Unsupported downloads remain in the raw folder and are marked missing in the
 ingest manifest. They do not silently enter the simulation catalog.
@@ -263,11 +263,11 @@ ingest manifest. They do not silently enter the simulation catalog.
 The generated catalog also preserves metadata useful for machine learning and
 interpretability:
 
-| Metadata class | Examples |
-| --- | --- |
-| HybriD3 system fields | Compound formula, organic formula, inorganic formula, group formula, IUPAC name, dimensionality, layer count `n`, and database tags. |
-| Provenance fields | Experimental/computational origin, sample type, extraction method, creator/updater, verification, and representative status. |
-| Reference fields | Title, journal, year, DOI/ISBN, volume, and page fields when available. |
+| Metadata class          | Examples                                                                                                                                   |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| HybriD3 system fields   | Compound formula, organic formula, inorganic formula, group formula, IUPAC name, dimensionality, layer count `n`, and database tags.       |
+| Provenance fields       | Experimental/computational origin, sample type, extraction method, creator/updater, verification, and representative status.               |
+| Reference fields        | Title, journal, year, DOI/ISBN, volume, and page fields when available.                                                                    |
 | Crystallographic fields | Cell parameters, crystal system, space-group name, formula moieties, formula-derived element counts, atom-site counts, and species counts. |
 
 ## Alpine Execution Plan
@@ -275,12 +275,12 @@ interpretability:
 The Alpine workflow separates source code, scratch data, and compact synced
 outputs.
 
-| Location | Purpose | Typical contents |
-| --- | --- | --- |
-| Local checkout | Development and small smoke tests | Source code, docs, configs, small fixtures. |
-| Runtime directory | Cluster execution package | Staged repo, structure catalogs, plans, logs, SLURM scripts. |
-| Scratch directory | High-volume generated data | TIFFs, arrays, peak tables, per-task manifests, training intermediates. |
-| Sync directory | Returned compact outputs | Merged manifests, metrics, model cards, selected previews. |
+| Location          | Purpose                           | Typical contents                                                        |
+| ----------------- | --------------------------------- | ----------------------------------------------------------------------- |
+| Local checkout    | Development and small smoke tests | Source code, docs, configs, small fixtures.                             |
+| Runtime directory | Cluster execution package         | Staged repo, structure catalogs, plans, logs, SLURM scripts.            |
+| Scratch directory | High-volume generated data        | TIFFs, arrays, peak tables, per-task manifests, training intermediates. |
+| Sync directory    | Returned compact outputs          | Merged manifests, metrics, model cards, selected previews.              |
 
 CU Boulder CURC documents Alpine allocations as Slurm accounts, requested with
 `--account`, and lists `amilan` as the default general CPU partition. GPU
@@ -338,14 +338,14 @@ bash data_training/cluster/scripts/submit_ascent_pipeline.sh \
 
 This submits compute-node jobs for:
 
-| Stage | Slurm job purpose | Main output |
-| --- | --- | --- |
-| `00` | HybriD3 live extraction and enriched structure-library construction | `hybrid3_structure_catalog.yaml` and raw/converted structures. |
-| `01` | Clean multi-detector GIWAXS simulation dataset construction | `clean.tiff`, `peaks.json`, `labels.json`, `manifest.jsonl`. |
-| `02` | Artificial detector and surface-scattering artifact incorporation | `artifact.tiff`, `artifact_assessment`, `quality_assessment`, `artifact_manifest.jsonl`. |
-| `03` | Baseline ranker training; future learned trainer slot | `vector_ranker.json` now, future checkpoints/model card later. |
-| `04` | Feedback evaluation against known structure truth | top-k metrics, artifact-stratified rows, per-sample ranking records. |
-| `05` | Structure-file guess export | copied top-k known structures and `ranked_guesses.json`. |
+| Stage | Slurm job purpose                                                   | Main output                                                                              |
+| ----- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `00`  | HybriD3 live extraction and enriched structure-library construction | `hybrid3_structure_catalog.yaml` and raw/converted structures.                           |
+| `01`  | Clean multi-detector GIWAXS simulation dataset construction         | `clean.tiff`, `peaks.json`, `labels.json`, `manifest.jsonl`.                             |
+| `02`  | Artificial detector and surface-scattering artifact incorporation   | `artifact.tiff`, `artifact_assessment`, `quality_assessment`, `artifact_manifest.jsonl`. |
+| `03`  | Baseline ranker training; future learned trainer slot               | `vector_ranker.json` now, future checkpoints/model card later.                           |
+| `04`  | Feedback evaluation against known structure truth                   | top-k metrics, artifact-stratified rows, per-sample ranking records.                     |
+| `05`  | Structure-file guess export                                         | copied top-k known structures and `ranked_guesses.json`.                                 |
 
 Start with `EWALD_HYBRID3_LIMIT=25` or lower. Set
 `EWALD_HYBRID3_LIMIT=0` only after the staged environment, scratch space,
@@ -387,13 +387,13 @@ outputs.
 The manifest is the durable boundary between pipeline stages. Generated samples
 should expose:
 
-| Artifact | Purpose |
-| --- | --- |
-| `clean.tiff` | Artifact-free simulated image. |
-| `artifact.tiff` | Image used by the model or feedback evaluator. |
-| `peaks.json` | Truth table with `(h, k, l)`, `qxy`, `qz`, Bragg intensity, rendered amplitude, and artifact-overlap annotations when available. |
-| `labels.json` | Structure id, condition id, detector geometry, orientation/texture settings, artifact recipe, artifact-layer labels, quality labels, random seed, and provenance. |
-| `manifest.jsonl` | Compact row per sample for downstream training and validation. |
+| Artifact         | Purpose                                                                                                                                                           |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `clean.tiff`     | Artifact-free simulated image.                                                                                                                                    |
+| `artifact.tiff`  | Image used by the model or feedback evaluator.                                                                                                                    |
+| `peaks.json`     | Truth table with `(h, k, l)`, `qxy`, `qz`, Bragg intensity, rendered amplitude, and artifact-overlap annotations when available.                                  |
+| `labels.json`    | Structure id, condition id, detector geometry, orientation/texture settings, artifact recipe, artifact-layer labels, quality labels, random seed, and provenance. |
+| `manifest.jsonl` | Compact row per sample for downstream training and validation.                                                                                                    |
 
 Future trainers should consume manifests rather than scanning directories. This
 keeps cluster retries, dataset publication, and validation reproducible.
@@ -432,31 +432,31 @@ The current baseline treats the corrected experimental image as a normalized
 state:
 
 \[
-  \lvert \psi \rangle
-  =
-  \frac{M W I_{\mathrm{exp}}}
-       {\lVert M W I_{\mathrm{exp}} \rVert_2}
+\lvert \psi \rangle
+=
+\frac{M W I*{\mathrm{exp}}}
+{\lVert M W I*{\mathrm{exp}} \rVert_2}
 \]
 
 For a catalog structure \(S_j\) under condition \(c\), the simulated standard is:
 
 \[
-  \lvert \phi_{j,c} \rangle
-  =
-  \frac{M W I_{\mathrm{sim}}(S_j,c)}
-       {\lVert M W I_{\mathrm{sim}}(S_j,c) \rVert_2}
+\lvert \phi*{j,c} \rangle
+=
+\frac{M W I*{\mathrm{sim}}(S*j,c)}
+{\lVert M W I*{\mathrm{sim}}(S_j,c) \rVert_2}
 \]
 
 The score is the overlap:
 
 \[
-  s(j,c) = \langle \phi_{j,c} \mid \psi \rangle.
+s(j,c) = \langle \phi\_{j,c} \mid \psi \rangle.
 \]
 
 The best structure is:
 
 \[
-  j^\star = \arg\max_j \max_c s(j,c).
+j^\star = \arg\max_j \max_c s(j,c).
 \]
 
 This baseline is deliberately transparent. Future learned models should improve
@@ -514,17 +514,17 @@ Before publishing generated datasets:
 
 ## Current Readiness
 
-| Capability | Status | Notes |
-| --- | --- | --- |
-| Desktop launch | Ready | `ewald` and `python -m ewald.app` are the supported launch commands. |
-| Documentation site | Ready | MkDocs Material site is configured with math and Mermaid support. |
-| HybriD3 ingestion | Ready for smoke and staged live use | Parser handles common direct, compressed, and archived structure variants. |
-| Clean simulation trigger | Ready for local and Alpine smoke tests | Uses EWALD GIWAXS simulation interfaces and supports multi-detector YAML plans. |
-| Artifact trigger | Ready for local and Alpine smoke tests | Applies deterministic detector/surface corruptions and writes artifact/quality labels. |
-| Ranker trigger | Baseline now, extensible later | Builds vector-ranker checkpoint; future learned trainer should keep the manifest contract. |
-| Feedback trigger | Ready for baseline metrics | Evaluates artifact images against known structure truth and artifact-aware weights. |
-| Alpine staging | Ready for configured account testing | Requires user-specific `alpine.paths.env` and SSH access. |
-| Deep model training | Planned | Artifact, peak, indexing, retrieval, and feedback contracts are present; model implementation intentionally deferred. |
+| Capability               | Status                                 | Notes                                                                                                                 |
+| ------------------------ | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Desktop launch           | Ready                                  | `ewald` and `python -m ewald.app` are the supported launch commands.                                                  |
+| Documentation site       | Ready                                  | MkDocs Material site is configured with math and Mermaid support.                                                     |
+| HybriD3 ingestion        | Ready for smoke and staged live use    | Parser handles common direct, compressed, and archived structure variants.                                            |
+| Clean simulation trigger | Ready for local and Alpine smoke tests | Uses EWALD GIWAXS simulation interfaces and supports multi-detector YAML plans.                                       |
+| Artifact trigger         | Ready for local and Alpine smoke tests | Applies deterministic detector/surface corruptions and writes artifact/quality labels.                                |
+| Ranker trigger           | Baseline now, extensible later         | Builds vector-ranker checkpoint; future learned trainer should keep the manifest contract.                            |
+| Feedback trigger         | Ready for baseline metrics             | Evaluates artifact images against known structure truth and artifact-aware weights.                                   |
+| Alpine staging           | Ready for configured account testing   | Requires user-specific `alpine.paths.env` and SSH access.                                                             |
+| Deep model training      | Planned                                | Artifact, peak, indexing, retrieval, and feedback contracts are present; model implementation intentionally deferred. |
 
 ## Immediate Next Steps
 

@@ -100,7 +100,9 @@ def _load_detector_geometries(
                         ),
                     )
                 ),
-                DetectorGeometry.from_mapping(payload.get("detector", {}) or {}),
+                DetectorGeometry.from_mapping(
+                    payload.get("detector", {}) or {}
+                ),
             )
         ]
 

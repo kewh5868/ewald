@@ -31,7 +31,7 @@
         "name": "atomic structure",
         "method": ""
       },
-      "primary_unit": {"id": 6, "label": "A"},
+      "primary_unit": { "id": 6, "label": "A" },
       "secondary_property": null,
       "secondary_unit": null,
       "reference": {
@@ -51,7 +51,7 @@
       "representative": true,
       "linked_to": [],
       "verified_by": [],
-      "computational": [{"code": "FHI-aims"}],
+      "computational": [{ "code": "FHI-aims" }],
       "synthesis": [],
       "experimental": [],
       "subsets": [],
@@ -59,4 +59,3 @@
     }
   ]
 }
-

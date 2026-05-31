@@ -97,8 +97,7 @@ def infer_crystal_system_from_lattice(
         return "Triclinic"
 
     right_angles = all(
-        _close(angle, 90.0, tolerance)
-        for angle in (alpha, beta, gamma)
+        _close(angle, 90.0, tolerance) for angle in (alpha, beta, gamma)
     )
     if right_angles and _close(a, b, tolerance) and _close(a, c, tolerance):
         return "Cubic"

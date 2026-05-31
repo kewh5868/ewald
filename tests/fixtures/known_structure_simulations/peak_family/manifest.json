@@ -1,15 +1,7 @@
 {
   "description": "Deterministic known-structure q-space TIFFs for validating Structure Analysis peak-family grouping.",
-  "axis_ranges": [
-    -2.2,
-    2.2,
-    0.0,
-    2.4
-  ],
-  "image_shape": [
-    256,
-    320
-  ],
+  "axis_ranges": [-2.2, 2.2, 0.0, 2.4],
+  "image_shape": [256, 320],
   "cases": [
     {
       "case_id": "cubic_missing_fundamental",
@@ -50,16 +42,8 @@
         {
           "family_id": "cubic_qxy_orders_2_3_4",
           "kind": "q_xy multiples",
-          "peak_ids": [
-            "cubic_200",
-            "cubic_300",
-            "cubic_400"
-          ],
-          "orders": [
-            2,
-            3,
-            4
-          ]
+          "peak_ids": ["cubic_200", "cubic_300", "cubic_400"],
+          "orders": [2, 3, 4]
         }
       ]
     },
@@ -102,16 +86,8 @@
         {
           "family_id": "layered_qz_orders_2_3_4",
           "kind": "q_z multiples",
-          "peak_ids": [
-            "layered_002",
-            "layered_003",
-            "layered_004"
-          ],
-          "orders": [
-            2,
-            3,
-            4
-          ]
+          "peak_ids": ["layered_002", "layered_003", "layered_004"],
+          "orders": [2, 3, 4]
         }
       ]
     },
@@ -154,30 +130,14 @@
         {
           "family_id": "ortho_qxy_orders_1_2_3",
           "kind": "q_xy multiples",
-          "peak_ids": [
-            "ortho_h10_l1",
-            "ortho_h20_l2",
-            "ortho_h30_l3"
-          ],
-          "orders": [
-            1,
-            2,
-            3
-          ]
+          "peak_ids": ["ortho_h10_l1", "ortho_h20_l2", "ortho_h30_l3"],
+          "orders": [1, 2, 3]
         },
         {
           "family_id": "ortho_qz_orders_1_2_3",
           "kind": "q_z multiples",
-          "peak_ids": [
-            "ortho_h10_l1",
-            "ortho_h20_l2",
-            "ortho_h30_l3"
-          ],
-          "orders": [
-            1,
-            2,
-            3
-          ]
+          "peak_ids": ["ortho_h10_l1", "ortho_h20_l2", "ortho_h30_l3"],
+          "orders": [1, 2, 3]
         }
       ]
     }
