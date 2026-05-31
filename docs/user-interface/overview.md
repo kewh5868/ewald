@@ -1,5 +1,9 @@
 # User Interface Overview
 
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
 EWALD is organized around the active project target (file or group).
 
 ## Main window layout
@@ -80,6 +84,6 @@ These values are carried into downstream orientation handling and q-space mappin
 
 - **PyFAI-calib2 launcher**: separate external calibration helper.
 - **Pole Figure Generator**: selected-ROI specific plotting and export.
-- **GIWAXS Simulation**: standalone simulation workflow panel (structure load, presets, exports).
+- **GIWAXS Simulation**: main workflow tab for structure loading, presets, simulated patterns, and data-linked fit comparisons.
 
-![UI placeholder](../assets/placeholders/ui-main-window.svg)
+![EWALD user interface screen capture](../assets/screenshots/tutorials/ui-main-window.png)

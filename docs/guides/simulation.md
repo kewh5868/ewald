@@ -1,7 +1,13 @@
 # Simulation Tool
 
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
 The GIWAXS simulation tool compares experimental context to crystal-structure-based
 predictions.
+For the Ewald-sphere, structure-factor, and residual-map equations behind these
+comparisons, see [Mathematical Foundations](mathematical-foundations.md).
 
 ## Loading structures
 
@@ -57,4 +63,4 @@ predictions.
 - Save simulation outputs to NetCDF-like dataset records and inspect metadata.
 - Use simulation table controls to reload recent outputs.
 
-![Simulation placeholder](../assets/placeholders/simulation.svg)
+![GIWAXS simulation screen capture](../assets/screenshots/tutorials/giwaxs-simulation.png)

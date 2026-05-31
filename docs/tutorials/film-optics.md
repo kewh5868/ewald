@@ -1,5 +1,9 @@
 # Tutorial: Using film optics inputs
 
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
 This workflow controls low-angle optical corrections in EWALD.
 
 ## 1) Open film optics controls
@@ -36,7 +40,7 @@ Load a valid structure reference to support composition- or phase-aware optics b
 - Verify correction outputs use the active film values.
 - Save project and reopen later to confirm persistent memory/reload.
 
-![Film optics placeholder](../assets/placeholders/film-optics.svg)
+![Film optics and correction controls screen capture](../assets/screenshots/tutorials/apply-corrections.png)
 
 ## Planned and current support
 

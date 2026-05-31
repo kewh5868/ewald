@@ -1,6 +1,12 @@
 # Detector Geometry and Corrections
 
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
 This section covers how EWALD maps detector images to corrected `q<sub>xy</sub>`/`q<sub>z</sub>` space.
+For the reciprocal-space equations behind this mapping, see
+[Mathematical Foundations](mathematical-foundations.md).
 
 ## Detector orientation
 
@@ -52,4 +58,4 @@ These are preserved on a per-target basis after confirmation.
 
 - Some advanced detector-specific correction transforms are currently **Experimental**.
 
-![Corrections placeholder](../assets/placeholders/corrections-workflow.svg)
+![Detector corrections workflow screen capture](../assets/screenshots/tutorials/apply-corrections.png)

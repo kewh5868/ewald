@@ -1,5 +1,9 @@
 # Outputs and Exports
 
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
 EWALD stores most results in the active `.ewld` project and selected tool outputs.
 
 ## Integrated traces
@@ -37,4 +41,6 @@ EWALD stores most results in the active `.ewld` project and selected tool output
 
 - Keep source images separate from `.ewld` project files.
 - Keep structure files and masks in a version-controlled project folder when possible.
-- Keep exported screenshots and tables in an `outputs/` directory next to the project.
+- Keep generated test cases, simulations, screenshots, and tables under
+  `example/projects/` so benchmark, refinement, and exploratory outputs share
+  one local project root.

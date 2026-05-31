@@ -1,5 +1,9 @@
 # Tutorial: Creating and editing ROIs
 
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
 This tutorial covers ROI setup for downstream peak workflows.
 
 ## Step 1: Open corrected data
@@ -30,4 +34,4 @@ This tutorial covers ROI setup for downstream peak workflows.
 
 - Save the `.ewld` project frequently.
 
-![ROI tutorial placeholder](../assets/placeholders/tutorial-roi.svg)
+![ROI tutorial screen capture](../assets/screenshots/tutorials/data-viewer-rois.png)

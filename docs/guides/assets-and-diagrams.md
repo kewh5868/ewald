@@ -1,15 +1,42 @@
 # Assets and Diagrams
 
-EWALD documentation uses text-based diagrams and screenshot placeholders so the site
-builds in any environment without blocking media capture.
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
+EWALD documentation uses generated workflow screenshots, text-based diagrams, and
+fallback placeholders so the site builds in any environment without blocking media
+capture.
 
 ## Screenshots and placeholders
 
-Current screenshot placeholders live in:
+Current tutorial screenshots live in:
+
+- `docs/assets/screenshots/tutorials/`
+
+Regenerate them from the repository root with:
+
+```bash
+python scripts/generate_tutorial_screenshots.py
+```
+
+The generator opens EWALD widgets offscreen, loads example or synthetic tutorial data,
+and captures these documentation-ready PNG files:
+
+- `ui-main-window.png`
+- `apply-corrections.png`
+- `data-viewer-rois.png`
+- `peak-identification.png`
+- `peak-fitting.png`
+- `structure-analysis.png`
+- `pole-figure.png`
+- `giwaxs-simulation.png`
+
+Fallback screenshot placeholders live in:
 
 - `docs/assets/placeholders/`
 
-Use these files until a real screenshot is captured:
+Use these files only when a matching runtime capture is not available:
 
 - `apply-corrections.svg`
 - `calibration-workflow.svg`
@@ -26,12 +53,12 @@ Use these files until a real screenshot is captured:
 - `tutorial-roi.svg`
 - `ui-main-window.svg`
 
-### Replacing placeholders
+### Refreshing captures
 
-1. Capture matching screen at runtime and save as PNG in the same path.
-2. Keep aspect ratio so references stay stable.
-3. Use short, workflow-oriented filenames.
-4. Update the corresponding Markdown link paths only if the file names change.
+1. Run the screenshot generator from the active EWALD environment.
+2. Review each PNG for clipping, blank content, and stale UI labels.
+3. Keep short, workflow-oriented filenames.
+4. Update Markdown links only when a capture is added, removed, or renamed.
 
 If replacements are not yet available, leave placeholders in place and mark the status as
 **Planned** or **Experimental** in nearby documentation where behavior is incomplete.

@@ -1,5 +1,9 @@
 # Tutorial: Identifying peaks
 
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
 ## 1) Open Peak Identification
 
 - Select an active data target.
@@ -19,4 +23,4 @@
 - Use undo/redo when adjusting placement.
 - Remove accidental points.
 
-![Peak identification tutorial placeholder](../assets/placeholders/peak-identification.svg)
+![Peak identification tutorial screen capture](../assets/screenshots/tutorials/peak-identification.png)

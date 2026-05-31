@@ -1,5 +1,9 @@
 # Installation
 
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
 This page is the source of truth for EWALD setup.
 
 ## Supported systems and Python versions
@@ -20,7 +24,7 @@ cd ewald
 
 Local datasets and generated outputs are intentionally not part of the source
 tree. Keep private data, example working copies, and generated simulations under
-local `example/` or `output/` folders as needed; Git ignores those paths.
+local `example/projects/` folders as needed; Git ignores that tree.
 
 ## Environment setup
 

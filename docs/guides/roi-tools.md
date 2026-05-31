@@ -1,5 +1,9 @@
 # ROI Tools
 
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
 ROI tools are the core bridge between Data Viewer and later analysis workflows.
 
 ## ROI types
@@ -50,4 +54,4 @@ Each ROI stores:
 
 - Some advanced automatic ROI coupling modes are marked as **Planned** for future UI refinements.
 
-![ROI placeholder](../assets/placeholders/roi-tools.svg)
+![ROI tools screen capture](../assets/screenshots/tutorials/data-viewer-rois.png)

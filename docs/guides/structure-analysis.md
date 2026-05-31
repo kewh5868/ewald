@@ -1,6 +1,12 @@
 # Structure Analysis
 
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
 Structure Analysis turns peak measurements into candidate structures.
+The reciprocal-lattice and Bragg-condition derivations are collected in
+[Mathematical Foundations](mathematical-foundations.md).
 
 ## Importing peaks
 
@@ -50,4 +56,4 @@ Structure Analysis turns peak measurements into candidate structures.
 
 - Full Wyckoff workflow depth beyond core generation is partially **Experimental** and evolving.
 
-![Structure Analysis placeholder](../assets/placeholders/structure-analysis.svg)
+![Structure Analysis screen capture](../assets/screenshots/tutorials/structure-analysis.png)

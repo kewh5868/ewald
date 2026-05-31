@@ -1,30 +1,45 @@
 # EWALD
 
+<p align="center">
+  <img src="docs/ewald.png" alt="EWALD package icon" width="160">
+</p>
+
 **Experimental WAXS Analysis for Lattice Determination**
 
 **Documentation:** https://kewh5868.github.io/ewald/
 
-EWALD is a Qt6 scientific software package for GIWAXS/WAXS analysis. It brings
+EWALD is a Qt6 scientific workbench for GIWAXS/WAXS analysis. It brings
 detector-image import, calibration-aware q-space correction, ROI and peak
-fitting workflows, lattice and structure-candidate ranking, and GIWAXS
-simulation into one project-based desktop interface. The simulation workflow is
-designed to compare experimental scattering targets against generated solved CIF
-structures, including residual difference maps for judging fit quality.
+fitting workflows, mathematical reciprocal-space conventions, lattice and
+structure-candidate ranking, CIF generation, and GIWAXS simulation into one
+project-based desktop interface. The simulation workflow compares experimental
+scattering targets against solved or generated CIF structures, including
+residual difference maps for judging fit quality.
+
+Suggested GitHub repository description:
+
+> Qt6 GIWAXS/WAXS workbench for calibrated q-space analysis, lattice refinement, CIF generation, and simulation.
 
 Use the docs links below for the maintained setup and workflow details:
 
 - Full docs: https://kewh5868.github.io/ewald/
 - Installation and setup: https://kewh5868.github.io/ewald/getting-started/installation/
 - Quickstart: https://kewh5868.github.io/ewald/getting-started/quickstart/
+- Mathematical foundations: https://kewh5868.github.io/ewald/guides/mathematical-foundations/
 - Developer notes: https://kewh5868.github.io/ewald/developer/notes/
+- Data-training scaffold: [`data_training/`](data_training/)
 
 ## What EWALD does
 
 - Imports detector images and stores analysis state in `.ewld` projects.
 - Applies calibration/correction context for GIWAXS/WAXS q-space workflows.
 - Provides ROI, peak identification, peak fitting, and structure-analysis tools.
+- Documents the q-space, reciprocal-lattice, ROI-integration, peak-fitting, and
+  simulation equations behind the workflows.
 - Generates draft CIF candidates and compares simulated GIWAXS patterns against
   experimental q-space targets with residual difference maps.
+- Provides an isolated synthetic-data and cluster-training scaffold for future
+  structure recognition, peak indexing, and physics-aware ranking models.
 - Exports project, simulation, and analysis products for downstream reuse.
 
 ## Quick start workflow
@@ -77,9 +92,9 @@ pytest
 ```
 
 The repository intentionally ignores local example datasets, generated
-simulation outputs, and private prompt notes (`/example/`, `/output/`, and
-`/PROMPTS.txt`). Tests that require local example data are skipped when that
-folder is absent.
+simulation outputs, and private prompt notes (`/example/` and
+`/PROMPTS.txt`). Use `example/projects/` as the local project/output root;
+tests that require local example data are skipped when that folder is absent.
 
 ## Build the docs locally
 
@@ -106,6 +121,7 @@ Output appears in `site/`.
 - User guide:
   - [User Interface Overview](https://kewh5868.github.io/ewald/user-interface/overview/)
   - [Data Loading](https://kewh5868.github.io/ewald/guides/data-loading/)
+  - [Mathematical Foundations](https://kewh5868.github.io/ewald/guides/mathematical-foundations/)
   - [Peak Fitting](https://kewh5868.github.io/ewald/guides/peak-fitting/)
   - [Structure Analysis](https://kewh5868.github.io/ewald/guides/structure-analysis/)
   - [Simulation](https://kewh5868.github.io/ewald/guides/simulation/)
@@ -128,6 +144,7 @@ src/ewald/
 tests/               Test coverage for processing and workflows
 requirements/        Runtime dependency manifests
 docs/                MkDocs documentation sources
+data_training/       Synthetic GIWAXS training-data and cluster scaffold
 ```
 
 - Active code is under `src/ewald/`.

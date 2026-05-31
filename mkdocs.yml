@@ -1,5 +1,5 @@
 site_name: EWALD Documentation
-site_description: Qt6 GIWAXS/WAXS analysis package for lattice determination, structure fitting, and simulation
+site_description: Qt6 GIWAXS/WAXS analysis workbench for calibrated q-space analysis, lattice refinement, CIF generation, and simulation
 site_url: https://kewh5868.github.io/ewald/
 repo_url: https://github.com/kewh5868/ewald
 repo_name: kewh5868/ewald
@@ -14,6 +14,7 @@ nav:
       - Data Loading: guides/data-loading.md
       - Calibration: guides/calibration.md
       - Detector Geometry and Corrections: guides/detector-geometry-and-corrections.md
+      - Mathematical Foundations: guides/mathematical-foundations.md
       - ROI Tools: guides/roi-tools.md
       - Peak Identification: guides/peak-identification.md
       - Peak Fitting: guides/peak-fitting.md
@@ -41,12 +42,19 @@ nav:
       - Documentation Style Guide: guides/style-guide.md
       - Maintenance Checklist: developer/maintenance-checklist.md
       - Repository Structure: development/repo-structure.md
+      - Data Training: development/data-training.md
+      - Surface Artifacts And Training Model: development/surface-artifacts-training-model.md
+      - Workflow And Execution Report: development/workflow-execution-report.md
+      - HybriD3 Local Scaffold Test: development/hybrid3-local-training-scaffold-test.md
       - Feature Planning: development/feature-planning.md
       - pyFAI Integration Notes: development/pyfai-integration.md
       - INSIGHT Correction Workflow: development/insight-correction-workflow.md
 
 theme:
   name: material
+  custom_dir: overrides
+  logo: ewald.png
+  favicon: ewald.png
   icon:
     repo: fontawesome/brands/github
   features:
@@ -61,15 +69,15 @@ theme:
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: indigo
-      accent: deep purple
+      primary: teal
+      accent: amber
       toggle:
         icon: material/weather-night
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: indigo
-      accent: deep purple
+      primary: teal
+      accent: amber
       toggle:
         icon: material/weather-sunny
         name: Switch to light mode
@@ -89,9 +97,15 @@ markdown_extensions:
   - pymdownx.highlight
   - pymdownx.superfences
   - pymdownx.inlinehilite
+  - pymdownx.arithmatex:
+      generic: true
   - pymdownx.snippets
   - pymdownx.tabbed
   - pymdownx.tasklist
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 
 extra:
   social:

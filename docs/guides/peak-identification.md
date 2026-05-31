@@ -1,5 +1,9 @@
 # Peak Identification
 
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
 Peak Identification connects visual markers with data regions and prepares peaks for fitting.
 
 ## Manual point placement
@@ -48,4 +52,4 @@ Peak Identification connects visual markers with data regions and prepares peaks
 - Full standalone text exports for selected peak sets are on the planned/experimental path and may appear as
   plugin-specific outputs in future releases.
 
-![Peak Identification placeholder](../assets/placeholders/peak-identification.svg)
+![Peak Identification screen capture](../assets/screenshots/tutorials/peak-identification.png)

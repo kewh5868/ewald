@@ -1,5 +1,9 @@
 # Peak Fitting
 
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
 Peak Fitting converts selected ROI regions into integrated traces and model fits.
 
 ## Integrating ROIs
@@ -35,4 +39,4 @@ Peak Fitting converts selected ROI regions into integrated traces and model fits
 
 - Additional curve types and multi-peak decomposition are currently **Planned**.
 
-![Peak Fitting placeholder](../assets/placeholders/peak-fitting.svg)
+![Peak Fitting screen capture](../assets/screenshots/tutorials/peak-fitting.png)

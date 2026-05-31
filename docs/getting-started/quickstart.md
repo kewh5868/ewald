@@ -1,5 +1,9 @@
 # Quickstart
 
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
 This page gives the shortest path from launch to first result.
 
 ## 1. Open the EWALD interface
@@ -50,7 +54,7 @@ With a selected data target:
 
 The downstream workflow remains gated until corrections are confirmed.
 
-![Apply image corrections placeholder](../assets/placeholders/apply-corrections.svg)
+![Apply image corrections screen capture](../assets/screenshots/tutorials/apply-corrections.png)
 
 ## 5. View GIWAXS data
 

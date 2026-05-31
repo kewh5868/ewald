@@ -1,5 +1,9 @@
 # pyFAI Integration Notes
 
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
 EWALD uses `pyFAI` as the geometry and integration engine for calibrated
 detector images. The active boundary for this lives in
 `ewald.processing.qspace`, where pyFAI results are converted into `xarray`
@@ -122,6 +126,11 @@ the PONI geometry.
   `("no", "histogram", "cython")`. The pyFAI documentation warns that pixel
   splitting can populate the GIWAXS missing wedge unless the experimental
   missing-wedge mask path is used deliberately.
+- Synthetic GIWAXS training data applies the same qIP/qOOP missing-wedge
+  concept analytically when `missing_wedge_correction` is enabled: bins below
+  the incident-angle sample horizon are zeroed, and generated `(hkl)` labels are
+  filtered to the accessible reciprocal-space region before artifact
+  augmentation.
 - `correctSolidAngle=True` should remain the default for calibrated maps.
 - `polarization_factor=0.95` should remain the default for GI maps and may be
   `None` when no polarization correction is desired.
