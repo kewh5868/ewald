@@ -12,3 +12,4 @@ This documentation was generated with help from a large language model and has n
 - [ ] Re-run `mkdocs build` before each tagged release.
 - [ ] Verify README links still point to documentation and install sections.
 - [ ] Verify GitHub Pages deployment URL and workflow status.
+- [ ] Confirm follow-up PR branches compare against the intended base branch.
