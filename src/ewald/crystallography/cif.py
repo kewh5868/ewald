@@ -3,11 +3,33 @@
 from __future__ import annotations
 
 import warnings
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import numpy as np
+
+LATTICE_PARAMETER_KEYS = ("a", "b", "c", "alpha", "beta", "gamma")
+_CIF_LATTICE_TAGS = {
+    "_cell_length_a": "a",
+    "_cell_length_b": "b",
+    "_cell_length_c": "c",
+    "_cell_angle_alpha": "alpha",
+    "_cell_angle_beta": "beta",
+    "_cell_angle_gamma": "gamma",
+}
+_KNOWN_PYMATGEN_CIF_WARNING_PATTERNS = (
+    (
+        r"(Issues encountered while parsing CIF: )?No "
+        r"_symmetry_equiv_pos_as_xyz type key found\. Space ?group from "
+        r"_symmetry_space_group_name_H-M used\."
+    ),
+    (
+        r"Issues encountered while parsing CIF: .*fractional coordinates "
+        r"rounded to ideal values.*"
+    ),
+)
 
 
 @dataclass(slots=True)
@@ -26,6 +48,74 @@ class ReferenceCIF:
             "score": self.score,
             "metadata": self.metadata,
         }
+
+
+def extract_cif_lattice_parameters(path: str | Path) -> dict[str, float]:
+    """Return unit-cell lengths and angles parsed from a CIF file."""
+
+    return parse_cif_lattice_parameters(Path(path).read_text(encoding="utf-8"))
+
+
+def parse_cif_lattice_parameters(text: str) -> dict[str, float]:
+    """Parse CIF unit-cell constants without requiring pymatgen."""
+
+    values: dict[str, float] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        key = parts[0].lower()
+        target = _CIF_LATTICE_TAGS.get(key)
+        if target is None:
+            continue
+        values[target] = _cif_number(parts[1])
+    missing = [key for key in LATTICE_PARAMETER_KEYS if key not in values]
+    if missing:
+        joined = ", ".join(missing)
+        raise ValueError(f"CIF is missing lattice parameter(s): {joined}.")
+    return {key: float(values[key]) for key in LATTICE_PARAMETER_KEYS}
+
+
+def infer_crystal_system_from_lattice(
+    lattice: dict[str, Any],
+    *,
+    tolerance: float = 1.0e-4,
+) -> str:
+    """Infer the closest supported crystal-system constraint."""
+
+    try:
+        a = float(lattice["a"])
+        b = float(lattice["b"])
+        c = float(lattice["c"])
+        alpha = float(lattice["alpha"])
+        beta = float(lattice["beta"])
+        gamma = float(lattice["gamma"])
+    except (KeyError, TypeError, ValueError):
+        return "Triclinic"
+
+    right_angles = all(
+        _close(angle, 90.0, tolerance)
+        for angle in (alpha, beta, gamma)
+    )
+    if right_angles and _close(a, b, tolerance) and _close(a, c, tolerance):
+        return "Cubic"
+    if right_angles and _close(a, b, tolerance):
+        return "Tetragonal"
+    if right_angles:
+        return "Orthorhombic"
+    if (
+        _close(a, b, tolerance)
+        and _close(alpha, 90.0, tolerance)
+        and _close(beta, 90.0, tolerance)
+        and _close(gamma, 120.0, tolerance)
+    ):
+        return "Hexagonal"
+    if _close(alpha, 90.0, tolerance) and _close(gamma, 90.0, tolerance):
+        return "Monoclinic"
+    return "Triclinic"
 
 
 def compare_cif_atom_coordinates(
@@ -49,6 +139,20 @@ def compare_cif_atom_coordinates(
     }
 
 
+@contextmanager
+def suppress_pymatgen_cif_warnings() -> Iterator[None]:
+    """Suppress known non-fatal pymatgen CIF normalization warnings."""
+
+    with warnings.catch_warnings():
+        for pattern in _KNOWN_PYMATGEN_CIF_WARNING_PATTERNS:
+            warnings.filterwarnings(
+                "ignore",
+                message=pattern,
+                category=UserWarning,
+            )
+        yield
+
+
 def _load_structure_for_comparison(path: str | Path) -> Any:
     try:
         from pymatgen.core import Structure
@@ -56,15 +160,7 @@ def _load_structure_for_comparison(path: str | Path) -> Any:
         raise RuntimeError(
             "pymatgen is required for CIF atom-coordinate comparison."
         ) from exc
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message=(
-                r"Issues encountered while parsing CIF: .*fractional "
-                r"coordinates rounded to ideal values.*"
-            ),
-            category=UserWarning,
-        )
+    with suppress_pymatgen_cif_warnings():
         return Structure.from_file(str(path))
 
 
@@ -123,8 +219,8 @@ def _coordinate_match_summary(
     generated: Any,
     reference: Any,
 ) -> dict[str, Any]:
-    generated_species = [site.specie.symbol for site in generated]
-    reference_species = [site.specie.symbol for site in reference]
+    generated_species = [_site_species_symbol(site) for site in generated]
+    reference_species = [_site_species_symbol(site) for site in reference]
     generated_coords = np.asarray(
         [site.frac_coords for site in generated],
         dtype=float,
@@ -220,3 +316,34 @@ def _max_or_none(values: np.ndarray) -> float | None:
     if values.size == 0:
         return None
     return float(np.max(values))
+
+
+def _site_species_symbol(site: Any) -> str:
+    try:
+        specie = site.specie
+    except AttributeError:
+        species = getattr(site, "species", None)
+        if species is None:
+            raise
+        items = list(species.items())
+        if not items:
+            raise ValueError("Structure site has no species.")
+        specie = max(items, key=lambda item: float(item[1]))[0]
+    return str(getattr(specie, "symbol", specie))
+
+
+def _cif_number(value: str) -> float:
+    token = value.strip().split()[0].strip("'\"")
+    if "(" in token:
+        token = token.split("(", 1)[0]
+    if token in {".", "?"}:
+        raise ValueError(f"Invalid CIF numeric value: {value!r}")
+    try:
+        return float(token)
+    except ValueError as exc:
+        raise ValueError(f"Invalid CIF numeric value: {value!r}") from exc
+
+
+def _close(left: float, right: float, tolerance: float) -> bool:
+    scale = max(1.0, abs(left), abs(right))
+    return abs(left - right) <= tolerance * scale

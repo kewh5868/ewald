@@ -11,7 +11,7 @@ authors = [
 maintainers = [
   { name = "Keith White", email = "keith.white@colorado.edu" },
 ]
-description = "Qt6 GIWAXS/WAXS analysis package for lattice determination, structure fitting, and simulation."
+description = "Qt6 GIWAXS/WAXS workbench for calibrated q-space analysis, lattice refinement, CIF generation, and simulation."
 keywords = [
   "WAXS",
   "GIWAXS",
@@ -43,7 +43,9 @@ Issues = "https://github.com/kewh5868/ewald/issues/"
 
 [project.scripts]
 ewald = "ewald.app.cli:main"
-ewald-giwaxs-sim = "ewald.app.simulation:main"
+ewald-benchmark = "ewald.app.benchmark:main"
+ewald-experimental-refine = "ewald.app.experimental_refine:main"
+ewald-synthetic-refine = "ewald.app.synthetic_refine:main"
 ewald-pole-figure = "ewald.app.pole_figure:main"
 
 [project.optional-dependencies]

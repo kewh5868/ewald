@@ -1,0 +1,185 @@
+{
+  "description": "Deterministic known-structure q-space TIFFs for validating Structure Analysis peak-family grouping.",
+  "axis_ranges": [
+    -2.2,
+    2.2,
+    0.0,
+    2.4
+  ],
+  "image_shape": [
+    256,
+    320
+  ],
+  "cases": [
+    {
+      "case_id": "cubic_missing_fundamental",
+      "structure_name": "cubic perovskite-like missing fundamental",
+      "description": "A cubic-like qxy harmonic series where the qxy fundamental is absent; the grouping algorithm should infer the latent step.",
+      "tiff": "cubic_missing_fundamental.tiff",
+      "peaks": [
+        {
+          "peak_id": "cubic_200",
+          "label": "Cubic (200)",
+          "qxy": 0.9,
+          "qz": 0.42,
+          "amplitude": 0.95
+        },
+        {
+          "peak_id": "cubic_300",
+          "label": "Cubic (300)",
+          "qxy": 1.35,
+          "qz": 1.16,
+          "amplitude": 0.82
+        },
+        {
+          "peak_id": "cubic_400",
+          "label": "Cubic (400)",
+          "qxy": 1.8,
+          "qz": 1.72,
+          "amplitude": 0.7
+        },
+        {
+          "peak_id": "cubic_off_axis",
+          "label": "Cubic off-axis",
+          "qxy": -0.38,
+          "qz": 2.02,
+          "amplitude": 0.45
+        }
+      ],
+      "expected_families": [
+        {
+          "family_id": "cubic_qxy_orders_2_3_4",
+          "kind": "q_xy multiples",
+          "peak_ids": [
+            "cubic_200",
+            "cubic_300",
+            "cubic_400"
+          ],
+          "orders": [
+            2,
+            3,
+            4
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "layered_qz_missing_fundamental",
+      "structure_name": "layered halide-like missing qz fundamental",
+      "description": "A lamellar qz progression where the first order is outside the captured range or too weak to mark.",
+      "tiff": "layered_qz_missing_fundamental.tiff",
+      "peaks": [
+        {
+          "peak_id": "layered_002",
+          "label": "Layered (002)",
+          "qxy": -1.35,
+          "qz": 0.72,
+          "amplitude": 0.92
+        },
+        {
+          "peak_id": "layered_003",
+          "label": "Layered (003)",
+          "qxy": -0.4,
+          "qz": 1.08,
+          "amplitude": 0.78
+        },
+        {
+          "peak_id": "layered_004",
+          "label": "Layered (004)",
+          "qxy": 0.75,
+          "qz": 1.44,
+          "amplitude": 0.68
+        },
+        {
+          "peak_id": "layered_sideband",
+          "label": "Layered sideband",
+          "qxy": 1.55,
+          "qz": 0.28,
+          "amplitude": 0.38
+        }
+      ],
+      "expected_families": [
+        {
+          "family_id": "layered_qz_orders_2_3_4",
+          "kind": "q_z multiples",
+          "peak_ids": [
+            "layered_002",
+            "layered_003",
+            "layered_004"
+          ],
+          "orders": [
+            2,
+            3,
+            4
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "orthorhombic_cross_grid",
+      "structure_name": "orthorhombic fiber-texture cross grid",
+      "description": "A simple projected orthorhombic grid with independent qxy and qz harmonic families.",
+      "tiff": "orthorhombic_cross_grid.tiff",
+      "peaks": [
+        {
+          "peak_id": "ortho_h10_l1",
+          "label": "Ortho h1 l1",
+          "qxy": 0.62,
+          "qz": 0.55,
+          "amplitude": 0.88
+        },
+        {
+          "peak_id": "ortho_h20_l2",
+          "label": "Ortho h2 l2",
+          "qxy": 1.24,
+          "qz": 1.1,
+          "amplitude": 0.76
+        },
+        {
+          "peak_id": "ortho_h30_l3",
+          "label": "Ortho h3 l3",
+          "qxy": 1.86,
+          "qz": 1.65,
+          "amplitude": 0.6
+        },
+        {
+          "peak_id": "ortho_tilted",
+          "label": "Ortho tilted",
+          "qxy": -1.02,
+          "qz": 0.92,
+          "amplitude": 0.46
+        }
+      ],
+      "expected_families": [
+        {
+          "family_id": "ortho_qxy_orders_1_2_3",
+          "kind": "q_xy multiples",
+          "peak_ids": [
+            "ortho_h10_l1",
+            "ortho_h20_l2",
+            "ortho_h30_l3"
+          ],
+          "orders": [
+            1,
+            2,
+            3
+          ]
+        },
+        {
+          "family_id": "ortho_qz_orders_1_2_3",
+          "kind": "q_z multiples",
+          "peak_ids": [
+            "ortho_h10_l1",
+            "ortho_h20_l2",
+            "ortho_h30_l3"
+          ],
+          "orders": [
+            1,
+            2,
+            3
+          ]
+        }
+      ]
+    }
+  ]
+}

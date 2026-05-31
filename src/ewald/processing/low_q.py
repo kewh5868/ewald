@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass, field
 from math import pi, radians, sin, sqrt
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+from ewald.crystallography.cif import suppress_pymatgen_cif_warnings
 
 HC_KEV_ANGSTROM = 12.398419843320026
 AVOGADRO_PER_MOL = 6.02214076e23
@@ -204,15 +205,7 @@ def estimate_refractive_index_from_structure(
         ) from exc
 
     try:
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message=(
-                    r"Issues encountered while parsing CIF: .*fractional "
-                    r"coordinates rounded to ideal values.*"
-                ),
-                category=UserWarning,
-            )
+        with suppress_pymatgen_cif_warnings():
             structure = Structure.from_file(str(path))
     except Exception as exc:
         raise ValueError(
