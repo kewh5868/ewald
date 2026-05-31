@@ -32,4 +32,3 @@ run_python "$EWALD_REPO_ROOT/data_training/scripts/apply_artifact_variants.py" \
 
 echo "$OUTPUT_MANIFEST" > "$RUN_ROOT/manifest_path.txt"
 echo "manifest=$OUTPUT_MANIFEST"
-

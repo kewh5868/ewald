@@ -913,8 +913,7 @@ def test_uncorrected_data_file_shows_raw_viewer_and_corrections_tab(
     assert not viewer.roi_table.isEnabled()
     pane = window.tabs.widget(1)
     assert (
-        window.tabs.widget(2).selected_data_id()
-        == group.data_files[0].data_id
+        window.tabs.widget(2).selected_data_id() == group.data_files[0].data_id
     )
     assert pane.load_mask_button.defaultAction() is window.load_mask_action
     assert (

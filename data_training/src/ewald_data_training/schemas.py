@@ -10,7 +10,8 @@ from typing import Any, Mapping
 
 
 class ConfigError(ValueError):
-    """Raised when a training-data configuration cannot be interpreted."""
+    """Raised when a training-data configuration cannot be
+    interpreted."""
 
 
 def stable_id(payload: Mapping[str, Any], prefix: str = "") -> str:
@@ -77,7 +78,8 @@ class StructureRecord:
         )
 
     def resolved_path(self, catalog_root: Path) -> Path:
-        """Return an absolute path relative to a catalog file directory."""
+        """Return an absolute path relative to a catalog file
+        directory."""
 
         candidate = Path(self.path).expanduser()
         if not candidate.is_absolute():
@@ -339,7 +341,9 @@ class ArtifactProfile:
             detector_gap_fraction=float(
                 payload.get("detector_gap_fraction", 0.018)
             ),
-            detector_layout=str(payload.get("detector_layout", "random_common")),
+            detector_layout=str(
+                payload.get("detector_layout", "random_common")
+            ),
             detector_gap_jitter_pixels=int(
                 payload.get("detector_gap_jitter_pixels", 1)
             ),
@@ -362,7 +366,10 @@ class ArtifactProfile:
             diffuse_ring_strength=float(
                 payload.get("diffuse_ring_strength", 0.06)
             ),
-            diffuse_ring_width_range=(float(ring_width[0]), float(ring_width[1])),
+            diffuse_ring_width_range=(
+                float(ring_width[0]),
+                float(ring_width[1]),
+            ),
             q_dependent_background=float(
                 payload.get("q_dependent_background", 0.015)
             ),
@@ -412,7 +419,9 @@ class ArtifactProfile:
             below_horizon_transmission=float(
                 payload.get("below_horizon_transmission", 0.08)
             ),
-            substrate_length_mm=float(payload.get("substrate_length_mm", 10.0)),
+            substrate_length_mm=float(
+                payload.get("substrate_length_mm", 10.0)
+            ),
             substrate_width_mm=float(payload.get("substrate_width_mm", 10.0)),
             beam_height_um=float(payload.get("beam_height_um", 35.0)),
             beam_width_mm=float(payload.get("beam_width_mm", 0.25)),

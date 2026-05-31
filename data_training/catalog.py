@@ -50,7 +50,8 @@ class StructureCatalogRecord:
         )
 
     def to_mapping(self) -> dict[str, Any]:
-        """Serialize the record into a stable manifest-friendly mapping."""
+        """Serialize the record into a stable manifest-friendly
+        mapping."""
 
         return {
             "structure_id": self.structure_id,
@@ -69,7 +70,8 @@ class StructureCatalogRecord:
         }
 
     def resolved_path(self, root: str | Path | None = None) -> Path:
-        """Resolve the structure path against an optional catalog root."""
+        """Resolve the structure path against an optional catalog
+        root."""
 
         path = Path(self.source_path)
         if path.is_absolute() or root is None:
@@ -127,7 +129,8 @@ class StructureCatalog:
     def select(
         self, structure_ids: Iterable[str] | str
     ) -> tuple[StructureCatalogRecord, ...]:
-        """Return records by id, or all records when ``structure_ids`` is all."""
+        """Return records by id, or all records when ``structure_ids``
+        is all."""
 
         if structure_ids == "all":
             return self.records

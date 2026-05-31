@@ -7,11 +7,11 @@ import pytest
 import xarray as xr
 
 from ewald.analysis.structure import (
+    REFERENCE_MOLECULES,
     LatticeCandidate,
     StructurePeak,
     generate_ranked_cif_records,
 )
-from ewald.analysis.structure import REFERENCE_MOLECULES
 from ewald.benchmark import (
     BenchmarkRunConfig,
     BenchmarkStructureSpec,
@@ -21,7 +21,12 @@ from ewald.benchmark import (
     perovskite_scaffold_hypotheses,
     run_structure_benchmark,
 )
+from ewald.benchmark.structure_benchmark import (
+    _score_bragg_peak_intensity_match,
+)
 from ewald.benchmark.synthetic_refinement import (
+    _scheduled_texture_mode,
+    _synthetic_texture_parameters,
     assess_candidate_assignments_against_truth,
     assess_peak_families_against_truth,
     electron_proxy_element_for_count,
@@ -32,10 +37,7 @@ from ewald.benchmark.synthetic_refinement import (
     generate_scaffold_candidate_cifs,
     match_detected_peaks_to_truth,
     organic_electron_proxy_plan,
-    _scheduled_texture_mode,
-    _synthetic_texture_parameters,
 )
-from ewald.benchmark.structure_benchmark import _score_bragg_peak_intensity_match
 from ewald.io.project import load_project
 
 
@@ -297,10 +299,15 @@ def test_synthetic_refinement_truth_diagnostics_match_peak_families():
 
     assert matched["summary"]["matched_detected_peak_count"] == 3
     assert matched["summary"]["top25_truth_recall"] == pytest.approx(1.0)
-    assert matched["summary"]["intensity_weighted_recall"] == pytest.approx(1.0)
-    assert matched["truth_rank_diagnostics"]["top_truth_recall"]["top_25"][
-        "matched_truth_peak_count"
-    ] == 3
+    assert matched["summary"]["intensity_weighted_recall"] == pytest.approx(
+        1.0
+    )
+    assert (
+        matched["truth_rank_diagnostics"]["top_truth_recall"]["top_25"][
+            "matched_truth_peak_count"
+        ]
+        == 3
+    )
     assert matched["summary"]["mean_radial_position_error"] == pytest.approx(
         matched["position_error_summary"]["mean_radial_error"]
     )
@@ -548,7 +555,14 @@ def test_bragg_intensity_match_rewards_relative_intensity_agreement():
     good = _score_bragg_peak_intensity_match(
         peaks,
         [
-            {"qxy": 1.0, "qz": 0.5, "amplitude": 100.0, "h": 1, "k": 0, "l": 0},
+            {
+                "qxy": 1.0,
+                "qz": 0.5,
+                "amplitude": 100.0,
+                "h": 1,
+                "k": 0,
+                "l": 0,
+            },
             {"qxy": 1.5, "qz": 0.7, "amplitude": 20.0, "h": 0, "k": 1, "l": 0},
         ],
         tolerance=0.05,
@@ -558,7 +572,14 @@ def test_bragg_intensity_match_rewards_relative_intensity_agreement():
         peaks,
         [
             {"qxy": 1.0, "qz": 0.5, "amplitude": 20.0, "h": 1, "k": 0, "l": 0},
-            {"qxy": 1.5, "qz": 0.7, "amplitude": 100.0, "h": 0, "k": 1, "l": 0},
+            {
+                "qxy": 1.5,
+                "qz": 0.7,
+                "amplitude": 100.0,
+                "h": 0,
+                "k": 1,
+                "l": 0,
+            },
         ],
         tolerance=0.05,
         max_peaks=10,
@@ -1272,8 +1293,9 @@ def test_structure_benchmark_writes_reproducible_artifacts(tmp_path):
 
 
 def test_validation_rejects_wrong_lattice_and_composition(tmp_path):
-    import ewald.benchmark.structure_benchmark as benchmark_module
     from pymatgen.core import Lattice, Structure
+
+    import ewald.benchmark.structure_benchmark as benchmark_module
 
     reference_cif = _write_simple_cif(tmp_path / "Si_reference.cif")
     wrong = tmp_path / "wrong_lattice_composition.cif"

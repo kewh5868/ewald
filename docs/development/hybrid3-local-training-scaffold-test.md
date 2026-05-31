@@ -12,20 +12,20 @@ GIWAXS simulation set for 2D fibril-textured samples, applied detector-image
 artifacts, trained the baseline vector ranker, evaluated top-k recovery, and
 exported ranked structure-file guesses.
 
-| Quantity | Value |
-| --- | ---: |
-| Structures pulled | 10 |
-| Clean simulation samples | 20 |
-| Artifact-augmented samples | 80 |
+| Quantity                              |   Value |
+| ------------------------------------- | ------: |
+| Structures pulled                     |      10 |
+| Clean simulation samples              |      20 |
+| Artifact-augmented samples            |      80 |
 | Missing-wedge corrected clean samples | 20 / 20 |
-| Median missing-wedge masked fraction | 0.082 |
-| Surface-artifact augmented samples | 60 |
-| Ranker candidates | 20 |
-| Evaluated artifact images | 80 |
-| Solvable augmented fraction | 1.000 |
-| Median artifact SNR | 13.49 |
-| Top-1 accuracy | 0.988 |
-| Top-5 accuracy | 1.000 |
+| Median missing-wedge masked fraction  |   0.082 |
+| Surface-artifact augmented samples    |      60 |
+| Ranker candidates                     |      20 |
+| Evaluated artifact images             |      80 |
+| Solvable augmented fraction           |   1.000 |
+| Median artifact SNR                   |   13.49 |
+| Top-1 accuracy                        |   0.988 |
+| Top-5 accuracy                        |   1.000 |
 
 ## Pulled Structure Cohort
 
@@ -33,18 +33,18 @@ Selection targeted visible HybriD3 atomic-structure datasets with 2D `PbI4`
 lead-iodide inorganic sublattices. This gives a chemically coherent local test
 set for fibril-textured GIWAXS recognition while keeping the run small.
 
-| Dataset | Structure id | Inorganic | Organic | File | Sites |
-| ---: | --- | --- | --- | --- | ---: |
-| 2788 | `hybrid3_2788` | PbI4 | C4H9NI | `dataset_2788_20231011_MC3I_PbI_380K_red.cif` | 20 |
-| 2787 | `hybrid3_2787` | PbI4 | C4H9NI | `dataset_2787_20250421_MC3I_PbI_360K_1_red.cif` | 20 |
-| 2786 | `hybrid3_2786` | PbI4 | C4H9NI | `dataset_2786_MC3PI_100K.cif` | 20 |
-| 2736 | `hybrid3_2736` | PbI4, Lead iodide | C7H9IN | `dataset_2736_geometry.vasp` | 82 |
-| 2735 | `hybrid3_2735` | PbI4, Lead iodide | C7H9BrN | `dataset_2735_geometry.vasp` | 82 |
-| 2734 | `hybrid3_2734` | PbI4, Lead iodide | C7H9ClN | `dataset_2734_geometry.vasp` | 82 |
-| 2733 | `hybrid3_2733` | PbI4, Lead iodide | C7H9FN | `dataset_2733_geometry.vasp` | 164 |
-| 2732 | `hybrid3_2732` | PbI4, Lead iodide | C6H18N2 | `dataset_2732_geometry.vasp` | 62 |
-| 2731 | `hybrid3_2731` | PbI4, Lead iodide | C8H22N2 | `dataset_2731_geometry.vasp` | 74 |
-| 2730 | `hybrid3_2730` | PbI4, Lead iodide | C2H8NO | `dataset_2730_geometry.vasp` | 58 |
+| Dataset | Structure id   | Inorganic         | Organic | File                                            | Sites |
+| ------: | -------------- | ----------------- | ------- | ----------------------------------------------- | ----: |
+|    2788 | `hybrid3_2788` | PbI4              | C4H9NI  | `dataset_2788_20231011_MC3I_PbI_380K_red.cif`   |    20 |
+|    2787 | `hybrid3_2787` | PbI4              | C4H9NI  | `dataset_2787_20250421_MC3I_PbI_360K_1_red.cif` |    20 |
+|    2786 | `hybrid3_2786` | PbI4              | C4H9NI  | `dataset_2786_MC3PI_100K.cif`                   |    20 |
+|    2736 | `hybrid3_2736` | PbI4, Lead iodide | C7H9IN  | `dataset_2736_geometry.vasp`                    |    82 |
+|    2735 | `hybrid3_2735` | PbI4, Lead iodide | C7H9BrN | `dataset_2735_geometry.vasp`                    |    82 |
+|    2734 | `hybrid3_2734` | PbI4, Lead iodide | C7H9ClN | `dataset_2734_geometry.vasp`                    |    82 |
+|    2733 | `hybrid3_2733` | PbI4, Lead iodide | C7H9FN  | `dataset_2733_geometry.vasp`                    |   164 |
+|    2732 | `hybrid3_2732` | PbI4, Lead iodide | C6H18N2 | `dataset_2732_geometry.vasp`                    |    62 |
+|    2731 | `hybrid3_2731` | PbI4, Lead iodide | C8H22N2 | `dataset_2731_geometry.vasp`                    |    74 |
+|    2730 | `hybrid3_2730` | PbI4, Lead iodide | C2H8NO  | `dataset_2730_geometry.vasp`                    |    58 |
 
 ## Simulation Protocol
 
@@ -127,16 +127,16 @@ recoverable indexing problem rather than an unrealistic failure case.
 
 ## Output Locations
 
-| Output | Path |
-| --- | --- |
-| Run root | `/Users/keithwhite/repos/ewald/data_training/runs/hybrid3_2d_fibril_smoke_20260530` |
-| HybriD3 catalog | `/Users/keithwhite/repos/ewald/data_training/runs/hybrid3_2d_fibril_smoke_20260530/hybrid3_library/hybrid3_structure_catalog.yaml` |
-| Ingest manifest | `/Users/keithwhite/repos/ewald/data_training/runs/hybrid3_2d_fibril_smoke_20260530/hybrid3_library/hybrid3_ingest_manifest.jsonl` |
-| Clean simulation manifest | `/Users/keithwhite/repos/ewald/data_training/runs/hybrid3_2d_fibril_smoke_20260530/simulations/manifest.jsonl` |
-| Artifact manifest | `/Users/keithwhite/repos/ewald/data_training/runs/hybrid3_2d_fibril_smoke_20260530/artifacts/artifact_manifest.jsonl` |
-| Ranker model | `/Users/keithwhite/repos/ewald/data_training/runs/hybrid3_2d_fibril_smoke_20260530/model/vector_ranker.json` |
-| Feedback metrics | `/Users/keithwhite/repos/ewald/data_training/runs/hybrid3_2d_fibril_smoke_20260530/metrics/feedback_metrics.json` |
-| Exported guesses | `/Users/keithwhite/repos/ewald/data_training/runs/hybrid3_2d_fibril_smoke_20260530/structure_guesses` |
+| Output                    | Path                                                                                                                               |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Run root                  | `/Users/keithwhite/repos/ewald/data_training/runs/hybrid3_2d_fibril_smoke_20260530`                                                |
+| HybriD3 catalog           | `/Users/keithwhite/repos/ewald/data_training/runs/hybrid3_2d_fibril_smoke_20260530/hybrid3_library/hybrid3_structure_catalog.yaml` |
+| Ingest manifest           | `/Users/keithwhite/repos/ewald/data_training/runs/hybrid3_2d_fibril_smoke_20260530/hybrid3_library/hybrid3_ingest_manifest.jsonl`  |
+| Clean simulation manifest | `/Users/keithwhite/repos/ewald/data_training/runs/hybrid3_2d_fibril_smoke_20260530/simulations/manifest.jsonl`                     |
+| Artifact manifest         | `/Users/keithwhite/repos/ewald/data_training/runs/hybrid3_2d_fibril_smoke_20260530/artifacts/artifact_manifest.jsonl`              |
+| Ranker model              | `/Users/keithwhite/repos/ewald/data_training/runs/hybrid3_2d_fibril_smoke_20260530/model/vector_ranker.json`                       |
+| Feedback metrics          | `/Users/keithwhite/repos/ewald/data_training/runs/hybrid3_2d_fibril_smoke_20260530/metrics/feedback_metrics.json`                  |
+| Exported guesses          | `/Users/keithwhite/repos/ewald/data_training/runs/hybrid3_2d_fibril_smoke_20260530/structure_guesses`                              |
 
 ## Testing Protocol
 

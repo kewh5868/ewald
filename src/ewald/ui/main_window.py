@@ -21,9 +21,7 @@ from ewald.io.project import (
 from ewald.ui.corrections import ApplyImageCorrectionsPane
 from ewald.ui.data_tree import DataTreePane
 from ewald.ui.data_viewer import DataViewerPane
-from ewald.ui.giwaxs_simulation import (
-    GIWAXSSimulationPane,
-)
+from ewald.ui.giwaxs_simulation import GIWAXSSimulationPane
 from ewald.ui.metadata_dialog import ManualMetadataDialog
 from ewald.ui.peak_identification import PeakIdentificationPane
 from ewald.ui.pole_figure import PoleFigureGeneratorWindow

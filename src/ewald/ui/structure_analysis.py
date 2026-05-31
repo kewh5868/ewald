@@ -191,7 +191,8 @@ FAMILY_KIND_CONTROL_LABELS = {
 
 
 class _FamilyTableWidget(QtWidgets.QTableWidget):
-    """Family table with row drag reporting for persistent manual order."""
+    """Family table with row drag reporting for persistent manual
+    order."""
 
     familyDragStarted = QtCore.Signal()
     familyRowsReordered = QtCore.Signal(list)

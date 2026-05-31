@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Apply random detector-artifact variants to clean generated samples."""
+# flake8: noqa: E402
+"""Apply random detector-artifact variants to clean generated
+samples."""
 
 from __future__ import annotations
 
@@ -14,21 +16,21 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "data_training" / "src"))
 
-from ewald_data_training.artifacts import apply_artifacts  # noqa: E402
 from ewald_data_training.artifact_features import (  # noqa: E402
     build_artifact_assessment,
     estimate_retrieval_quality,
 )
+from ewald_data_training.artifacts import apply_artifacts  # noqa: E402
 from ewald_data_training.manifests import (  # noqa: E402
     read_jsonl_manifest,
     write_jsonl_manifest,
 )
-from ewald_data_training.schemas import (
+from ewald_data_training.schemas import (  # noqa: E402
     ArtifactProfile,
     DatasetSample,
     DetectorGeometry,
     stable_id,
-)  # noqa: E402
+)
 
 
 def main(argv: list[str] | None = None) -> int:

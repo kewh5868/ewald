@@ -26,4 +26,3 @@ for log_path in \"\${logs[@]}\"; do
   tail -n \"$LINES\" \"\$log_path\" || true
 done
 '"
-

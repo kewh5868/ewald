@@ -32,11 +32,11 @@ from ewald.simulation.giwaxs import (
 from ewald.ui.data_tree import DataTreePane
 from ewald.ui.data_viewer import DataViewerPane
 from ewald.ui.giwaxs_simulation import (
+    STRUCTURE_PREVIEW_MAX_SIDE,
+    STRUCTURE_PREVIEW_MIN_SIDE,
     GIWAXSSimulationPane,
     GIWAXSSimulationResultPane,
     GIWAXSSimulationWindow,
-    STRUCTURE_PREVIEW_MAX_SIDE,
-    STRUCTURE_PREVIEW_MIN_SIDE,
     _cpk_color,
     _peak_tip,
 )
@@ -109,8 +109,7 @@ def test_giwaxs_peak_rows_flag_forbidden_reflections(tmp_path):
     assert data.attrs["forbidden_reflection_count"] == len(forbidden)
     assert data.attrs["peak_count"] == len(peak_rows) - len(forbidden)
     assert any(
-        abs(row["h"]) + abs(row["k"]) + abs(row["l"]) == 1
-        for row in forbidden
+        abs(row["h"]) + abs(row["k"]) + abs(row["l"]) == 1 for row in forbidden
     )
 
 
@@ -1043,7 +1042,10 @@ def test_simulation_window_has_scrollable_compact_inputs_and_presets(
     scroll_layout = window.left_scroll_content.layout()
     assert scroll_layout.itemAt(0).widget() is window.controls
     assert scroll_layout.itemAt(1).widget() is window.structure_viewer
-    assert scroll_layout.itemAt(2).widget() is window.orientation_distribution_view
+    assert (
+        scroll_layout.itemAt(2).widget()
+        is window.orientation_distribution_view
+    )
     controls_layout = window.controls.layout()
     assert window.sweep_controls.isVisibleTo(window)
     assert window.sweep_controls.title() == "Ewald sphere sweep"

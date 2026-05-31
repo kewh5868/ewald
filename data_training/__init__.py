@@ -1,4 +1,5 @@
-"""Configuration-first scaffolding for EWALD training data generation."""
+"""Configuration-first scaffolding for EWALD training data
+generation."""
 
 from .artifacts import ArtifactOperation, ArtifactProfile
 from .catalog import StructureCatalog, StructureCatalogRecord

@@ -52,4 +52,3 @@ if [[ -d \"$EWALD_RUNTIME_DIR/repo/.git\" ]]; then
   git status --short || true
 fi
 '"
-

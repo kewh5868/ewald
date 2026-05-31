@@ -25,4 +25,3 @@ else
   exec \"\${SHELL:-/bin/bash}\" -l
 fi
 '"
-

@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# flake8: noqa: E402
 """Generate the synthetic-refinement solve-chain roadmap report.
 
 The report is intentionally regenerable: the same run writes a PDF, Markdown,
@@ -31,9 +32,7 @@ import networkx as nx
 import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.patches import Circle, FancyArrowPatch, Rectangle
-
 from pymatgen.core import Lattice, Structure
-
 
 HALIDES = {"F", "Cl", "Br", "I"}
 B_SITE = {"Pb", "Sn"}
@@ -448,7 +447,9 @@ def main() -> None:
     print(f"Wrote assets: {assets_dir}")
 
 
-def summarize_structure(structure: Structure, cif_path: Path) -> dict[str, Any]:
+def summarize_structure(
+    structure: Structure, cif_path: Path
+) -> dict[str, Any]:
     composition = structure.composition
     inorganic_counts: dict[str, float] = {}
     organic_counts: dict[str, float] = {}
@@ -469,7 +470,9 @@ def summarize_structure(structure: Structure, cif_path: Path) -> dict[str, Any]:
     charge = 2.0 * b_count - halide_count
     abc = tuple(float(value) for value in structure.lattice.abc)
     angles = tuple(float(value) for value in structure.lattice.angles)
-    density_proxy = float(len(structure) / max(structure.lattice.volume, 1.0e-9))
+    density_proxy = float(
+        len(structure) / max(structure.lattice.volume, 1.0e-9)
+    )
     return {
         "path": str(cif_path),
         "formula": composition.reduced_formula,
@@ -497,7 +500,8 @@ def build_motif_subunit_library(
     repo_root: Path,
     motif_dir: Path,
 ) -> list[MotifExampleRecord]:
-    """Create known-reference scaffold CIFs and idealized motif templates."""
+    """Create known-reference scaffold CIFs and idealized motif
+    templates."""
 
     motif_dir.mkdir(parents=True, exist_ok=True)
     records: list[MotifExampleRecord] = []
@@ -736,7 +740,12 @@ def write_idealized_motif_cifs(motif_dir: Path) -> list[MotifExampleRecord]:
             Structure(
                 Lattice.hexagonal(6.4, 4.1),
                 ["Pb", "I", "I", "I"],
-                [(0, 0, 0), (0.34, 0, 0.25), (0, 0.34, 0.25), (0.66, 0.66, 0.25)],
+                [
+                    (0, 0, 0),
+                    (0.34, 0, 0.25),
+                    (0, 0.34, 0.25),
+                    (0.66, 0.66, 0.25),
+                ],
             ),
         )
     )
@@ -884,7 +893,9 @@ def build_hybrid3_cache(
     return cache
 
 
-def probe_matd3_api(timeout: float) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def probe_matd3_api(
+    timeout: float,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     try:
         import requests
     except Exception as exc:  # pragma: no cover - dependency guard.
@@ -916,7 +927,9 @@ def probe_matd3_api(timeout: float) -> tuple[list[dict[str, Any]], list[dict[str
             try:
                 response = requests.get(url, timeout=timeout)
                 attempt["status_code"] = response.status_code
-                attempt["content_type"] = response.headers.get("content-type", "")
+                attempt["content_type"] = response.headers.get(
+                    "content-type", ""
+                )
                 response.raise_for_status()
                 try:
                     payload: Any = response.json()
@@ -947,9 +960,13 @@ def records_from_api_payload(url: str, payload: Any) -> list[dict[str, Any]]:
     for index, item in enumerate(extract_sequence(payload)):
         if not isinstance(item, dict):
             continue
-        system = item.get("system") if isinstance(item.get("system"), dict) else {}
+        system = (
+            item.get("system") if isinstance(item.get("system"), dict) else {}
+        )
         reference = (
-            item.get("reference") if isinstance(item.get("reference"), dict) else {}
+            item.get("reference")
+            if isinstance(item.get("reference"), dict)
+            else {}
         )
         dataset_id = first_present(item, ("dataset_id", "dataset", "pk", "id"))
         system_id = first_present(system, ("system_id", "id"))
@@ -1023,7 +1040,10 @@ def listify(value: Any) -> list[str]:
 
 
 def inspect_recent_runs(repo_root: Path) -> dict[str, Any]:
-    history = repo_root / "example/projects/synthetic_refinement_history/20260519/runs"
+    history = (
+        repo_root
+        / "example/projects/synthetic_refinement_history/20260519/runs"
+    )
     runs: dict[str, Any] = {}
     for kind in ("staged", "oracle_diagnostic", "oracle_smoke"):
         parent = history / kind
@@ -1079,7 +1099,8 @@ def generate_figures(
         "reduced_motif_z": assets_dir / "reduced_motif_z.png",
         "motif_library": assets_dir / "motif_library.png",
         "motif_stoichiometry": assets_dir / "motif_stoichiometry.png",
-        "motif_reference_examples": assets_dir / "motif_reference_examples.png",
+        "motif_reference_examples": assets_dir
+        / "motif_reference_examples.png",
         "dimensional_motifs": assets_dir / "dimensional_motifs.png",
         "tarasov_structure_projection": assets_dir
         / "tarasov_structure_projection.png",
@@ -1097,8 +1118,12 @@ def generate_figures(
         motif_examples,
     )
     draw_dimensional_motifs(figures["dimensional_motifs"])
-    draw_structure_projection(figures["tarasov_structure_projection"], structure)
-    draw_giwaxs_panels(figures["tarasov_giwaxs_comparison"], example_cif, assets_dir)
+    draw_structure_projection(
+        figures["tarasov_structure_projection"], structure
+    )
+    draw_giwaxs_panels(
+        figures["tarasov_giwaxs_comparison"], example_cif, assets_dir
+    )
     draw_ranking_failure_table(figures["ranking_failure_table"])
     return figures
 
@@ -1235,7 +1260,9 @@ def draw_peak_family_schematic(path: Path) -> None:
         ("h00/k00", 0.55, "#2f855a"),
         ("mixed hk/l", 0.95, "#b7791f"),
     ]
-    fig, axes = plt.subplots(1, 2, figsize=(12.5, 4.8), constrained_layout=True)
+    fig, axes = plt.subplots(
+        1, 2, figsize=(12.5, 4.8), constrained_layout=True
+    )
     ax = axes[0]
     ax.set_title("Synthetic ROI centers and integrated intensity")
     ax.set_xlabel("qxy (A^-1)")
@@ -1243,8 +1270,10 @@ def draw_peak_family_schematic(path: Path) -> None:
     for label, slope, color in families:
         qxy = np.linspace(-2.7, 2.7, 22)
         qz = 0.35 + slope * np.abs(qxy) + rng.normal(0.0, 0.035, qxy.size)
-        intensity = 25 + 650 * np.exp(-0.6 * np.abs(qxy)) + rng.normal(
-            0.0, 25.0, qxy.size
+        intensity = (
+            25
+            + 650 * np.exp(-0.6 * np.abs(qxy))
+            + rng.normal(0.0, 25.0, qxy.size)
         )
         ax.scatter(
             qxy,
@@ -1361,9 +1390,13 @@ def draw_reduced_motif_z(path: Path, summary: dict[str, Any]) -> None:
 
 
 def draw_motif_library(path: Path) -> None:
-    fig, axes = plt.subplots(2, 4, figsize=(13.5, 7.5), constrained_layout=True)
+    fig, axes = plt.subplots(
+        2, 4, figsize=(13.5, 7.5), constrained_layout=True
+    )
     for ax, motif in zip(axes.ravel(), MOTIF_LIBRARY):
-        ax.set_title(f"{motif.label}\n{motif.formula}", fontsize=10, weight="bold")
+        ax.set_title(
+            f"{motif.label}\n{motif.formula}", fontsize=10, weight="bold"
+        )
         ax.set_axis_off()
         draw_motif_graph(ax, motif.graph_hint)
         ax.text(
@@ -1479,7 +1512,11 @@ def draw_motif_reference_examples(
     path: Path,
     motif_examples: list[MotifExampleRecord],
 ) -> None:
-    known = [record for record in motif_examples if record.source == "local_reference"]
+    known = [
+        record
+        for record in motif_examples
+        if record.source == "local_reference"
+    ]
     headers = ["Reference", "Motif", "Dim.", "Sharing", "Generated scaffold"]
     rows = []
     for record in known:
@@ -1489,7 +1526,11 @@ def draw_motif_reference_examples(
                 record.formula,
                 record.dimensionality,
                 record.sharing,
-                Path(record.generated_cif).name if record.generated_cif else "not generated",
+                (
+                    Path(record.generated_cif).name
+                    if record.generated_cif
+                    else "not generated"
+                ),
             )
         )
     fig, ax = plt.subplots(figsize=(13.5, 4.9))
@@ -1522,7 +1563,9 @@ def draw_motif_reference_examples(
 
 
 def draw_dimensional_motifs(path: Path) -> None:
-    fig, axes = plt.subplots(2, 2, figsize=(12.0, 8.0), constrained_layout=True)
+    fig, axes = plt.subplots(
+        2, 2, figsize=(12.0, 8.0), constrained_layout=True
+    )
     cases = [
         ("0D isolated octahedra", "octahedron", "molecular salt / cluster"),
         ("1D chains", "chain", "edge- or face-sharing ribbons"),
@@ -1552,7 +1595,9 @@ def draw_dimensional_motifs(path: Path) -> None:
 
 def draw_structure_projection(path: Path, structure: Structure) -> None:
     species = [site.specie.symbol for site in structure]
-    coords = np.asarray([site.frac_coords % 1.0 for site in structure], dtype=float)
+    coords = np.asarray(
+        [site.frac_coords % 1.0 for site in structure], dtype=float
+    )
     groups = {
         "Pb/Sn": [i for i, symbol in enumerate(species) if symbol in B_SITE],
         "Halide": [i for i, symbol in enumerate(species) if symbol in HALIDES],
@@ -1576,7 +1621,9 @@ def draw_structure_projection(path: Path, structure: Structure) -> None:
         "Organic/solvent": 12,
     }
     projections = [("a", "b", 0, 1), ("a", "c", 0, 2), ("b", "c", 1, 2)]
-    fig, axes = plt.subplots(1, 3, figsize=(13.0, 4.6), constrained_layout=True)
+    fig, axes = plt.subplots(
+        1, 3, figsize=(13.0, 4.6), constrained_layout=True
+    )
     for ax, (xlabel, ylabel, ix, iy) in zip(axes, projections):
         for label, indices in groups.items():
             if not indices:
@@ -1608,7 +1655,9 @@ def draw_structure_projection(path: Path, structure: Structure) -> None:
     plt.close(fig)
 
 
-def draw_giwaxs_panels(path: Path, example_cif: Path, assets_dir: Path) -> None:
+def draw_giwaxs_panels(
+    path: Path, example_cif: Path, assets_dir: Path
+) -> None:
     try:
         from ewald.simulation.giwaxs import (
             GIWAXSSimulationParameters,
@@ -1781,9 +1830,15 @@ def draw_motif_graph(ax: plt.Axes, hint: str) -> None:
     graph = nx.Graph()
     if hint == "octahedron":
         graph.add_node("Pb", pos=(0.5, 0.5), kind="B")
-        for i, angle in enumerate(np.linspace(0, 2 * np.pi, 6, endpoint=False)):
+        for i, angle in enumerate(
+            np.linspace(0, 2 * np.pi, 6, endpoint=False)
+        ):
             name = f"I{i}"
-            graph.add_node(name, pos=(0.5 + 0.28 * np.cos(angle), 0.5 + 0.28 * np.sin(angle)), kind="X")
+            graph.add_node(
+                name,
+                pos=(0.5 + 0.28 * np.cos(angle), 0.5 + 0.28 * np.sin(angle)),
+                kind="X",
+            )
             graph.add_edge("Pb", name)
     elif hint == "dimer":
         add_octahedral_center(graph, "Pb1", (0.38, 0.5))
@@ -1802,7 +1857,10 @@ def draw_motif_graph(ax: plt.Axes, hint: str) -> None:
                 add_octahedral_center(
                     graph,
                     f"Pb{ix}{iy}",
-                    (0.28 + ix * 0.22 + (0.04 if iy else 0.0), 0.38 + iy * 0.23),
+                    (
+                        0.28 + ix * 0.22 + (0.04 if iy else 0.0),
+                        0.38 + iy * 0.23,
+                    ),
                     radius=0.08,
                 )
         for a, b in zip(list(graph.nodes)[:-1], list(graph.nodes)[1:]):
@@ -1819,7 +1877,9 @@ def draw_motif_graph(ax: plt.Axes, hint: str) -> None:
     kinds = nx.get_node_attributes(graph, "kind")
     nx.draw_networkx_edges(graph, pos, ax=ax, edge_color="#4a5568", width=1.5)
     for kind, color, size in (("B", "#4c51bf", 330), ("X", "#805ad5", 120)):
-        nodes = [node for node, node_kind in kinds.items() if node_kind == kind]
+        nodes = [
+            node for node, node_kind in kinds.items() if node_kind == kind
+        ]
         nx.draw_networkx_nodes(
             graph,
             pos,
@@ -1857,7 +1917,12 @@ def draw_dimensional_graph(ax: plt.Axes, mode: str) -> None:
         for i in range(5):
             draw_octahedron(ax, 0.18 + i * 0.16, 0.55, scale=0.07)
             if i:
-                ax.plot([0.18 + i * 0.16 - 0.11, 0.18 + i * 0.16 - 0.04], [0.55, 0.55], color="#333", lw=2)
+                ax.plot(
+                    [0.18 + i * 0.16 - 0.11, 0.18 + i * 0.16 - 0.04],
+                    [0.55, 0.55],
+                    color="#333",
+                    lw=2,
+                )
     elif mode == "sheet":
         for ix in range(4):
             for iy in range(3):
@@ -1889,7 +1954,11 @@ def draw_octahedron(
     scale: float = 0.08,
     color: str = "#4c51bf",
 ) -> None:
-    ax.add_patch(Circle((x, y), scale * 0.45, facecolor=color, edgecolor="white", lw=0.7))
+    ax.add_patch(
+        Circle(
+            (x, y), scale * 0.45, facecolor=color, edgecolor="white", lw=0.7
+        )
+    )
     ligand_color = "#805ad5"
     for dx, dy in (
         (scale, 0),
@@ -2048,7 +2117,11 @@ def write_pdf(
             figures["solve_chain_flow"],
             "End-to-end diagnostic flow from peaks through organic RMC.",
         )
-        add_text_page(pdf, "Peak Detection And Family Grouping", REPORT_SECTIONS["peak_chain"])
+        add_text_page(
+            pdf,
+            "Peak Detection And Family Grouping",
+            REPORT_SECTIONS["peak_chain"],
+        )
         add_figure_page(
             pdf,
             "Peak Finder Diagnostics",
@@ -2107,9 +2180,17 @@ def write_pdf(
             "III. Construction And Refinement",
             "Choose Wyckoff-compatible sites, construct the scaffold, add organic proxies, and refine by images and peaks.",
         )
-        add_text_page(pdf, "Wyckoff And Site Guessing", REPORT_SECTIONS["wyckoff"])
-        add_text_page(pdf, "Organic Proxy And Molecule Placement", REPORT_SECTIONS["organic"])
-        add_text_page(pdf, "Physical Constraints", REPORT_SECTIONS["constraints"])
+        add_text_page(
+            pdf, "Wyckoff And Site Guessing", REPORT_SECTIONS["wyckoff"]
+        )
+        add_text_page(
+            pdf,
+            "Organic Proxy And Molecule Placement",
+            REPORT_SECTIONS["organic"],
+        )
+        add_text_page(
+            pdf, "Physical Constraints", REPORT_SECTIONS["constraints"]
+        )
         add_figure_page(
             pdf,
             "Tarasov Structure Example",
@@ -2166,7 +2247,9 @@ def add_canvas(fig: plt.Figure) -> plt.Axes:
     return ax
 
 
-def save_pdf_page(pdf: PdfPages, fig: plt.Figure, *, number: bool = True) -> None:
+def save_pdf_page(
+    pdf: PdfPages, fig: plt.Figure, *, number: bool = True
+) -> None:
     global PAGE_COUNTER
     PAGE_COUNTER += 1
     if number:
@@ -2189,19 +2272,38 @@ def add_report_header(
 ) -> None:
     ax = add_canvas(fig)
     ax.add_patch(
-        Rectangle((0.0, 0.0), 1.0, 1.0, facecolor=THEME["paper"], edgecolor="none")
+        Rectangle(
+            (0.0, 0.0), 1.0, 1.0, facecolor=THEME["paper"], edgecolor="none"
+        )
     )
     top = 0.865
     ax.add_patch(
-        Rectangle((0.0, top), 1.0, 0.135, facecolor=THEME["white"], edgecolor="none")
+        Rectangle(
+            (0.0, top), 1.0, 0.135, facecolor=THEME["white"], edgecolor="none"
+        )
     )
     ax.add_patch(
-        Rectangle((0.0, top), 0.035, 0.135, facecolor=THEME["navy"], edgecolor="none")
+        Rectangle(
+            (0.0, top), 0.035, 0.135, facecolor=THEME["navy"], edgecolor="none"
+        )
     )
     ax.add_patch(
-        Rectangle((0.035, top), 0.008, 0.135, facecolor=THEME["gold"], edgecolor="none")
+        Rectangle(
+            (0.035, top),
+            0.008,
+            0.135,
+            facecolor=THEME["gold"],
+            edgecolor="none",
+        )
     )
-    fig.text(0.08, 0.964, eyebrow.upper(), fontsize=7.6, color=THEME["gold"], weight="bold")
+    fig.text(
+        0.08,
+        0.964,
+        eyebrow.upper(),
+        fontsize=7.6,
+        color=THEME["gold"],
+        weight="bold",
+    )
     title_lines = textwrap.wrap(title, width=52)
     title_text = "\n".join(title_lines[:2])
     font_size = 15.2 if len(title_lines) <= 1 else 13.0
@@ -2215,7 +2317,9 @@ def add_report_header(
         va="top",
         linespacing=1.0,
     )
-    ax.plot([0.08, 0.92], [top - 0.006, top - 0.006], color=THEME["rule"], lw=0.8)
+    ax.plot(
+        [0.08, 0.92], [top - 0.006, top - 0.006], color=THEME["rule"], lw=0.8
+    )
 
 
 def add_report_footer(fig: plt.Figure) -> None:
@@ -2229,10 +2333,14 @@ def add_title_page(pdf: PdfPages, manifest: dict[str, Any]) -> None:
     fig.patch.set_facecolor(THEME["paper"])
     ax = add_canvas(fig)
     ax.add_patch(
-        Rectangle((0.0, 0.0), 0.28, 1.0, facecolor=THEME["navy"], edgecolor="none")
+        Rectangle(
+            (0.0, 0.0), 0.28, 1.0, facecolor=THEME["navy"], edgecolor="none"
+        )
     )
     ax.add_patch(
-        Rectangle((0.28, 0.0), 0.018, 1.0, facecolor=THEME["gold"], edgecolor="none")
+        Rectangle(
+            (0.28, 0.0), 0.018, 1.0, facecolor=THEME["gold"], edgecolor="none"
+        )
     )
     ax.add_patch(
         Rectangle(
@@ -2244,7 +2352,9 @@ def add_title_page(pdf: PdfPages, manifest: dict[str, Any]) -> None:
             linewidth=0.8,
         )
     )
-    fig.text(0.08, 0.91, "EWALD", fontsize=17, weight="bold", color=THEME["white"])
+    fig.text(
+        0.08, 0.91, "EWALD", fontsize=17, weight="bold", color=THEME["white"]
+    )
     fig.text(
         0.08,
         0.86,
@@ -2274,7 +2384,14 @@ def add_title_page(pdf: PdfPages, manifest: dict[str, Any]) -> None:
         va="top",
         linespacing=1.45,
     )
-    fig.text(0.38, 0.43, "Worked Example", fontsize=12, weight="bold", color=THEME["blue"])
+    fig.text(
+        0.38,
+        0.43,
+        "Worked Example",
+        fontsize=12,
+        weight="bold",
+        color=THEME["blue"],
+    )
     facts = [
         f"CIF: {Path(manifest['example_cif']).name}",
         f"Formula: {summary['formula']}",
@@ -2290,12 +2407,32 @@ def add_title_page(pdf: PdfPages, manifest: dict[str, Any]) -> None:
         color=THEME["ink"],
         linespacing=1.25,
     )
-    for i, label in enumerate(("Pb/Sn halides", "reduced motif + Z", "Bragg intensity", "organic proxies")):
+    for i, label in enumerate(
+        (
+            "Pb/Sn halides",
+            "reduced motif + Z",
+            "Bragg intensity",
+            "organic proxies",
+        )
+    ):
         y = 0.255 - i * 0.026
         ax.add_patch(
-            Rectangle((0.38, y - 0.011), 0.19, 0.022, facecolor=THEME["blue_light"], edgecolor="none")
+            Rectangle(
+                (0.38, y - 0.011),
+                0.19,
+                0.022,
+                facecolor=THEME["blue_light"],
+                edgecolor="none",
+            )
         )
-        fig.text(0.39, y - 0.005, label, fontsize=7.6, color=THEME["blue"], weight="bold")
+        fig.text(
+            0.39,
+            y - 0.005,
+            label,
+            fontsize=7.6,
+            color=THEME["blue"],
+            weight="bold",
+        )
     fig.text(
         0.08,
         0.09,
@@ -2369,7 +2506,11 @@ def add_contents_page(pdf: PdfPages) -> None:
                 (x0, y - 0.015),
                 column_w,
                 0.048,
-                facecolor=THEME["navy"] if group_index in {1, 3} else THEME["blue_light"],
+                facecolor=(
+                    THEME["navy"]
+                    if group_index in {1, 3}
+                    else THEME["blue_light"]
+                ),
                 edgecolor="none",
             )
         )
@@ -2384,7 +2525,14 @@ def add_contents_page(pdf: PdfPages) -> None:
         )
         y -= 0.060
         for entry in entries:
-            fig.text(x0 + 0.025, y, f"{item_index:02d}", fontsize=8.8, color=THEME["gold"], weight="bold")
+            fig.text(
+                x0 + 0.025,
+                y,
+                f"{item_index:02d}",
+                fontsize=8.8,
+                color=THEME["gold"],
+                weight="bold",
+            )
             fig.text(
                 x0 + 0.075,
                 y,
@@ -2411,10 +2559,24 @@ def add_section_divider(pdf: PdfPages, title: str, subtitle: str) -> None:
     fig = plt.figure(figsize=(8.5, 11.0))
     fig.patch.set_facecolor(THEME["navy"])
     ax = add_canvas(fig)
-    ax.add_patch(Rectangle((0.0, 0.0), 1.0, 1.0, facecolor=THEME["navy"], edgecolor="none"))
-    ax.add_patch(Rectangle((0.0, 0.0), 0.035, 1.0, facecolor=THEME["gold"], edgecolor="none"))
-    ax.add_patch(Rectangle((0.13, 0.31), 0.72, 0.36, facecolor="#22475f", edgecolor="none"))
-    fig.text(0.18, 0.58, title, fontsize=27, weight="bold", color=THEME["white"])
+    ax.add_patch(
+        Rectangle(
+            (0.0, 0.0), 1.0, 1.0, facecolor=THEME["navy"], edgecolor="none"
+        )
+    )
+    ax.add_patch(
+        Rectangle(
+            (0.0, 0.0), 0.035, 1.0, facecolor=THEME["gold"], edgecolor="none"
+        )
+    )
+    ax.add_patch(
+        Rectangle(
+            (0.13, 0.31), 0.72, 0.36, facecolor="#22475f", edgecolor="none"
+        )
+    )
+    fig.text(
+        0.18, 0.58, title, fontsize=27, weight="bold", color=THEME["white"]
+    )
     fig.text(
         0.18,
         0.49,
@@ -2423,7 +2585,14 @@ def add_section_divider(pdf: PdfPages, title: str, subtitle: str) -> None:
         color="#d8e7ee",
         linespacing=1.35,
     )
-    fig.text(0.18, 0.39, "method section", fontsize=9.2, color=THEME["gold"], weight="bold")
+    fig.text(
+        0.18,
+        0.39,
+        "method section",
+        fontsize=9.2,
+        color=THEME["gold"],
+        weight="bold",
+    )
     save_pdf_page(pdf, fig)
     plt.close(fig)
 
@@ -2456,7 +2625,9 @@ def add_text_page(
         )
         return fig, ax, body_top
 
-    def close_page(fig: plt.Figure, *, include_footer_note: bool = False) -> None:
+    def close_page(
+        fig: plt.Figure, *, include_footer_note: bool = False
+    ) -> None:
         if include_footer_note and footer:
             fig.text(0.105, 0.087, footer, fontsize=8.5, color=THEME["muted"])
         add_report_footer(fig)
@@ -2477,7 +2648,9 @@ def add_text_page(
             font_size = 8.5 if is_block else 9.2
             line_height = 0.022 if is_block else 0.025
             wrapped_lines = textwrap.wrap(chunk, width=width) or [chunk]
-            required = line_height * len(wrapped_lines) + (0.012 if not is_block else 0.006)
+            required = line_height * len(wrapped_lines) + (
+                0.012 if not is_block else 0.006
+            )
             if y - required < body_bottom:
                 close_page(fig)
                 page_index += 1
@@ -2512,9 +2685,15 @@ def add_text_page(
 
 def add_motif_examples_page(pdf: PdfPages, manifest: dict[str, Any]) -> None:
     records = manifest.get("motif_examples", [])
-    known = [record for record in records if record.get("source") == "local_reference"]
+    known = [
+        record
+        for record in records
+        if record.get("source") == "local_reference"
+    ]
     idealized = [
-        record for record in records if record.get("source") == "idealized_template"
+        record
+        for record in records
+        if record.get("source") == "idealized_template"
     ]
     paragraphs = [
         "The report now carries a generated motif subunit library. Known local reference structures are converted to inorganic scaffold CIFs, while idealized template CIFs capture the topology and reduced formula used by the independent scaffold builder.",
@@ -2579,7 +2758,9 @@ def add_figure_page(
     plt.close(fig)
 
 
-def add_hybrid3_reference_page(pdf: PdfPages, manifest: dict[str, Any]) -> None:
+def add_hybrid3_reference_page(
+    pdf: PdfPages, manifest: dict[str, Any]
+) -> None:
     cache = manifest["hybrid3_cache"]
     records = cache.get("records", [])[:4]
     lines = [

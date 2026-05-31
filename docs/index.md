@@ -7,7 +7,7 @@
 **Experimental WAXS Analysis for Lattice Determination**
 
 !!! note "Package icon"
-    The EWALD package icon shown on this site was generated with help from a large language model.
+The EWALD package icon shown on this site was generated with help from a large language model.
 
 EWALD is a Qt6 scientific workbench for GIWAXS/WAXS analysis. It brings
 detector-image import, calibration-aware q-space correction, ROI and peak

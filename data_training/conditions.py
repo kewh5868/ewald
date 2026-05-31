@@ -15,7 +15,8 @@ from .config_io import load_config, require_mapping, tuple_of_strings
 
 @dataclass(frozen=True, slots=True)
 class SweepAxis:
-    """One named sweep axis that writes values to a dotted target path."""
+    """One named sweep axis that writes values to a dotted target
+    path."""
 
     name: str
     target: str
@@ -47,7 +48,8 @@ class SweepAxis:
 
 @dataclass(frozen=True, slots=True)
 class SimulationCondition:
-    """A fully expanded structure, simulator, texture, and artifact request."""
+    """A fully expanded structure, simulator, texture, and artifact
+    request."""
 
     condition_id: str
     structure_id: str
@@ -144,7 +146,8 @@ class SimulationSweepSpec:
     def expand(
         self, catalog: StructureCatalog
     ) -> tuple[SimulationCondition, ...]:
-        """Expand this sweep into deterministic simulation conditions."""
+        """Expand this sweep into deterministic simulation
+        conditions."""
 
         structures = self.selected_structures(catalog)
         axis_products = tuple(

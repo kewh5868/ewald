@@ -26,4 +26,3 @@ write_run_info() {
     echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   } > "$run_root/RUN_INFO.txt"
 }
-

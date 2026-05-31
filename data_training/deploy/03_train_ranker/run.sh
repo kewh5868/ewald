@@ -32,4 +32,3 @@ fi
 run_python "${args[@]}" | tee "$RUN_ROOT/train.log"
 echo "$MODEL_PATH" > "$RUN_ROOT/model_path.txt"
 echo "model=$MODEL_PATH"
-

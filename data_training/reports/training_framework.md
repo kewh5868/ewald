@@ -100,4 +100,3 @@ EWALD simulator, applies artifacts, writes labels, and appends or shards the
 manifest. The runtime config keeps repository paths separate from scratch and
 dataset roots so Alpine or another cluster can generate large datasets without
 requiring local storage.
-

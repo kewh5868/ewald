@@ -21,8 +21,8 @@ import numpy as np
 from ewald.analysis.structure import (
     DEFAULT_PHASE_TAG,
     REFERENCE_MOLECULES,
-    StructurePeak,
     LatticeCandidate,
+    StructurePeak,
     generate_ranked_cif_records,
     group_peak_families,
     guess_lattice_candidates,
@@ -48,9 +48,9 @@ from ewald.benchmark.structure_benchmark import (
     _fractional_center,
     _lattice_validation_metrics,
     _materialize_generated_cifs,
+    _mock_experimental_qspace,
     _molecular_body_token,
     _molecule_records,
-    _mock_experimental_qspace,
     _pair_distribution_validation_metrics,
     _path_chemistry_rank_fields,
     _peak_detection_recovery_metrics,
@@ -74,10 +74,10 @@ from ewald.crystallography.cif import (
     infer_crystal_system_from_lattice,
 )
 from ewald.data.models import (
-    ImageCorrectionState,
     PEAK_HKL_METADATA_KEY,
-    ProjectState,
     STRUCTURE_ANALYSIS_KEY,
+    ImageCorrectionState,
+    ProjectState,
 )
 from ewald.io.project import save_project
 from ewald.simulation.giwaxs import (
@@ -449,7 +449,8 @@ def run_synthetic_refinement_pipeline(
     specs: Iterable[BenchmarkStructureSpec],
     config: SyntheticRefinementConfig | None = None,
 ) -> SyntheticRefinementResult:
-    """Run synthetic fiber-textured refinement diagnostics for CIF specs."""
+    """Run synthetic fiber-textured refinement diagnostics for CIF
+    specs."""
 
     cfg = config or SyntheticRefinementConfig()
     run_id = time.strftime("run_%Y%m%d_%H%M%S")
@@ -574,7 +575,8 @@ def _fileset_scaffold_rms(fileset: dict[str, Any]) -> Any:
 def _oracle_structure_peaks_from_truth(
     truth_peaks: list[dict[str, Any]],
 ) -> list[StructurePeak]:
-    """Convert synthetic truth Bragg rows into exact solver peak inputs."""
+    """Convert synthetic truth Bragg rows into exact solver peak
+    inputs."""
 
     peaks: list[StructurePeak] = []
     for index, truth in enumerate(truth_peaks, start=1):
@@ -636,9 +638,7 @@ def _oracle_peak_families_from_peaks(
 
     grouped: dict[str, list[StructurePeak]] = {}
     for peak in peaks:
-        hkl = _parse_hkl_triplet(
-            peak.metadata.get("hkl") or peak.hkl_label
-        )
+        hkl = _parse_hkl_triplet(peak.metadata.get("hkl") or peak.hkl_label)
         family_key = (
             _plane_family_key(hkl)
             if hkl is not None
@@ -693,7 +693,8 @@ def _oracle_lattice_candidate_from_reference(
     spec: BenchmarkStructureSpec,
     peaks: list[StructurePeak],
 ) -> LatticeCandidate | None:
-    """Return the exact reference cell as a diagnostic lattice candidate."""
+    """Return the exact reference cell as a diagnostic lattice
+    candidate."""
 
     try:
         lattice = extract_cif_lattice_parameters(spec.cif_path)
@@ -702,9 +703,7 @@ def _oracle_lattice_candidate_from_reference(
     crystal_system = infer_crystal_system_from_lattice(lattice)
     assignments = []
     for peak in peaks:
-        hkl = _parse_hkl_triplet(
-            peak.metadata.get("hkl") or peak.hkl_label
-        )
+        hkl = _parse_hkl_triplet(peak.metadata.get("hkl") or peak.hkl_label)
         if hkl is None or hkl == (0, 0, 0):
             continue
         assignments.append(
@@ -748,7 +747,8 @@ def _oracle_stoichiometry_hypotheses(
     spec: BenchmarkStructureSpec,
     fallback: list[str],
 ) -> list[str]:
-    """Prepend exact reference stoichiometry hypotheses without coordinates."""
+    """Prepend exact reference stoichiometry hypotheses without
+    coordinates."""
 
     exact = _reference_stoichiometry_hypotheses(spec)
     return list(dict.fromkeys([*exact, *fallback]))
@@ -946,7 +946,10 @@ def _reduced_stoichiometry_formula(
         return ""
     scale = 4
     integers = [int(round(float(value) * scale)) for value in combined]
-    if any(abs(integer / scale - float(value)) > 1.0e-6 for integer, value in zip(integers, combined, strict=True)):
+    if any(
+        abs(integer / scale - float(value)) > 1.0e-6
+        for integer, value in zip(integers, combined, strict=True)
+    ):
         return formula
     divisor = 0
     for integer in integers:
@@ -961,10 +964,9 @@ def _reduced_stoichiometry_formula(
         element: count * scale / divisor
         for element, count in inorganic_counts.items()
     }
-    return (
-        _molecule_formula_from_counts(reduced_molecules, organic_molecules)
-        + _formula_from_counts_ordered(reduced_inorganic, inorganic_order)
-    )
+    return _molecule_formula_from_counts(
+        reduced_molecules, organic_molecules
+    ) + _formula_from_counts_ordered(reduced_inorganic, inorganic_order)
 
 
 def _scheduled_texture_mode(
@@ -1171,7 +1173,9 @@ def _run_one_synthetic_fileset(
                 "peaks": [peak.as_dict() for peak in solver_peaks],
             },
         )
-        _write_json(rankings_dir / "detected_peak_truth_matches.json", peak_truth)
+        _write_json(
+            rankings_dir / "detected_peak_truth_matches.json", peak_truth
+        )
         peak_truth = match_detected_peaks_to_truth(
             solver_peaks,
             truth_peaks,
@@ -1452,7 +1456,9 @@ def _run_one_synthetic_fileset(
         spec,
         rankings_dir / "reference_structure_comparisons",
     )
-    _write_json(rankings_dir / "refinement_stage_rankings.json", stage_rankings)
+    _write_json(
+        rankings_dir / "refinement_stage_rankings.json", stage_rankings
+    )
     _progress(f"[{order_index}] store project {fileset_id}")
     image_rankings: list[dict[str, Any]] = []
     if cfg.rank_generated_cifs_with_image_fit:
@@ -1584,7 +1590,8 @@ def match_detected_peaks_to_truth(
     *,
     tolerance: float,
 ) -> dict[str, Any]:
-    """Greedily match detected q-space peaks to simulated truth peaks."""
+    """Greedily match detected q-space peaks to simulated truth
+    peaks."""
 
     pairs: list[tuple[float, int, int]] = []
     for detected_index, peak in enumerate(detected):
@@ -1659,15 +1666,21 @@ def match_detected_peaks_to_truth(
         "top25_truth_recall": truth_rank_diagnostics.get(
             "top_truth_recall",
             {},
-        ).get("top_25", {}).get("recall"),
+        )
+        .get("top_25", {})
+        .get("recall"),
         "top50_truth_recall": truth_rank_diagnostics.get(
             "top_truth_recall",
             {},
-        ).get("top_50", {}).get("recall"),
+        )
+        .get("top_50", {})
+        .get("recall"),
         "top100_truth_recall": truth_rank_diagnostics.get(
             "top_truth_recall",
             {},
-        ).get("top_100", {}).get("recall"),
+        )
+        .get("top_100", {})
+        .get("recall"),
     }
     return {
         "summary": summary,
@@ -1757,7 +1770,8 @@ def _truth_rank_recovery_diagnostics(
     truth_peaks: list[dict[str, Any]],
     matched_truth_indices: set[int],
 ) -> dict[str, Any]:
-    """Summarize recovery of the strongest simulated truth reflections."""
+    """Summarize recovery of the strongest simulated truth
+    reflections."""
 
     if not truth_peaks:
         return {
@@ -2040,15 +2054,12 @@ def rank_inorganic_scaffolds(
                     tolerance=cfg.bragg_intensity_tolerance,
                     max_peaks=cfg.bragg_intensity_max_peaks,
                 )
-                bragg_intensity_penalty = (
-                    cfg.bragg_intensity_weight
-                    * float(
-                        bragg_intensity_match.get(
-                            "intensity_match_penalty",
-                            0.0,
-                        )
-                        or 0.0
+                bragg_intensity_penalty = cfg.bragg_intensity_weight * float(
+                    bragg_intensity_match.get(
+                        "intensity_match_penalty",
+                        0.0,
                     )
+                    or 0.0
                 )
             except Exception as exc:
                 bragg_intensity_match = {
@@ -2191,12 +2202,9 @@ def _rank_stage_cifs_with_simulation(
                 tolerance=cfg.bragg_intensity_tolerance,
                 max_peaks=cfg.bragg_intensity_max_peaks,
             )
-            bragg_intensity_penalty = (
-                cfg.bragg_intensity_weight
-                * float(
-                    bragg_intensity_match.get("intensity_match_penalty", 0.0)
-                    or 0.0
-                )
+            bragg_intensity_penalty = cfg.bragg_intensity_weight * float(
+                bragg_intensity_match.get("intensity_match_penalty", 0.0)
+                or 0.0
             )
             metrics = dict(comparison.metrics)
             metrics.update(
@@ -2211,9 +2219,7 @@ def _rank_stage_cifs_with_simulation(
                         bragg_intensity_match.get("relative_l1")
                     ),
                     "bragg_intensity_correlation": (
-                        bragg_intensity_match.get(
-                            "log_intensity_correlation"
-                        )
+                        bragg_intensity_match.get("log_intensity_correlation")
                     ),
                     "bragg_intensity_matched_fraction": (
                         bragg_intensity_match.get("matched_peak_fraction")
@@ -2381,7 +2387,8 @@ def generate_scaffold_candidate_cifs(
     stoichiometry_hypotheses: list[str],
     cfg: SyntheticRefinementConfig,
 ) -> list[dict[str, Any]]:
-    """Generate inorganic-only CIF records for fast scaffold diagnostics."""
+    """Generate inorganic-only CIF records for fast scaffold
+    diagnostics."""
 
     records: list[dict[str, Any]] = []
     stoichiometry_prior_weight = _stoichiometry_prior_weight(
@@ -2568,7 +2575,8 @@ def generate_organic_replacement_cifs(
     stoichiometry_hypotheses: list[str],
     cfg: SyntheticRefinementConfig,
 ) -> list[dict[str, Any]]:
-    """Generate full organic replacement CIFs from charge-balanced guesses."""
+    """Generate full organic replacement CIFs from charge-balanced
+    guesses."""
 
     molecules = _molecule_records(spec.organic_molecules)
     if not molecules:
@@ -2655,7 +2663,8 @@ def generate_organic_rmc_variant_cifs(
     cfg: SyntheticRefinementConfig,
     output_dir: Path,
 ) -> list[dict[str, Any]]:
-    """Generate stochastic rigid-body organic variants for final refinement."""
+    """Generate stochastic rigid-body organic variants for final
+    refinement."""
 
     if not source_path.exists():
         return []
@@ -2704,7 +2713,8 @@ def organic_electron_proxy_plan(
     stoichiometry_hypothesis: str,
     organic_molecules: Iterable[str],
 ) -> dict[str, Any]:
-    """Return the proxy atom plan implied by one stoichiometry hypothesis."""
+    """Return the proxy atom plan implied by one stoichiometry
+    hypothesis."""
 
     molecule_counts = _organic_molecule_counts_from_hypothesis(
         stoichiometry_hypothesis,
@@ -2771,7 +2781,8 @@ def formula_electron_count(formula: str) -> int:
 def electron_proxy_element_for_count(
     electron_count: int | float,
 ) -> dict[str, Any]:
-    """Map an organic electron count to a chemically usable proxy element."""
+    """Map an organic electron count to a chemically usable proxy
+    element."""
 
     target = int(round(float(electron_count)))
     target = max(1, target)
@@ -3067,7 +3078,8 @@ def validate_inorganic_scaffold(
     inorganic_elements: set[str],
     output_dir: Path,
 ) -> dict[str, Any]:
-    """Compare an inorganic scaffold against the reference inorganic sites."""
+    """Compare an inorganic scaffold against the reference inorganic
+    sites."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
     reference_scaffold = output_dir / "reference_inorganic_scaffold.cif"
@@ -3126,7 +3138,8 @@ def _attach_reference_structure_comparisons(
     spec: BenchmarkStructureSpec,
     output_dir: Path,
 ) -> dict[str, Any]:
-    """Attach full-reference comparisons to comparable staged outputs."""
+    """Attach full-reference comparisons to comparable staged
+    outputs."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
     summary: dict[str, Any] = {}
@@ -3417,7 +3430,9 @@ def _aggregate_synthetic_findings(
     intensity_weighted_recall = mean(
         ("peak_truth_match_summary", "intensity_weighted_recall")
     )
-    top50_truth_recall = mean(("peak_truth_match_summary", "top50_truth_recall"))
+    top50_truth_recall = mean(
+        ("peak_truth_match_summary", "top50_truth_recall")
+    )
     top100_truth_recall = mean(
         ("peak_truth_match_summary", "top100_truth_recall")
     )

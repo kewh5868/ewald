@@ -11,7 +11,8 @@ from .config_io import load_config, write_json
 
 @dataclass(frozen=True, slots=True)
 class PeakLabel:
-    """One labeled Bragg peak in q-space and detector-image coordinates."""
+    """One labeled Bragg peak in q-space and detector-image
+    coordinates."""
 
     h: int
     k: int

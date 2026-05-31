@@ -9,14 +9,14 @@ from typing import Any
 import numpy as np
 from qtpy import QtCore, QtGui, QtWidgets
 
-from ewald.crystallography.cif import (
-    extract_cif_lattice_parameters,
-    infer_crystal_system_from_lattice,
-)
 from ewald.crystallography import (
     CRYSTAL_SYSTEMS,
     CrystalOverlayCalculator,
     CrystalOverlayParameters,
+)
+from ewald.crystallography.cif import (
+    extract_cif_lattice_parameters,
+    infer_crystal_system_from_lattice,
 )
 from ewald.crystallography.overlay import (
     apply_crystal_system_constraints,
@@ -1617,7 +1617,8 @@ class PeakIdentificationPane(QtWidgets.QWidget):
         self,
         record: dict[str, Any],
     ) -> None:
-        """Snap one generated mirror peak without touching source peaks."""
+        """Snap one generated mirror peak without touching source
+        peaks."""
 
         maximum = self._local_maximum_near(_peak_qxy(record), _peak_qz(record))
         if maximum is None:
