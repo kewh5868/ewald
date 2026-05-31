@@ -1,0 +1,62 @@
+{
+  "count": 1,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "created": "2026-04-29T23:20:24-04:00",
+      "created_by": "fixture",
+      "updated": "2026-04-29T23:20:24-04:00",
+      "updated_by": "fixture",
+      "pk": 1635,
+      "caption": "Offline fixture atomic structure",
+      "system": {
+        "id": 1,
+        "compound_name": "Fixture lead iodide",
+        "formula": "PbI2",
+        "group": "FixturePbI2",
+        "organic": "",
+        "inorganic": "PbI2",
+        "iupac": "",
+        "last_update": "2026-04-29",
+        "description": "",
+        "message": "",
+        "dimensionality": 2,
+        "n": "1",
+        "derived_to_from": [],
+        "tags": []
+      },
+      "primary_property": {
+        "id": 7,
+        "name": "atomic structure",
+        "method": ""
+      },
+      "primary_unit": {"id": 6, "label": "A"},
+      "secondary_property": null,
+      "secondary_unit": null,
+      "reference": {
+        "id": 1,
+        "title": "Offline fixture reference",
+        "journal": "fixture",
+        "vol": "",
+        "pages_start": "",
+        "pages_end": "",
+        "year": "2026",
+        "doi_isbn": "fixture"
+      },
+      "visible": true,
+      "is_experimental": false,
+      "sample_type": "single crystal",
+      "extraction_method": "",
+      "representative": true,
+      "linked_to": [],
+      "verified_by": [],
+      "computational": [{"code": "FHI-aims"}],
+      "synthesis": [],
+      "experimental": [],
+      "subsets": [],
+      "space_group": "P1"
+    }
+  ]
+}
+

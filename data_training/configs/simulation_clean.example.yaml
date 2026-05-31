@@ -1,0 +1,30 @@
+dataset: demo_clean_fibril_texture_v0
+structures: ../catalog/structures.example.yaml
+artifacts: artifacts.example.yaml
+output_root: ../runs/demo_clean_fibril_texture_v0
+default_artifact_profile_id: clean
+
+detector:
+  qxy_range: [-3.0, 3.0]
+  qz_range: [0.0, 3.0]
+  resolution: [256, 128]
+  wavelength_angstrom: 1.5418
+  incident_angle_deg: 0.2
+  tilt_angle_deg: 0.0
+  missing_wedge_correction: true
+  detector: reciprocal-space-demo
+
+sweep:
+  theta_x_deg: [90]
+  theta_y_deg: [0, 90]
+  sigma_theta: [0.03]
+  sigma_phi: [0.25]
+  sigma_r: [0.035]
+  hkl_extent: [4]
+  orientation_label: [fiber_out_of_plane]
+  texture_model: [fiber_gaussian]
+  artifact_profile_id: [clean]
+  seed: [1001]
+
+metadata:
+  purpose: "Small clean simulation sweep for pipeline deployment tests."

@@ -1,0 +1,156 @@
+artifact_profiles:
+  clean:
+    enabled: false
+
+  default:
+    enabled: true
+    poisson_counts: 4500
+    gaussian_read_noise: 0.01
+    background_level: 0.018
+    background_gradient: [0.0, 0.04]
+    q_dependent_background: 0.018
+    beamstop: true
+    beamstop_width_fraction: 0.035
+    beamstop_height_fraction: 0.42
+    detector_layout: random_common
+    detector_gap_fraction: 0.0
+    detector_gap_jitter_pixels: 1
+    dead_pixel_fraction: 0.0006
+    dead_pixel_cluster_count: 1
+    hot_pixel_fraction: 0.0002
+    hot_pixel_intensity: 1.0
+    saturation_level: 1.0
+    flat_field_strength: 0.06
+    parasitic_streaks: 0
+    diffuse_ring_count: 2
+    diffuse_ring_strength: 0.055
+    diffuse_ring_width_range: [0.04, 0.12]
+    surface_scattering: true
+    direct_beam: true
+    direct_beam_strength: 0.25
+    direct_beam_width_qxy: 0.045
+    direct_beam_width_qz: 0.03
+    specular_reflection_strength: 0.08
+    yoneda_peak: true
+    yoneda_strength: 0.045
+    yoneda_width_qz: 0.035
+    yoneda_qxy_decay: 3.5
+    critical_peak_splitting: true
+    critical_peak_split_strength: 0.08
+    critical_peak_split_quantile: 0.992
+    substrate_horizon: true
+    substrate_horizon_strength: 0.08
+    substrate_horizon_width_qz: 0.025
+    substrate_horizon_slope: 0.0
+    substrate_horizon_roughness: 0.004
+    below_horizon_transmission: 0.08
+    substrate_length_mm: 10.0
+    substrate_width_mm: 10.0
+    beam_height_um: 35.0
+    beam_width_mm: 0.25
+    spillage_horizon_gain: 1.0
+    spillage_broadening: true
+    spillage_broadening_strength: 0.20
+    spillage_broadening_max_qz: 0.06
+
+  harsh_detector:
+    enabled: true
+    poisson_counts: 2200
+    gaussian_read_noise: 0.02
+    background_level: 0.04
+    background_gradient: [0.015, 0.055]
+    q_dependent_background: 0.03
+    beamstop: true
+    beamstop_width_fraction: 0.045
+    beamstop_height_fraction: 0.46
+    detector_layout: random_common
+    detector_gap_fraction: 0.0
+    detector_gap_jitter_pixels: 2
+    dead_pixel_fraction: 0.0008
+    dead_pixel_cluster_count: 2
+    hot_pixel_fraction: 0.0005
+    hot_pixel_intensity: 1.0
+    saturation_level: 1.0
+    flat_field_strength: 0.10
+    parasitic_streaks: 1
+    diffuse_ring_count: 3
+    diffuse_ring_strength: 0.07
+    diffuse_ring_width_range: [0.045, 0.15]
+    surface_scattering: true
+    direct_beam: true
+    direct_beam_strength: 0.32
+    direct_beam_width_qxy: 0.055
+    direct_beam_width_qz: 0.04
+    specular_reflection_strength: 0.11
+    yoneda_peak: true
+    yoneda_strength: 0.075
+    yoneda_width_qz: 0.045
+    yoneda_qxy_decay: 4.0
+    critical_peak_splitting: true
+    critical_peak_split_strength: 0.12
+    critical_peak_split_quantile: 0.99
+    substrate_horizon: true
+    substrate_horizon_strength: 0.12
+    substrate_horizon_width_qz: 0.03
+    substrate_horizon_slope: 0.003
+    substrate_horizon_roughness: 0.006
+    below_horizon_transmission: 0.05
+    substrate_length_mm: 10.0
+    substrate_width_mm: 9.0
+    beam_height_um: 45.0
+    beam_width_mm: 0.30
+    spillage_horizon_gain: 1.2
+    spillage_broadening: true
+    spillage_broadening_strength: 0.28
+    spillage_broadening_max_qz: 0.08
+
+  pilatus1m_reference:
+    enabled: true
+    poisson_counts: 5500
+    gaussian_read_noise: 0.008
+    background_level: 0.018
+    background_gradient: [0.0, 0.035]
+    q_dependent_background: 0.015
+    beamstop: true
+    beamstop_width_fraction: 0.035
+    beamstop_height_fraction: 0.42
+    detector_layout: pilatus1m_pyfai
+    detector_gap_fraction: 0.0
+    detector_gap_jitter_pixels: 0
+    dead_pixel_fraction: 0.0006
+    dead_pixel_cluster_count: 1
+    hot_pixel_fraction: 0.0002
+    hot_pixel_intensity: 1.0
+    saturation_level: 1.0
+    flat_field_strength: 0.05
+    parasitic_streaks: 0
+    diffuse_ring_count: 2
+    diffuse_ring_strength: 0.05
+    diffuse_ring_width_range: [0.04, 0.11]
+    surface_scattering: true
+    direct_beam: true
+    direct_beam_strength: 0.28
+    direct_beam_width_qxy: 0.045
+    direct_beam_width_qz: 0.03
+    specular_reflection_strength: 0.09
+    yoneda_peak: true
+    yoneda_strength: 0.05
+    yoneda_width_qz: 0.035
+    yoneda_qxy_decay: 3.5
+    critical_peak_splitting: true
+    critical_peak_split_strength: 0.08
+    critical_peak_split_quantile: 0.992
+    substrate_horizon: true
+    substrate_horizon_strength: 0.08
+    substrate_horizon_width_qz: 0.025
+    substrate_horizon_slope: 0.0
+    substrate_horizon_roughness: 0.004
+    below_horizon_transmission: 0.08
+    substrate_length_mm: 10.0
+    substrate_width_mm: 10.0
+    beam_height_um: 35.0
+    beam_width_mm: 0.25
+    spillage_horizon_gain: 1.0
+    spillage_broadening: true
+    spillage_broadening_strength: 0.20
+    spillage_broadening_max_qz: 0.06

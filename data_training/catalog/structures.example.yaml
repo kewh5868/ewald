@@ -1,0 +1,31 @@
+structures:
+  - structure_id: ma_dmf_pbi5_2017_tarasov
+    name: "(MA)3(DMF)PbI5"
+    path: ../../example/structures/(MA)3(DMF)PbI5_2017Tarasov.cif
+    file_format: cif
+    family: hybrid_perovskite
+    phase_class: one_dimensional_solvate
+    source: local EWALD example structure
+    license: project-local
+    tags: [lead_halide, solvate, demo]
+
+  - structure_id: ma2_dmf2_pb3i8_2017_tarasov
+    name: "(MA)2(DMF)2Pb3I8"
+    path: ../../example/structures/(MA)2(DMF)2Pb3I8_2017Tarasov.cif
+    file_format: cif
+    family: hybrid_perovskite
+    phase_class: layered_solvate
+    source: local EWALD example structure
+    license: project-local
+    tags: [lead_halide, layered, demo]
+
+  - structure_id: pbi2_dmf_2016_zheng
+    name: "PbI2 DMF"
+    path: ../../example/structures/PbI2_DMF_Nanfeng_2016.cif
+    file_format: cif
+    family: lead_halide
+    phase_class: precursor_solvate
+    source: local EWALD example structure
+    license: project-local
+    tags: [precursor, solvate, demo]
+

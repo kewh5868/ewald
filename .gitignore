@@ -31,8 +31,10 @@ MANIFEST
 /dep/
 /example/
 /example
-/output/
 /PROMPTS.txt
+/data_training/runs/
+/data_training/cluster/alpine.paths.env
+/data_training/cluster/_synced_outputs/
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EWALD training image manifest row",
+  "type": "object",
+  "required": [
+    "sample_id",
+    "structure_id",
+    "condition_id",
+    "image_uri",
+    "hkl_table_uri",
+    "peak_table_uri",
+    "bragg_intensity_uri",
+    "random_seed"
+  ],
+  "properties": {
+    "sample_id": {
+      "type": "string"
+    },
+    "structure_id": {
+      "type": "string"
+    },
+    "source_structure_file": {
+      "type": "string"
+    },
+    "condition_id": {
+      "type": "string"
+    },
+    "orientation_family": {
+      "type": "string"
+    },
+    "image_uri": {
+      "type": "string"
+    },
+    "q_map_uri": {
+      "type": "string"
+    },
+    "hkl_table_uri": {
+      "type": "string"
+    },
+    "peak_table_uri": {
+      "type": "string"
+    },
+    "bragg_intensity_uri": {
+      "type": "string"
+    },
+    "artifact_recipe": {
+      "type": "object"
+    },
+    "simulator_version": {
+      "type": "string"
+    },
+    "random_seed": {
+      "type": "integer"
+    },
+    "split": {
+      "enum": ["train", "validation", "test", "holdout"]
+    }
+  },
+  "additionalProperties": true
+}

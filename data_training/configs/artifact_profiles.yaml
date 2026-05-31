@@ -1,0 +1,84 @@
+schema_version: "1"
+profiles:
+  - profile_id: clean
+    description: No synthetic detector artifacts beyond simulator broadening.
+    seed_offset: 0
+    operations: []
+
+  - profile_id: detector_realistic
+    description: Moderate artifacts seen in real GIWAXS detector frames.
+    seed_offset: 1000
+    operations:
+      - name: poisson_counting_noise
+        probability: 1.0
+        parameters:
+          counts_per_normalized_intensity: [6000, 60000]
+      - name: gaussian_read_noise
+        probability: 1.0
+        parameters:
+          sigma_fraction_of_p99: [0.001, 0.012]
+      - name: diffuse_air_scatter_background
+        probability: 0.8
+        parameters:
+          amplitude_fraction: [0.01, 0.08]
+          qz_decay: [0.4, 1.4]
+      - name: beamstop_shadow
+        probability: 0.7
+        parameters:
+          center_qxy: [-0.05, 0.05]
+          width_qxy: [0.08, 0.22]
+          qz_max: [0.18, 0.45]
+      - name: detector_gap
+        probability: 0.5
+        parameters:
+          axis: qxy
+          width_pixels: [2, 8]
+          fill_mode: nan_or_zero
+      - name: hot_pixels
+        probability: 0.8
+        parameters:
+          count: [3, 30]
+          intensity_multiplier: [2.0, 20.0]
+      - name: flat_field_gradient
+        probability: 0.6
+        parameters:
+          amplitude_fraction: [0.01, 0.08]
+          direction: random_linear
+
+  - profile_id: harsh_detector
+    description: Controlled harsh artifacts for robust but still solvable peak finding and indexing.
+    seed_offset: 5000
+    operations:
+      - name: poisson_counting_noise
+        probability: 1.0
+        parameters:
+          counts_per_normalized_intensity: [1500, 12000]
+      - name: gaussian_read_noise
+        probability: 1.0
+        parameters:
+          sigma_fraction_of_p99: [0.004, 0.025]
+      - name: saturation_clipping
+        probability: 0.4
+        parameters:
+          percentile: [99.6, 99.95]
+      - name: missing_wedge_mask
+        probability: 0.35
+        parameters:
+          qxy_center: [-0.4, 0.4]
+          angular_width_deg: [5.0, 18.0]
+      - name: detector_gap
+        probability: 0.8
+        parameters:
+          axis: random
+          width_pixels: [4, 14]
+          fill_mode: nan_or_zero
+      - name: cosmic_ray_streak
+        probability: 0.25
+        parameters:
+          count: [1, 4]
+          length_pixels: [15, 120]
+      - name: diffuse_air_scatter_background
+        probability: 1.0
+        parameters:
+          amplitude_fraction: [0.03, 0.15]
+          qz_decay: [0.3, 1.1]
