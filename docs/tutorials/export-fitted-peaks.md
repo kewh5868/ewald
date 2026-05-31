@@ -1,5 +1,9 @@
 # Tutorial: Exporting fitted peak positions
 
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
 This tutorial covers how EWALD users get fitted peak positions into downstream analysis
 and what export options are available today.
 
@@ -46,7 +50,10 @@ Use these options today:
 Planned enhancements include dedicated fitted-peak table exports to CSV and broader
 format-specific batch exporters. Track implementation progress in release notes.
 
-## Screenshot placeholders
+## Screenshot capture
 
-- Use a fitted-peak workflow screenshot in
-  `docs/assets/placeholders/peak-fitting.svg` until a finalized GUI capture is available.
+Use the fitted-peak workflow capture in
+`docs/assets/screenshots/tutorials/peak-fitting.png` when documenting fit review or
+handoff into Structure Analysis.
+
+![Peak fitting export context screen capture](../assets/screenshots/tutorials/peak-fitting.png)

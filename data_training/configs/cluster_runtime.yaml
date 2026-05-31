@@ -1,0 +1,25 @@
+schema_version: "1"
+cluster_name: alpine
+scheduler: slurm
+remote_host: alpine.colorado.edu
+remote_user: your_username
+local_repo_root: .
+remote_repo_root: $SCRATCH/ewald
+remote_scratch_root: $SCRATCH/ewald_training
+remote_dataset_root: $SCRATCH/ewald_training/datasets
+remote_structure_root: $SCRATCH/ewald_training/structures
+conda_env: ewald-py312
+modules:
+  - anaconda
+account: your_allocation
+partition: amilan
+qos: normal
+walltime: "08:00:00"
+cpus_per_task: 8
+memory: 32G
+array_chunk_size: 64
+metadata:
+  notes: >
+    This file is a template. Replace user, account, partition, and module
+    names with the active Alpine allocation before submitting jobs.
+

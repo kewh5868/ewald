@@ -1,0 +1,62 @@
+{
+  "dataset_id": "ewald_training_seed_manifest",
+  "description": "Example schema for generated GIWAXS training records.",
+  "metadata": {
+    "label_contract": "Each record stores an image path, peak table, condition parameters, artifact profile, and optional per-peak labels.",
+    "status": "sample_only"
+  },
+  "records": [
+    {
+      "artifact_profile_id": "detector_realistic",
+      "artifacts": {
+        "profile_id": "detector_realistic"
+      },
+      "condition_id": "example_condition",
+      "image_path": "images/train/pb_i2_2h/example_sample.tiff",
+      "label_path": "labels/train/pb_i2_2h/example_sample.label.json",
+      "labels": [
+        {
+          "amplitude": 1200.0,
+          "family_id": "00l",
+          "h": 0,
+          "intensity": 1500.0,
+          "k": 0,
+          "l": 2,
+          "pixel_x": 244.0,
+          "pixel_y": 112.0,
+          "qxy": 0.0,
+          "qz": 0.84
+        }
+      ],
+      "metadata": {
+        "source_path": "example/structures/2hPbI2.cif"
+      },
+      "parameters": {
+        "hkl_extent": 5,
+        "qxy_max": 3.0,
+        "qxy_min": -3.0,
+        "qz_max": 3.0,
+        "qz_min": 0.0,
+        "resolution_x": 512,
+        "resolution_z": 384,
+        "sigma_phi": 0.25,
+        "sigma_r": 0.04,
+        "sigma_theta": 0.035,
+        "theta_x_deg": 90.0,
+        "theta_y_deg": 0.0
+      },
+      "peak_table_path": "labels/train/pb_i2_2h/example_sample.peaks.json",
+      "sample_id": "example_sample",
+      "simulator": "ewald.simulation.giwaxs:simulate_giwaxs_image",
+      "split": "train",
+      "structure_id": "pb_i2_2h",
+      "texture": {
+        "model": "fiber_texture",
+        "mosaicity_deg": 8.0,
+        "preferred_axis": "001"
+      }
+    }
+  ],
+  "schema_version": "1"
+}
+

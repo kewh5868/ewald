@@ -54,6 +54,42 @@ def test_crystal_overlay_projects_hkl_with_quaternion_rotation():
     assert np.any(np.isclose(np.abs(rotated.qz), 2 * np.pi / 10.0))
 
 
+def test_crystal_overlay_projects_qxy_from_full_in_plane_vector():
+    calculator = CrystalOverlayCalculator()
+    base = CrystalOverlayParameters(
+        crystal_system="Cubic",
+        a=10.0,
+        b=10.0,
+        c=10.0,
+        h_max=0,
+        k_max=1,
+        l_max=0,
+        positive_qz_only=False,
+    )
+
+    unrotated = calculator.project(base)
+    assert len(unrotated.hkl) == 2
+    assert np.max(np.abs(unrotated.qxy)) == pytest.approx(
+        2 * np.pi / 10.0
+    )
+    assert np.max(np.abs(unrotated.qz)) < 1.0e-8
+
+    rotated = calculator.project(
+        CrystalOverlayParameters.from_dict(
+            {
+                **base.as_dict(),
+                "orientation_quaternion": quaternion_from_axis_angle(
+                    (1.0, 0.0, 0.0),
+                    90.0,
+                ),
+            }
+        )
+    )
+
+    assert np.max(np.abs(rotated.qxy)) < 1.0e-8
+    assert np.max(np.abs(rotated.qz)) == pytest.approx(2 * np.pi / 10.0)
+
+
 def test_quaternion_composition_stays_normalized():
     quaternion = compose_quaternions(
         quaternion_from_axis_angle((1.0, 0.0, 0.0), 25.0),

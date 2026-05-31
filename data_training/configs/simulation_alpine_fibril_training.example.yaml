@@ -1,0 +1,63 @@
+dataset: alpine_fibril_texture_multi_detector_v0
+structures: ../catalog/structures.example.yaml
+artifacts: artifacts.example.yaml
+output_root: ../runs/alpine_fibril_texture_multi_detector_v0
+default_artifact_profile_id: clean
+
+detectors:
+  - detector_id: pilatus1m_2p8a_10kev
+    detector: pilatus1m_pyfai
+    qxy_range: [-2.8, 2.8]
+    qz_range: [0.0, 2.8]
+    resolution: [512, 384]
+    wavelength_angstrom: 1.2398
+    incident_angle_deg: 0.20
+    tilt_angle_deg: 0.0
+    solid_angle_correction: true
+    missing_wedge_correction: true
+  - detector_id: eiger2_1mw_2p6a_12kev_low_alpha
+    detector: eiger2_x_1m_w
+    qxy_range: [-2.6, 2.6]
+    qz_range: [0.0, 2.6]
+    resolution: [512, 384]
+    wavelength_angstrom: 1.0332
+    incident_angle_deg: 0.16
+    tilt_angle_deg: 0.0
+    solid_angle_correction: true
+    missing_wedge_correction: true
+  - detector_id: perkin_elmer_3p0a_10kev_high_alpha
+    detector: perkin_elmer_xrd_1621
+    qxy_range: [-3.0, 3.0]
+    qz_range: [0.0, 3.0]
+    resolution: [512, 384]
+    wavelength_angstrom: 1.2398
+    incident_angle_deg: 0.24
+    tilt_angle_deg: 0.0
+    solid_angle_correction: true
+    missing_wedge_correction: true
+
+sweep:
+  theta_x_deg: [84, 90, 96]
+  theta_y_deg: [0, 45, 90]
+  sigma_theta: [0.025, 0.050]
+  sigma_phi: [0.16, 0.32]
+  sigma_r: [0.030, 0.050]
+  q_dependent_sigma_r: [0.20]
+  q_dependent_sigma_z: [0.12]
+  hkl_extent: [14]
+  orientation_label: [fiber_out_of_plane]
+  texture_model: [fiber_gaussian]
+  artifact_profile_id: [clean]
+  seed: [1001, 2002]
+
+metadata:
+  purpose: >
+    Alpine-ready clean GIWAXS simulation sweep for HybriD3 structures. The
+    plan evaluates each structure across multiple detector windows, incident
+    angles, texture distributions, and random seeds before the artifact stage
+    expands each clean sample across detector and surface-scattering profiles.
+  scaling_guidance: >
+    With the default sweep this creates 432 clean conditions per structure.
+    Start with a low HybriD3 limit, inspect manifests and quality summaries,
+    then scale the structure count or split the detector list into separate
+    runs if scratch or walltime becomes limiting.

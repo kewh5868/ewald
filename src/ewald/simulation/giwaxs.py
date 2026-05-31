@@ -6,7 +6,6 @@ import hashlib
 import json
 import math
 import time
-import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -14,6 +13,7 @@ from typing import Any, Iterable
 import numpy as np
 import xarray as xr
 
+from ewald.crystallography.cif import suppress_pymatgen_cif_warnings
 from ewald.data.models import ProjectState
 from ewald.simulation.legacy import WAXSAFF
 
@@ -21,6 +21,8 @@ PEAK_TABLE_ATTR = "peak_table_json"
 SIMULATION_MODE_ATTR = "simulation_mode"
 SIMULATION_MODE_PATTERN = "giwaxs_pattern"
 SIMULATION_MODE_EWALD_SWEEP = "ewald_sphere_sweep"
+FORBIDDEN_REFLECTION_RELATIVE_INTENSITY_THRESHOLD = 1.0e-8
+FORBIDDEN_REFLECTION_ABSOLUTE_INTENSITY_FLOOR = 1.0e-12
 
 
 @dataclass(slots=True)
@@ -41,6 +43,8 @@ class GIWAXSSimulationParameters:
     sigma_theta: float = 0.03
     sigma_phi: float = 0.25
     sigma_r: float = 0.035
+    q_dependent_sigma_r: float = 0.0
+    q_dependent_sigma_z: float = 0.0
     hkl_extent: int = 4
     theta_x_deg: float = 90.0
     theta_y_deg: float = 0.0
@@ -50,12 +54,19 @@ class GIWAXSSimulationParameters:
     qz_max: float = 3.0
     resolution_x: int = 256
     resolution_z: int = 128
+    wavelength_angstrom: float | None = None
+    incident_angle_deg: float | None = None
+    tilt_angle_deg: float = 0.0
+    solid_angle_correction: bool = False
+    missing_wedge_correction: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "sigma_theta": self.sigma_theta,
             "sigma_phi": self.sigma_phi,
             "sigma_r": self.sigma_r,
+            "q_dependent_sigma_r": self.q_dependent_sigma_r,
+            "q_dependent_sigma_z": self.q_dependent_sigma_z,
             "hkl_extent": self.hkl_extent,
             "theta_x_deg": self.theta_x_deg,
             "theta_y_deg": self.theta_y_deg,
@@ -65,6 +76,11 @@ class GIWAXSSimulationParameters:
             "qz_max": self.qz_max,
             "resolution_x": self.resolution_x,
             "resolution_z": self.resolution_z,
+            "wavelength_angstrom": self.wavelength_angstrom,
+            "incident_angle_deg": self.incident_angle_deg,
+            "tilt_angle_deg": self.tilt_angle_deg,
+            "solid_angle_correction": self.solid_angle_correction,
+            "missing_wedge_correction": self.missing_wedge_correction,
         }
 
     @classmethod
@@ -76,6 +92,21 @@ class GIWAXSSimulationParameters:
         values["hkl_extent"] = int(values["hkl_extent"])
         values["resolution_x"] = int(values["resolution_x"])
         values["resolution_z"] = int(values["resolution_z"])
+        if values.get("wavelength_angstrom") in {"", None}:
+            values["wavelength_angstrom"] = None
+        else:
+            values["wavelength_angstrom"] = float(values["wavelength_angstrom"])
+        if values.get("incident_angle_deg") in {"", None}:
+            values["incident_angle_deg"] = None
+        else:
+            values["incident_angle_deg"] = float(values["incident_angle_deg"])
+        values["tilt_angle_deg"] = float(values.get("tilt_angle_deg", 0.0))
+        values["solid_angle_correction"] = bool(
+            values.get("solid_angle_correction", False)
+        )
+        values["missing_wedge_correction"] = bool(
+            values.get("missing_wedge_correction", False)
+        )
         return cls(**values)
 
 
@@ -129,6 +160,8 @@ class EwaldSphereSweepParameters(GIWAXSSimulationParameters):
             sigma_theta=self.sigma_theta,
             sigma_phi=self.sigma_phi,
             sigma_r=self.sigma_r,
+            q_dependent_sigma_r=self.q_dependent_sigma_r,
+            q_dependent_sigma_z=self.q_dependent_sigma_z,
             hkl_extent=self.hkl_extent,
             theta_x_deg=float(theta_x_deg),
             theta_y_deg=float(theta_y_deg),
@@ -138,6 +171,11 @@ class EwaldSphereSweepParameters(GIWAXSSimulationParameters):
             qz_max=self.qz_max,
             resolution_x=self.resolution_x,
             resolution_z=self.resolution_z,
+            wavelength_angstrom=self.wavelength_angstrom,
+            incident_angle_deg=self.incident_angle_deg,
+            tilt_angle_deg=self.tilt_angle_deg,
+            solid_angle_correction=self.solid_angle_correction,
+            missing_wedge_correction=self.missing_wedge_correction,
         )
 
 
@@ -757,7 +795,7 @@ def simulate_ewald_sphere_sweep(
 
     attrs = {
         **structure.metadata(),
-        **params.as_dict(),
+        **_netcdf_safe_attrs(params.as_dict()),
         SIMULATION_MODE_ATTR: SIMULATION_MODE_EWALD_SWEEP,
         "frame_count": int(theta_x_axis.size * theta_y_axis.size),
         "theta_x_count": int(theta_x_axis.size),
@@ -790,16 +828,32 @@ def _simulate_giwaxs_image_from_structure(
     image = np.zeros((params.resolution_z, params.resolution_x), dtype=float)
 
     qxy_limits = sorted((params.qxy_min, params.qxy_max))
-    sigma_qxy = max(float(params.sigma_r), 1.0e-6)
-    sigma_qz = max(float(params.sigma_theta), 1.0e-6)
+    base_sigma_qxy = max(float(params.sigma_r), 1.0e-6)
+    base_sigma_qz = max(float(params.sigma_theta), 1.0e-6)
+    q_max = max(
+        abs(params.qxy_min),
+        abs(params.qxy_max),
+        abs(params.qz_min),
+        abs(params.qz_max),
+        1.0e-6,
+    )
     gaussian_cutoff = 5.0
 
     for row in peak_rows:
+        if row.get("forbidden_reflection"):
+            continue
         qxy = float(row["qxy"])
         qz = float(row["qz"])
         amplitude = float(row["amplitude"])
         if qxy < qxy_limits[0] or qxy > qxy_limits[1]:
             continue
+        q_fraction = float(np.hypot(qxy, qz) / q_max)
+        sigma_qxy = base_sigma_qxy * (
+            1.0 + max(0.0, float(params.q_dependent_sigma_r)) * q_fraction
+        )
+        sigma_qz = base_sigma_qz * (
+            1.0 + max(0.0, float(params.q_dependent_sigma_z)) * q_fraction
+        )
         qxy_indices = np.flatnonzero(
             np.abs(qxy_axis - qxy) <= gaussian_cutoff * sigma_qxy
         )
@@ -822,11 +876,37 @@ def _simulate_giwaxs_image_from_structure(
             amplitude * qz_weights[:, np.newaxis] * qxy_weights[np.newaxis, :]
         )
 
+    if params.missing_wedge_correction:
+        image, missing_wedge_metadata = _apply_fiber_missing_wedge(
+            image,
+            qxy_axis,
+            qz_axis,
+            params,
+        )
+    else:
+        missing_wedge_metadata = {
+            "missing_wedge_correction_applied": False,
+        }
+
+    if params.solid_angle_correction:
+        image, solid_angle_metadata = _apply_solid_angle_response(
+            image,
+            qxy_axis,
+            qz_axis,
+            params.wavelength_angstrom,
+        )
+    else:
+        solid_angle_metadata = {}
+
     attrs = {
         **structure.metadata(),
-        **params.as_dict(),
+        **_netcdf_safe_attrs(params.as_dict()),
+        **_netcdf_safe_attrs(missing_wedge_metadata),
+        **_netcdf_safe_attrs(solid_angle_metadata),
         SIMULATION_MODE_ATTR: SIMULATION_MODE_PATTERN,
-        "peak_count": len(peak_rows),
+        "peak_count": _indexable_peak_count(peak_rows),
+        "reflection_count": len(peak_rows),
+        "forbidden_reflection_count": _forbidden_reflection_count(peak_rows),
         PEAK_TABLE_ATTR: json.dumps(peak_rows, separators=(",", ":")),
         "legacy_source": "pyWAXS/pywaxs/simulation/WAXSSim.py",
     }
@@ -880,6 +960,9 @@ def run_and_store_simulation(
             "legacy_source": data_array.attrs.get("legacy_source"),
         },
     }
+    cif_path = _cif_path_from_structure_path(record.get("structure_path"))
+    if cif_path is not None:
+        record["cif_path"] = cif_path
     project.simulations[simulation_id] = record
     if target_data_id is not None:
         project.link_simulation_to_data_file(simulation_id, target_data_id)
@@ -932,6 +1015,9 @@ def run_and_store_ewald_sphere_sweep(
             "legacy_source": data_array.attrs.get("legacy_source"),
         },
     }
+    cif_path = _cif_path_from_structure_path(record.get("structure_path"))
+    if cif_path is not None:
+        record["cif_path"] = cif_path
     project.simulations[simulation_id] = record
     if target_data_id is not None:
         project.link_simulation_to_data_file(simulation_id, target_data_id)
@@ -950,6 +1036,15 @@ def load_simulation_data(record: dict[str, Any]) -> xr.DataArray | None:
         return None
     loaded = xr.load_dataarray(path)
     return loaded
+
+
+def _cif_path_from_structure_path(value: Any) -> str | None:
+    if not value:
+        return None
+    path = Path(str(value))
+    if path.suffix.lower() not in {".cif", ".mcif"}:
+        return None
+    return str(path)
 
 
 def is_ewald_sphere_sweep_record(record: dict[str, Any]) -> bool:
@@ -1033,6 +1128,53 @@ def calculate_giwaxs_peak_rows(
     return _calculated_peak_rows(load_structure(structure_path), params)
 
 
+def recommend_hkl_extent_for_q_range(
+    structure_path: str | Path,
+    *,
+    qxy_range: tuple[float, float] = (-4.0, 4.0),
+    qz_range: tuple[float, float] = (0.0, 4.0),
+    theta_x_deg: float = 90.0,
+    theta_y_deg: float = 0.0,
+    margin: float = 1.08,
+    min_extent: int = 4,
+    max_extent: int = 64,
+) -> int:
+    """Recommend a reciprocal-lattice search extent for a q-space detector.
+
+    Large 2D hybrid structures often have long real-space axes. A small
+    symmetric h/k/l search can therefore truncate high-q out-of-plane peaks
+    even when the detector grid extends to 3-4 inverse angstroms. This helper
+    chooses an extent large enough for the smallest reciprocal-basis spacing to
+    cover the requested detector range.
+    """
+
+    structure = load_structure(structure_path)
+    params = GIWAXSSimulationParameters(
+        theta_x_deg=theta_x_deg,
+        theta_y_deg=theta_y_deg,
+    )
+    lattice = _rotated_lattice(structure.lattice, params)
+    volume = np.dot(lattice[2], np.cross(lattice[0], lattice[1]))
+    if abs(float(volume)) <= 1.0e-12:
+        return int(min_extent)
+    b1 = 2.0 * np.pi * np.cross(lattice[1], lattice[2]) / volume
+    b2 = 2.0 * np.pi * np.cross(lattice[2], lattice[0]) / volume
+    b3 = 2.0 * np.pi * np.cross(lattice[0], lattice[1]) / volume
+    reciprocal_step = min(
+        float(np.linalg.norm(vector)) for vector in (b1, b2, b3)
+    )
+    if not np.isfinite(reciprocal_step) or reciprocal_step <= 1.0e-12:
+        return int(min_extent)
+    q_limit = max(
+        abs(float(qxy_range[0])),
+        abs(float(qxy_range[1])),
+        abs(float(qz_range[0])),
+        abs(float(qz_range[1])),
+    )
+    extent = int(math.ceil(q_limit * max(float(margin), 1.0) / reciprocal_step))
+    return max(int(min_extent), min(int(max_extent), extent))
+
+
 def load_structure(path: str | Path) -> StructureData:
     """Load CIF/POSCAR structures through pymatgen or a POSCAR
     fallback."""
@@ -1041,18 +1183,10 @@ def load_structure(path: str | Path) -> StructureData:
     try:
         from pymatgen.core import Structure
 
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message=(
-                    r"Issues encountered while parsing CIF: .*fractional "
-                    r"coordinates rounded to ideal values.*"
-                ),
-                category=UserWarning,
-            )
+        with suppress_pymatgen_cif_warnings():
             structure = Structure.from_file(str(structure_path))
         lattice = np.asarray(structure.lattice.matrix, dtype=float)
-        species = [site.specie.symbol for site in structure]
+        species = [_site_species_symbol(site) for site in structure]
         frac_coords = np.asarray([site.frac_coords for site in structure])
         return StructureData(structure_path, lattice, species, frac_coords)
     except Exception:
@@ -1103,6 +1237,20 @@ def _read_poscar(path: Path) -> StructureData:
     return StructureData(path, lattice, atom_species, coords)
 
 
+def _site_species_symbol(site: Any) -> str:
+    try:
+        specie = site.specie
+    except AttributeError:
+        species = getattr(site, "species", None)
+        if species is None:
+            raise
+        items = list(species.items())
+        if not items:
+            raise ValueError("Structure site has no species.")
+        specie = max(items, key=lambda item: float(item[1]))[0]
+    return str(getattr(specie, "symbol", specie))
+
+
 def _bragg_peaks(
     structure: StructureData,
     params: GIWAXSSimulationParameters,
@@ -1134,14 +1282,20 @@ def _calculated_peak_rows(
     params: GIWAXSSimulationParameters,
 ) -> list[dict[str, Any]]:
     hkl, q_vectors, intensities = _bragg_peaks(structure, params)
+    max_intensity = _max_finite_positive(intensities)
     qxy_limits = sorted((params.qxy_min, params.qxy_max))
     qz_limits = sorted((params.qz_min, params.qz_max))
     max_abs_qxy = max(abs(qxy_limits[0]), abs(qxy_limits[1]))
     sigma_phi = max(float(params.sigma_phi), 1.0e-6)
     rows: list[dict[str, Any]] = []
     for miller, q_vector, intensity in zip(hkl, q_vectors, intensities):
-        if not np.isfinite(intensity) or intensity <= 0.0:
+        if not np.isfinite(intensity):
             continue
+        intensity_value = max(0.0, float(intensity))
+        forbidden = _is_forbidden_reflection_intensity(
+            intensity_value,
+            max_intensity,
+        )
         qxy = float(np.hypot(q_vector[0], q_vector[1]))
         qz = float(abs(q_vector[2]))
         if qz < qz_limits[0] or qz > qz_limits[1]:
@@ -1149,7 +1303,14 @@ def _calculated_peak_rows(
         if qxy < 0.0 or qxy > max_abs_qxy:
             continue
         for signed_qxy in _signed_qxy_positions(qxy, qxy_limits):
+            if params.missing_wedge_correction and not _fiber_q_points_accessible(
+                signed_qxy,
+                qz,
+                params,
+            ):
+                continue
             phi_weight = _azimuthal_weight(q_vector, signed_qxy, sigma_phi)
+            amplitude = 0.0 if forbidden else float(intensity_value * phi_weight)
             rows.append(
                 {
                     "h": int(miller[0]),
@@ -1157,11 +1318,184 @@ def _calculated_peak_rows(
                     "l": int(miller[2]),
                     "qxy": float(signed_qxy),
                     "qz": qz,
-                    "intensity": float(intensity),
-                    "amplitude": float(intensity * phi_weight),
+                    "intensity": intensity_value,
+                    "relative_intensity": (
+                        0.0
+                        if max_intensity <= 0.0
+                        else float(intensity_value / max_intensity)
+                    ),
+                    "amplitude": amplitude,
+                    "forbidden_reflection": forbidden,
+                    "excluded_from_indexing": forbidden,
+                    "reflection_status": (
+                        "forbidden" if forbidden else "indexable"
+                    ),
                 }
             )
     return rows
+
+
+def _max_finite_positive(values: np.ndarray) -> float:
+    finite = np.asarray(values, dtype=float)
+    finite = finite[np.isfinite(finite) & (finite > 0.0)]
+    if finite.size == 0:
+        return 0.0
+    return float(np.nanmax(finite))
+
+
+def _is_forbidden_reflection_intensity(
+    intensity: float,
+    max_intensity: float,
+) -> bool:
+    if not np.isfinite(intensity) or intensity <= 0.0:
+        return True
+    threshold = max(
+        FORBIDDEN_REFLECTION_ABSOLUTE_INTENSITY_FLOOR,
+        float(max_intensity)
+        * FORBIDDEN_REFLECTION_RELATIVE_INTENSITY_THRESHOLD,
+    )
+    return float(intensity) <= threshold
+
+
+def _forbidden_reflection_count(rows: list[dict[str, Any]]) -> int:
+    return sum(1 for row in rows if row.get("forbidden_reflection"))
+
+
+def _indexable_peak_count(rows: list[dict[str, Any]]) -> int:
+    return sum(1 for row in rows if not row.get("forbidden_reflection"))
+
+
+def _netcdf_safe_attrs(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return attributes that xarray can serialize to NetCDF."""
+
+    safe: dict[str, Any] = {}
+    for key, value in payload.items():
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            safe[key] = int(value)
+        else:
+            safe[key] = value
+    return safe
+
+
+def _apply_solid_angle_response(
+    image: np.ndarray,
+    qxy_axis: np.ndarray,
+    qz_axis: np.ndarray,
+    wavelength_angstrom: float | None,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    if wavelength_angstrom is None or wavelength_angstrom <= 0.0:
+        return image, {"solid_angle_correction_applied": False}
+    qxy_grid, qz_grid = np.meshgrid(qxy_axis, qz_axis)
+    q_radius = np.sqrt(qxy_grid * qxy_grid + qz_grid * qz_grid)
+    sin_theta = q_radius * float(wavelength_angstrom) / (4.0 * np.pi)
+    valid = sin_theta <= 1.0
+    two_theta = 2.0 * np.arcsin(np.clip(sin_theta, 0.0, 1.0))
+    response = np.cos(two_theta) ** 3
+    response[~valid] = 0.0
+    response[~np.isfinite(response)] = 0.0
+    response = np.clip(response, 0.0, 1.0)
+    metadata = {
+        "solid_angle_correction_applied": True,
+        "solid_angle_response_min": float(np.nanmin(response)),
+        "solid_angle_response_max": float(np.nanmax(response)),
+    }
+    return image * response, metadata
+
+
+def _apply_fiber_missing_wedge(
+    image: np.ndarray,
+    qxy_axis: np.ndarray,
+    qz_axis: np.ndarray,
+    params: GIWAXSSimulationParameters,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    mask, metadata = _fiber_missing_wedge_mask(qxy_axis, qz_axis, params)
+    if not metadata["missing_wedge_correction_applied"]:
+        return image, metadata
+    corrected = np.asarray(image, dtype=float).copy()
+    corrected[mask] = 0.0
+    metadata["missing_wedge_masked_fraction"] = float(np.mean(mask))
+    return corrected, metadata
+
+
+def _fiber_missing_wedge_mask(
+    qxy_axis: np.ndarray,
+    qz_axis: np.ndarray,
+    params: GIWAXSSimulationParameters,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    if (
+        params.wavelength_angstrom is None
+        or params.wavelength_angstrom <= 0.0
+        or params.incident_angle_deg is None
+    ):
+        return np.zeros((qz_axis.size, qxy_axis.size), dtype=bool), {
+            "missing_wedge_correction_applied": False,
+        }
+    qxy_grid, qz_grid = np.meshgrid(qxy_axis, qz_axis)
+    valid = _fiber_q_points_accessible(qxy_grid, qz_grid, params)
+    k0 = 2.0 * np.pi / float(params.wavelength_angstrom)
+    alpha = math.radians(float(params.incident_angle_deg))
+    horizon_qz = k0 * math.sin(alpha)
+    metadata = {
+        "missing_wedge_correction_applied": True,
+        "missing_wedge_model": "pyfai_fiber_qip_qoop_accessibility",
+        "missing_wedge_horizon_qz": float(horizon_qz),
+        "missing_wedge_incident_angle_deg": float(params.incident_angle_deg),
+        "missing_wedge_tilt_angle_deg": float(params.tilt_angle_deg),
+        "missing_wedge_wavelength_angstrom": float(params.wavelength_angstrom),
+    }
+    return ~valid, metadata
+
+
+def _fiber_q_points_accessible(
+    qip: np.ndarray | float,
+    qoop: np.ndarray | float,
+    params: GIWAXSSimulationParameters,
+) -> np.ndarray | bool:
+    """Return qIP/qOOP bins reachable by a GI/fiber detector map.
+
+    pyFAI's FiberIntegrator reports qIP as the in-plane magnitude made from
+    beam and horizontal sample-frame q components and qOOP as the vertical
+    sample-frame component. Collapsing those coordinates leaves a missing
+    wedge: a qIP/qOOP bin is physically occupied only if some hidden beam-axis
+    q component satisfies the elastic Ewald-sphere constraint and the exit ray
+    is above the sample horizon.
+    """
+
+    if (
+        params.wavelength_angstrom is None
+        or params.wavelength_angstrom <= 0.0
+        or params.incident_angle_deg is None
+    ):
+        return np.ones_like(np.asarray(qoop, dtype=float), dtype=bool)
+    qip_array = np.asarray(qip, dtype=float)
+    qoop_array = np.asarray(qoop, dtype=float)
+    tilt = math.radians(float(params.tilt_angle_deg))
+    if abs(tilt) > 0.0:
+        qip_eff = qip_array * math.cos(tilt) + qoop_array * math.sin(tilt)
+        qoop_eff = qoop_array * math.cos(tilt) - qip_array * math.sin(tilt)
+    else:
+        qip_eff = qip_array
+        qoop_eff = qoop_array
+    qip_abs = np.abs(qip_eff)
+    k0 = 2.0 * np.pi / float(params.wavelength_angstrom)
+    alpha = math.radians(float(params.incident_angle_deg))
+    sin_alpha = math.sin(alpha)
+    cos_alpha = max(abs(math.cos(alpha)), 1.0e-12)
+    qbeam = (
+        2.0 * k0 * sin_alpha * qoop_eff - qip_abs**2 - qoop_eff**2
+    ) / (2.0 * k0 * cos_alpha)
+    tolerance = 1.0e-9 + 1.0e-6 * max(
+        abs(float(params.qxy_min)),
+        abs(float(params.qxy_max)),
+        abs(float(params.qz_min)),
+        abs(float(params.qz_max)),
+        1.0,
+    )
+    ewald_accessible = np.abs(qbeam) <= qip_abs + tolerance
+    above_horizon = qoop_eff >= (k0 * sin_alpha - tolerance)
+    return ewald_accessible & above_horizon
 
 
 def _rotated_lattice(

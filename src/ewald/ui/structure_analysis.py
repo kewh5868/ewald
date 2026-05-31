@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import shlex
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -12,8 +13,14 @@ import numpy as np
 from qtpy import QtCore, QtGui, QtWidgets
 
 from ewald.analysis.structure import (
+    DEFAULT_FAMILY_DETECTION_KINDS,
     DEFAULT_PHASE_TAG,
     DEFAULT_PHASE_TAGS,
+    FAMILY_KIND_QXY_MULTIPLES,
+    FAMILY_KIND_QZ_MULTIPLES,
+    FAMILY_KIND_SIMILAR_QXY,
+    FAMILY_KIND_SIMILAR_QZ,
+    PHASE_FORBIDDEN,
     PHASE_REJECTED,
     PHASE_UNASSIGNED,
     REFERENCE_MOLECULES,
@@ -24,6 +31,7 @@ from ewald.analysis.structure import (
     LatticeCandidate,
     StructurePeak,
     build_structure_peaks,
+    format_hkl,
     generate_ranked_cif_records,
     group_peak_families,
     guess_lattice_candidates,
@@ -36,6 +44,7 @@ from ewald.analysis.structure import (
 )
 from ewald.crystallography.overlay import (
     CRYSTAL_SYSTEMS,
+    CrystalOverlayCalculator,
     CrystalOverlayParameters,
     normalize_quaternion,
 )
@@ -103,6 +112,34 @@ CANDIDATE_COLUMNS = [
     "Outliers",
     "Method",
 ]
+
+
+class _CandidateGuessWorker(QtCore.QObject):
+    """Run candidate guessing away from the GUI event loop."""
+
+    finished = QtCore.Signal(object, float)
+    failed = QtCore.Signal(str, float)
+
+    def __init__(
+        self,
+        peaks: list[StructurePeak],
+        config: CandidateSearchConfig,
+    ) -> None:
+        super().__init__()
+        self.peaks = list(peaks)
+        self.config = config
+
+    @QtCore.Slot()
+    def run(self) -> None:
+        started_at = time.perf_counter()
+        try:
+            candidates = guess_lattice_candidates(self.peaks, self.config)
+        except Exception as exc:
+            self.failed.emit(str(exc), time.perf_counter() - started_at)
+            return
+        self.finished.emit(candidates, time.perf_counter() - started_at)
+
+
 FAMILY_COLUMNS = [
     "Family",
     "Flag",
@@ -124,6 +161,9 @@ FAMILY_COL_PEAKS = 6
 FAMILY_COL_REASON = 7
 FAMILY_COL_NOTES = 8
 CIF_COLUMNS = ["Rank", "Candidate", "Score", "Composition", "Status"]
+STRUCTURE_OUTPUT_FULL = "full"
+STRUCTURE_OUTPUT_SCAFFOLD_ONLY = "scaffold_only"
+STRUCTURE_OUTPUT_FULL_PLUS_SCAFFOLD = "full_plus_scaffold"
 WYCKOFF_SITE_COLUMNS = ["Site", "Multiplicity", "Free params", "Space group"]
 WYCKOFF_COMBINATION_COLUMNS = [
     "Combination",
@@ -141,6 +181,54 @@ STRUCTURE_ACTIVE_PEAK_BRUSH = "#2f80ed"
 FAMILY_FLAG_APPROPRIATE = "appropriate"
 FAMILY_FLAG_INAPPROPRIATE = "inappropriate"
 FAMILY_FLAG_CYCLE = ("", FAMILY_FLAG_APPROPRIATE, FAMILY_FLAG_INAPPROPRIATE)
+FAMILY_SOURCE_MANUAL = "manual"
+FAMILY_KIND_CONTROL_LABELS = {
+    FAMILY_KIND_SIMILAR_QXY: "Similar qxy",
+    FAMILY_KIND_SIMILAR_QZ: "Similar qz",
+    FAMILY_KIND_QXY_MULTIPLES: "qxy multiples",
+    FAMILY_KIND_QZ_MULTIPLES: "qz multiples",
+}
+
+
+class _FamilyTableWidget(QtWidgets.QTableWidget):
+    """Family table with row drag reporting for persistent manual order."""
+
+    familyDragStarted = QtCore.Signal()
+    familyRowsReordered = QtCore.Signal(list)
+
+    def startDrag(
+        self,
+        supported_actions: QtCore.Qt.DropActions,
+    ) -> None:
+        before = self._family_ids_in_row_order()
+        self.familyDragStarted.emit()
+        super().startDrag(supported_actions)
+        after = self._family_ids_in_row_order()
+        if after and after != before:
+            self.familyRowsReordered.emit(after)
+
+    def dropEvent(self, event: QtGui.QDropEvent) -> None:
+        before = self._family_ids_in_row_order()
+        super().dropEvent(event)
+        after = self._family_ids_in_row_order()
+        if after and after != before:
+            self.familyRowsReordered.emit(after)
+
+    def supportedDropActions(self) -> QtCore.Qt.DropActions:
+        return QtCore.Qt.DropAction.MoveAction
+
+    def _family_ids_in_row_order(self) -> list[str]:
+        family_ids: list[str] = []
+        for row in range(self.rowCount()):
+            item = self.item(row, FAMILY_COL_ID)
+            if item is None:
+                continue
+            family_id = str(
+                item.data(QtCore.Qt.ItemDataRole.UserRole + 1) or item.text()
+            )
+            if family_id:
+                family_ids.append(family_id)
+        return family_ids
 
 
 @dataclass(frozen=True)
@@ -395,8 +483,19 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self._syncing_atom_table = False
         self._phase_controls: list[QtWidgets.QComboBox] = []
         self._family_shortcuts: list[QtGui.QShortcut] = []
+        self._candidate_guess_thread: QtCore.QThread | None = None
+        self._candidate_guess_worker: _CandidateGuessWorker | None = None
+        self._candidate_guess_dialog: QtWidgets.QProgressDialog | None = None
+        self._candidate_guess_started_at: float | None = None
+        self._candidate_guess_estimate_seconds: float | None = None
+        self._candidate_guess_timer = QtCore.QTimer(self)
+        self._candidate_guess_timer.setInterval(1000)
+        self._candidate_guess_timer.timeout.connect(
+            self._update_candidate_guess_progress
+        )
         self.view_box: Any | None = None
         self.roi_overlay_items: list[Any] = []
+        self.candidate_grid_scatter: Any | None = None
         self.plot_frame: _ImageAspectPlotFrame | None = None
         self._analysis_state()
         self._refresh_imported_peaks(preserve_user_edits=True)
@@ -439,15 +538,63 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.structureAnalysisChanged.emit(self.data_id)
         return candidate
 
+    def start_candidate_guessing(self) -> bool:
+        if self._candidate_guess_thread is not None:
+            self._set_status("Candidate guessing is already running.")
+            return False
+        peaks = self._structure_peaks()
+        if not peaks:
+            self._set_status("No included peaks are available for guessing.")
+            return False
+        config = self._candidate_config()
+        estimate_seconds = _estimate_candidate_guess_seconds(peaks, config)
+        dialog = self._candidate_guess_progress_dialog(estimate_seconds)
+        thread = QtCore.QThread(self)
+        worker = _CandidateGuessWorker(peaks, config)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._handle_candidate_guessing_finished)
+        worker.failed.connect(self._handle_candidate_guessing_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._clear_candidate_guess_thread)
+
+        self._candidate_guess_thread = thread
+        self._candidate_guess_worker = worker
+        self._candidate_guess_dialog = dialog
+        self._candidate_guess_started_at = time.perf_counter()
+        self._candidate_guess_estimate_seconds = estimate_seconds
+        self.guess_button.setEnabled(False)
+        self._set_status(
+            "Guessing candidate structures in the background. "
+            f"Estimated time: {_format_duration(estimate_seconds)}."
+        )
+        dialog.show()
+        self._candidate_guess_timer.start()
+        thread.start()
+        return True
+
     def run_candidate_guessing(self) -> list[LatticeCandidate]:
+        """Run candidate guessing synchronously for scripts and tests.
+
+        The GUI button uses :meth:`start_candidate_guessing` so the Qt event
+        loop remains responsive during longer searches.
+        """
+
         peaks = self._structure_peaks()
         if not peaks:
             self._set_status("No included peaks are available for guessing.")
             return []
         config = self._candidate_config()
-        dialog = self._candidate_guess_progress_dialog()
+        estimate_seconds = _estimate_candidate_guess_seconds(peaks, config)
+        dialog = self._candidate_guess_progress_dialog(estimate_seconds)
         self.guess_button.setEnabled(False)
-        self._set_status("Guessing candidate structures...")
+        self._set_status(
+            "Guessing candidate structures... "
+            f"estimated time {_format_duration(estimate_seconds)}."
+        )
         try:
             dialog.show()
             QtWidgets.QApplication.processEvents()
@@ -467,9 +614,12 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.structureAnalysisChanged.emit(self.data_id)
         return candidates
 
-    def _candidate_guess_progress_dialog(self) -> QtWidgets.QProgressDialog:
+    def _candidate_guess_progress_dialog(
+        self,
+        estimate_seconds: float,
+    ) -> QtWidgets.QProgressDialog:
         dialog = QtWidgets.QProgressDialog(
-            "Guessing candidate structures...",
+            _candidate_guess_progress_text(0.0, estimate_seconds),
             "Cancel",
             0,
             0,
@@ -482,6 +632,60 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         dialog.setAutoClose(True)
         dialog.setAutoReset(True)
         return dialog
+
+    def _update_candidate_guess_progress(self) -> None:
+        dialog = self._candidate_guess_dialog
+        if dialog is None or self._candidate_guess_started_at is None:
+            return
+        elapsed = time.perf_counter() - self._candidate_guess_started_at
+        estimate = self._candidate_guess_estimate_seconds or 0.0
+        dialog.setLabelText(_candidate_guess_progress_text(elapsed, estimate))
+
+    @QtCore.Slot(object, float)
+    def _handle_candidate_guessing_finished(
+        self,
+        candidates: object,
+        elapsed_seconds: float,
+    ) -> None:
+        resolved = list(candidates) if isinstance(candidates, list) else []
+        self._finish_candidate_guessing_dialog()
+        self._store_candidates(resolved)
+        self._sync_candidates()
+        self._set_status(
+            f"Generated {len(resolved)} ranked candidate structure(s) in "
+            f"{_format_duration(elapsed_seconds)}."
+        )
+        self.structureAnalysisChanged.emit(self.data_id)
+
+    @QtCore.Slot(str, float)
+    def _handle_candidate_guessing_failed(
+        self,
+        message: str,
+        elapsed_seconds: float,
+    ) -> None:
+        self._finish_candidate_guessing_dialog()
+        self._set_status(
+            "Candidate guessing failed after "
+            f"{_format_duration(elapsed_seconds)}: {message}"
+        )
+
+    def _finish_candidate_guessing_dialog(self) -> None:
+        self._candidate_guess_timer.stop()
+        dialog = self._candidate_guess_dialog
+        if dialog is not None:
+            dialog.setRange(0, 1)
+            dialog.setValue(1)
+            dialog.close()
+            dialog.deleteLater()
+        self.guess_button.setEnabled(True)
+        self._candidate_guess_dialog = None
+        self._candidate_guess_started_at = None
+        self._candidate_guess_estimate_seconds = None
+
+    @QtCore.Slot()
+    def _clear_candidate_guess_thread(self) -> None:
+        self._candidate_guess_thread = None
+        self._candidate_guess_worker = None
 
     def suggest_and_tag_outliers(self) -> list[dict[str, Any]]:
         candidate = self._selected_candidate()
@@ -540,20 +744,95 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         return candidate
 
     def suggest_peak_families(self) -> list[dict[str, Any]]:
+        enabled_kinds = self._enabled_family_detection_kinds()
         families = group_peak_families(
             self._structure_peaks(),
             tolerance=self.family_tolerance.value(),
             ratio_tolerance=self.family_ratio_tolerance.value(),
             phase_tag=str(self.family_phase_combo.currentText()),
+            enabled_kinds=enabled_kinds,
         )
         state = self._analysis_state()
-        state["families"] = families
+        manual_families = [
+            family
+            for family in self._family_records()
+            if _is_manual_family(family)
+        ]
+        state["families"] = [*manual_families, *families]
         self._sync_families()
+        if not enabled_kinds:
+            self._set_status(
+                "No auto family types selected; preserved custom families."
+            )
+            self.structureAnalysisChanged.emit(self.data_id)
+            return families
         self._set_status(
-            f"Suggested {len(families)} candidate family group(s)."
+            f"Suggested {len(families)} candidate family group(s) from "
+            f"{len(enabled_kinds)} enabled auto type(s)."
         )
         self.structureAnalysisChanged.emit(self.data_id)
         return families
+
+    def _enabled_family_detection_kinds(self) -> list[str]:
+        return [
+            kind
+            for kind in DEFAULT_FAMILY_DETECTION_KINDS
+            if self.family_kind_checks[kind].isChecked()
+        ]
+
+    def add_custom_peak_family(self) -> dict[str, Any] | None:
+        state = self._analysis_state()
+        requested_name = self.custom_family_name_edit.text().strip()
+        family_id = _unique_family_id(
+            requested_name or "Custom family",
+            self._family_records(),
+        )
+        family = {
+            "family_id": family_id,
+            "kind": "custom",
+            "phase_tag": str(self.family_phase_combo.currentText()),
+            "reference": None,
+            "peak_ids": [],
+            "labels": [],
+            "confidence": 1.0,
+            "reason": (
+                "User-defined family. Select this row, then click peaks in "
+                "the plot to add members."
+            ),
+            "notes": "custom family added by user",
+            "source": FAMILY_SOURCE_MANUAL,
+            "manual_edited": True,
+            "user_flag": FAMILY_FLAG_APPROPRIATE,
+        }
+        state["families"] = [*self._family_records(), family]
+        self.custom_family_name_edit.clear()
+        self._sync_families(select_family_id=family_id)
+        self._set_status(
+            f"Added empty custom family {family_id}. Click peaks in the plot "
+            "to add members."
+        )
+        self.structureAnalysisChanged.emit(self.data_id)
+        return family
+
+    def _selected_peak_ids(self) -> list[str]:
+        rows = sorted(
+            {index.row() for index in self.peak_table.selectedIndexes()}
+        )
+        if not rows and self.peak_table.currentRow() >= 0:
+            rows = [self.peak_table.currentRow()]
+        peak_ids: list[str] = []
+        seen: set[str] = set()
+        for row in rows:
+            item = self.peak_table.item(row, COL_PEAK_ID)
+            if item is None:
+                continue
+            peak_id = str(
+                item.data(QtCore.Qt.ItemDataRole.UserRole) or item.text()
+            )
+            if peak_id and peak_id not in seen:
+                peak_ids.append(peak_id)
+                seen.add(peak_id)
+        return peak_ids
 
     def add_reference_molecule(self, key: str) -> None:
         metadata = dict(REFERENCE_MOLECULES.get(key, {}))
@@ -575,6 +854,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         atoms = [spec["element"] for spec in atom_specs]
         density = self.density_spin.value()
         self._wyckoff_state()["free_atoms"] = atom_specs
+        self._store_structure_output_mode()
         records = generate_ranked_cif_records(
             candidate,
             atoms=atoms,
@@ -586,6 +866,11 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             density_g_cm3=density if density > 0.0 else None,
             occupancy_constraints=_atom_occupancy_summary(atom_specs),
             limit=self.cif_count_spin.value(),
+        )
+        records = _structure_output_records(
+            records,
+            self._selected_structure_output_mode(),
+            keep_elements=atoms,
         )
         records = self._write_generated_cif_files(records)
         self._wyckoff_state()["generated_cifs"] = records
@@ -611,6 +896,43 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             return directory
         self._set_status(f"Could not open generated CIF folder: {directory}")
         return None
+
+    def _selected_structure_output_mode(self) -> str:
+        if not hasattr(self, "structure_output_combo"):
+            return STRUCTURE_OUTPUT_FULL
+        mode = str(
+            self.structure_output_combo.currentData() or STRUCTURE_OUTPUT_FULL
+        )
+        if mode in {
+            STRUCTURE_OUTPUT_FULL,
+            STRUCTURE_OUTPUT_SCAFFOLD_ONLY,
+            STRUCTURE_OUTPUT_FULL_PLUS_SCAFFOLD,
+        }:
+            return mode
+        return STRUCTURE_OUTPUT_FULL
+
+    def _store_structure_output_mode(self) -> None:
+        self._wyckoff_state()[
+            "structure_output_mode"
+        ] = self._selected_structure_output_mode()
+
+    def _sync_structure_output_combo_from_state(self) -> None:
+        mode = str(
+            self._wyckoff_state().get(
+                "structure_output_mode",
+                STRUCTURE_OUTPUT_FULL,
+            )
+        )
+        if mode not in {
+            STRUCTURE_OUTPUT_FULL,
+            STRUCTURE_OUTPUT_SCAFFOLD_ONLY,
+            STRUCTURE_OUTPUT_FULL_PLUS_SCAFFOLD,
+        }:
+            mode = STRUCTURE_OUTPUT_FULL
+        for index in range(self.structure_output_combo.count()):
+            if self.structure_output_combo.itemData(index) == mode:
+                self.structure_output_combo.setCurrentIndex(index)
+                return
 
     def _analysis_state(self) -> dict[str, Any]:
         analyses = self.project.analysis_results.setdefault(
@@ -699,6 +1021,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             self.family_highlight_scatter = None
             self.view_box = None
             self.roi_overlay_items = []
+            self.candidate_grid_scatter = None
             return
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
@@ -725,12 +1048,24 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             hoverable=True,
             tip=_peak_tip,
         )
+        self.candidate_grid_scatter = pg.ScatterPlotItem(
+            size=8,
+            symbol="x",
+            brush=pg.mkBrush(244, 63, 94, 110),
+            pen=pg.mkPen("#f43f5e", width=1.4),
+        )
+        self.candidate_grid_scatter.setZValue(12)
+        _make_plot_item_non_interactive(self.candidate_grid_scatter)
         self.family_highlight_scatter.setZValue(15)
         self.peak_scatter.setZValue(14)
         self.peak_scatter.sigClicked.connect(self._handle_peak_plot_clicked)
         self.family_highlight_scatter.sigClicked.connect(
             self._handle_family_plot_clicked
         )
+        self.plot_widget.scene().sigMouseClicked.connect(
+            self._handle_plot_scene_clicked
+        )
+        self.plot_widget.addItem(self.candidate_grid_scatter)
         self.plot_widget.addItem(self.peak_scatter)
         self.plot_widget.addItem(self.family_highlight_scatter)
 
@@ -741,6 +1076,9 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.peak_table.horizontalHeader().setStretchLastSection(True)
         self.peak_table.setSelectionBehavior(
             QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.peak_table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
         )
         self.peak_table.itemChanged.connect(self._handle_peak_item_changed)
         self.peak_table.itemSelectionChanged.connect(
@@ -820,13 +1158,27 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.q_tolerance = _double_spinbox(0.06, 0.001, 5.0, 0.01)
         self.relative_tolerance = _double_spinbox(0.035, 0.0, 1.0, 0.005)
         self.grid_points = _int_spinbox(16, 3, 40)
+        self.candidate_grid_check = QtWidgets.QCheckBox("Show candidate grid")
+        self.candidate_grid_check.setChecked(
+            bool(self._analysis_state().get("show_candidate_grid", True))
+        )
+        self.candidate_grid_check.setToolTip(
+            qt_tooltip(
+                "Overlay the selected approximation candidate as predicted "
+                "reciprocal-lattice points on the q-space image."
+            )
+        )
+        self.candidate_grid_check.toggled.connect(
+            self._handle_candidate_grid_toggled
+        )
+        self.hkl_max.valueChanged.connect(self._sync_candidate_grid_overlay)
 
         self.refine_button = QtWidgets.QToolButton()
         self.refine_button.setText("Refine Best Guess")
         self.refine_button.clicked.connect(self.run_best_guess_refinement)
         self.guess_button = QtWidgets.QToolButton()
         self.guess_button.setText("Guess Candidates")
-        self.guess_button.clicked.connect(self.run_candidate_guessing)
+        self.guess_button.clicked.connect(self.start_candidate_guessing)
         self.overlay_button = QtWidgets.QToolButton()
         self.overlay_button.setText("Overlay Selected")
         self.overlay_button.clicked.connect(self.overlay_selected_candidate)
@@ -849,6 +1201,9 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.candidate_table.itemSelectionChanged.connect(
             self._sync_wyckoff_candidate_combo
         )
+        self.candidate_table.itemSelectionChanged.connect(
+            self._sync_candidate_grid_overlay
+        )
 
         self.family_tolerance = _double_spinbox(0.04, 0.001, 5.0, 0.01)
         self.family_ratio_tolerance = _double_spinbox(0.06, 0.001, 1.0, 0.01)
@@ -868,9 +1223,52 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.family_confidence_filter.valueChanged.connect(
             lambda _value: self._sync_families()
         )
+        self.family_kind_checks: dict[str, QtWidgets.QCheckBox] = {}
+        for kind in DEFAULT_FAMILY_DETECTION_KINDS:
+            checkbox = QtWidgets.QCheckBox(
+                FAMILY_KIND_CONTROL_LABELS.get(kind, kind)
+            )
+            checkbox.setChecked(True)
+            checkbox.setToolTip(
+                qt_tooltip(
+                    "Include this generated peak-family type when running "
+                    "family autodetection."
+                )
+            )
+            self.family_kind_checks[kind] = checkbox
         self.family_button = QtWidgets.QToolButton()
-        self.family_button.setText("Suggest Families")
+        self.family_button.setText("Suggest Peak Families")
+        self.family_button.setToolButtonStyle(
+            QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly
+        )
+        self.family_button.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Minimum,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        self.family_button.setMinimumWidth(
+            self.family_button.sizeHint().width()
+        )
+        self.family_button.setToolTip(
+            qt_tooltip(
+                "Suggest peak-family rows from the included peaks and "
+                "selected autodetection types."
+            )
+        )
         self.family_button.clicked.connect(self.suggest_peak_families)
+        self.custom_family_name_edit = QtWidgets.QLineEdit()
+        self.custom_family_name_edit.setPlaceholderText("Custom family name")
+        self.custom_family_name_edit.setClearButtonEnabled(True)
+        self.add_custom_family_button = QtWidgets.QToolButton()
+        self.add_custom_family_button.setText("Add Custom Family")
+        self.add_custom_family_button.setToolTip(
+            qt_tooltip(
+                "Create an empty user-defined family. Select its row, then "
+                "click peaks in the plot to add members."
+            )
+        )
+        self.add_custom_family_button.clicked.connect(
+            self.add_custom_peak_family
+        )
         self.family_flag_button = QtWidgets.QToolButton()
         self.family_flag_button.setText("Flag (F)")
         self.family_flag_button.setToolTip(
@@ -883,20 +1281,53 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             self.toggle_selected_family_flags
         )
         self.family_appropriate_button = QtWidgets.QToolButton()
-        self.family_appropriate_button.setText("Appropriate")
+        self.family_appropriate_button.setText("Appropriate (A)")
         self.family_appropriate_button.setToolTip(
-            qt_tooltip("Mark selected families as appropriate.")
+            qt_tooltip(
+                "Mark selected families as appropriate. Shortcuts: A from "
+                "the family table or plot; Alt+A anywhere in Structure "
+                "Analysis."
+            )
         )
         self.family_appropriate_button.clicked.connect(
             lambda: self.set_selected_family_flag(FAMILY_FLAG_APPROPRIATE)
         )
         self.family_inappropriate_button = QtWidgets.QToolButton()
-        self.family_inappropriate_button.setText("Inappropriate")
+        self.family_inappropriate_button.setText("Inappropriate (I)")
         self.family_inappropriate_button.setToolTip(
-            qt_tooltip("Mark selected families as inappropriate.")
+            qt_tooltip(
+                "Mark selected families as inappropriate. Shortcuts: I from "
+                "the family table or plot; Alt+I anywhere in Structure "
+                "Analysis."
+            )
         )
         self.family_inappropriate_button.clicked.connect(
             lambda: self.set_selected_family_flag(FAMILY_FLAG_INAPPROPRIATE)
+        )
+        self.family_validate_button = QtWidgets.QToolButton()
+        self.family_validate_button.setText("Validate Families")
+        self.family_validate_button.setToolTip(
+            qt_tooltip(
+                "Remove families marked inappropriate and collapse duplicate "
+                "families with the same phase and peak membership."
+            )
+        )
+        self.family_validate_button.clicked.connect(
+            self.validate_reviewed_families
+        )
+        self.family_highlight_appropriate_button = QtWidgets.QToolButton()
+        self.family_highlight_appropriate_button.setText(
+            "Highlight Appropriate"
+        )
+        self.family_highlight_appropriate_button.setCheckable(True)
+        self.family_highlight_appropriate_button.setToolTip(
+            qt_tooltip(
+                "Highlight every peak that belongs to a family marked "
+                "appropriate, so ungrouped peaks remain unringed."
+            )
+        )
+        self.family_highlight_appropriate_button.toggled.connect(
+            self._sync_peak_plot
         )
         self.family_delete_button = QtWidgets.QToolButton()
         self.family_delete_button.setText("Delete (D)")
@@ -916,7 +1347,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.family_remove_ring_button.clicked.connect(
             self.remove_active_family_ring
         )
-        self.family_table = QtWidgets.QTableWidget(0, len(FAMILY_COLUMNS))
+        self.family_table = _FamilyTableWidget(0, len(FAMILY_COLUMNS))
         self.family_table.setHorizontalHeaderLabels(FAMILY_COLUMNS)
         enable_rich_text_items(self.family_table)
         self.family_table.setSelectionBehavior(
@@ -928,7 +1359,35 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.family_table.setEditTriggers(
             QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
         )
+        self.family_table.setDragEnabled(True)
+        self.family_table.setAcceptDrops(True)
+        self.family_table.setDragDropOverwriteMode(False)
+        self.family_table.setDropIndicatorShown(True)
+        self.family_table.setDragDropMode(
+            QtWidgets.QAbstractItemView.DragDropMode.InternalMove
+        )
+        self.family_table.setDefaultDropAction(QtCore.Qt.DropAction.MoveAction)
+        self.family_table.setToolTip(
+            qt_tooltip(
+                "Drag family rows to save a manual order; click headers to "
+                "sort the view again."
+            )
+        )
+        family_header = self.family_table.horizontalHeader()
+        family_header.setSortIndicator(
+            FAMILY_COL_ID,
+            QtCore.Qt.SortOrder.AscendingOrder,
+        )
+        family_header.setSortIndicatorShown(True)
+        family_header.sectionClicked.connect(
+            self._handle_family_header_clicked
+        )
+        self.family_table.setSortingEnabled(True)
         self.family_table.itemSelectionChanged.connect(self._sync_peak_plot)
+        self.family_table.familyDragStarted.connect(self._prepare_family_drag)
+        self.family_table.familyRowsReordered.connect(
+            self._handle_family_rows_reordered
+        )
         self._install_family_shortcuts()
 
         self._build_wyckoff_controls()
@@ -939,6 +1398,16 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             targets.append(self.plot_widget)
         shortcut_specs = [
             ("F", self.toggle_selected_family_flags),
+            (
+                "A",
+                lambda: self.set_selected_family_flag(FAMILY_FLAG_APPROPRIATE),
+            ),
+            (
+                "I",
+                lambda: self.set_selected_family_flag(
+                    FAMILY_FLAG_INAPPROPRIATE
+                ),
+            ),
             ("D", self.delete_selected_families),
             ("R", self.remove_active_family_ring),
         ]
@@ -950,6 +1419,25 @@ class StructureAnalysisPane(QtWidgets.QWidget):
                 )
                 shortcut.activated.connect(callback)
                 self._family_shortcuts.append(shortcut)
+        pane_shortcut_specs = [
+            (
+                "Alt+A",
+                lambda: self.set_selected_family_flag(FAMILY_FLAG_APPROPRIATE),
+            ),
+            (
+                "Alt+I",
+                lambda: self.set_selected_family_flag(
+                    FAMILY_FLAG_INAPPROPRIATE
+                ),
+            ),
+        ]
+        for key, callback in pane_shortcut_specs:
+            shortcut = QtGui.QShortcut(QtGui.QKeySequence(key), self)
+            shortcut.setContext(
+                QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut
+            )
+            shortcut.activated.connect(callback)
+            self._family_shortcuts.append(shortcut)
 
     def _build_wyckoff_controls(self) -> None:
         self.wyckoff_candidate_combo = QtWidgets.QComboBox()
@@ -1044,6 +1532,30 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self.stoichiometry_edit = QtWidgets.QLineEdit()
         self.density_spin = _double_spinbox(0.0, 0.0, 100.0, 0.1)
         self.density_spin.setSuffix(" g/cm3")
+        self.structure_output_combo = QtWidgets.QComboBox()
+        self.structure_output_combo.addItem(
+            "Full organic fit",
+            STRUCTURE_OUTPUT_FULL,
+        )
+        self.structure_output_combo.addItem(
+            "Inorganic scaffold only",
+            STRUCTURE_OUTPUT_SCAFFOLD_ONLY,
+        )
+        self.structure_output_combo.addItem(
+            "Full fit + scaffold",
+            STRUCTURE_OUTPUT_FULL_PLUS_SCAFFOLD,
+        )
+        self.structure_output_combo.setToolTip(
+            qt_tooltip(
+                "Choose whether generated CIFs include organic molecule "
+                "atoms, only the inorganic scaffold, or both records side by "
+                "side."
+            )
+        )
+        self._sync_structure_output_combo_from_state()
+        self.structure_output_combo.currentIndexChanged.connect(
+            self._store_structure_output_mode
+        )
         self.cif_count_spin = _int_spinbox(5, 1, 50)
         self.generate_cif_button = QtWidgets.QToolButton()
         self.generate_cif_button.setText("Generate Ranked CIFs")
@@ -1248,6 +1760,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         buttons.addWidget(self.guess_button)
         buttons.addWidget(self.overlay_button)
         buttons.addWidget(self.outliers_button)
+        buttons.addWidget(self.candidate_grid_check)
         buttons.addStretch(1)
         layout.addLayout(buttons)
 
@@ -1307,16 +1820,32 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         controls.addWidget(self.family_ratio_tolerance)
         controls.addWidget(QtWidgets.QLabel("Min confidence"))
         controls.addWidget(self.family_confidence_filter)
-        controls.addWidget(self.family_button)
         controls.addStretch(1)
+        suggest_controls = QtWidgets.QHBoxLayout()
+        suggest_controls.addWidget(self.family_button)
+        suggest_controls.addStretch(1)
+        auto_type_controls = QtWidgets.QHBoxLayout()
+        auto_type_controls.addWidget(QtWidgets.QLabel("Auto types"))
+        for kind in DEFAULT_FAMILY_DETECTION_KINDS:
+            auto_type_controls.addWidget(self.family_kind_checks[kind])
+        auto_type_controls.addStretch(1)
+        custom_controls = QtWidgets.QHBoxLayout()
+        custom_controls.addWidget(QtWidgets.QLabel("Custom"))
+        custom_controls.addWidget(self.custom_family_name_edit, stretch=1)
+        custom_controls.addWidget(self.add_custom_family_button)
         review_controls = QtWidgets.QHBoxLayout()
         review_controls.addWidget(self.family_flag_button)
         review_controls.addWidget(self.family_appropriate_button)
         review_controls.addWidget(self.family_inappropriate_button)
+        review_controls.addWidget(self.family_validate_button)
+        review_controls.addWidget(self.family_highlight_appropriate_button)
         review_controls.addWidget(self.family_delete_button)
         review_controls.addWidget(self.family_remove_ring_button)
         review_controls.addStretch(1)
+        layout.addLayout(suggest_controls)
         layout.addLayout(controls)
+        layout.addLayout(auto_type_controls)
+        layout.addLayout(custom_controls)
         layout.addLayout(review_controls)
         layout.addWidget(self.family_table, stretch=1)
         return tab
@@ -1325,19 +1854,18 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         tab = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(tab)
 
+        self.wyckoff_subtabs = QtWidgets.QTabWidget()
+        self.candidate_mapping_tab = QtWidgets.QWidget()
+        candidate_layout = QtWidgets.QVBoxLayout(self.candidate_mapping_tab)
+
         setup_content = QtWidgets.QWidget()
         setup_layout = QtWidgets.QVBoxLayout(setup_content)
         setup_layout.setContentsMargins(0, 0, 0, 0)
 
-        symmetry_group = QtWidgets.QGroupBox("Candidate & Symmetry")
-        symmetry_form = QtWidgets.QFormLayout(symmetry_group)
-        symmetry_form.addRow("Phase/candidate", self.wyckoff_candidate_combo)
-        symmetry_form.addRow("Crystal system", self.wyckoff_system_combo)
-        symmetry_form.addRow("Space group", self.space_group_combo)
-        symmetry_form.addRow(
-            "Wyckoff site count", self.wyckoff_site_count_spin
-        )
-        setup_layout.addWidget(symmetry_group)
+        candidate_group = QtWidgets.QGroupBox("Candidate Mapping")
+        candidate_form = QtWidgets.QFormLayout(candidate_group)
+        candidate_form.addRow("Phase/candidate", self.wyckoff_candidate_combo)
+        setup_layout.addWidget(candidate_group)
 
         composition_group = QtWidgets.QGroupBox("Composition & Molecules")
         composition_layout = QtWidgets.QVBoxLayout(composition_group)
@@ -1361,6 +1889,9 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         composition_form.addRow("Reference molecule", molecule_row)
         composition_form.addRow("Stoichiometry", self.stoichiometry_edit)
         composition_form.addRow("Density", self.density_spin)
+        composition_form.addRow(
+            "Structure output", self.structure_output_combo
+        )
         composition_layout.addLayout(composition_form)
         composition_layout.addWidget(self.molecule_table)
         setup_layout.addWidget(composition_group)
@@ -1380,41 +1911,65 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         setup_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
         setup_scroll.setWidget(setup_content)
 
+        candidate_layout.addWidget(setup_scroll, stretch=1)
+
+        self.wyckoff_registry_tab = QtWidgets.QWidget()
+        registry_tab_layout = QtWidgets.QVBoxLayout(self.wyckoff_registry_tab)
+
+        registry_filter_group = QtWidgets.QGroupBox("Registry Filters")
+        registry_filter_form = QtWidgets.QFormLayout(registry_filter_group)
+        registry_filter_form.addRow(
+            "Crystal system", self.wyckoff_system_combo
+        )
+        registry_filter_form.addRow("Space group", self.space_group_combo)
+        registry_filter_form.addRow(
+            "Wyckoff site count", self.wyckoff_site_count_spin
+        )
+        registry_tab_layout.addWidget(registry_filter_group)
+
         registry_group = QtWidgets.QGroupBox("Wyckoff Registry")
         registry_layout = QtWidgets.QVBoxLayout(registry_group)
-        registry_splitter = QtWidgets.QSplitter(
-            QtCore.Qt.Orientation.Horizontal
+        self.wyckoff_registry_splitter = QtWidgets.QSplitter(
+            QtCore.Qt.Orientation.Vertical
         )
-        registry_splitter.addWidget(self.wyckoff_site_table)
-        registry_splitter.addWidget(self.wyckoff_combination_table)
-        registry_splitter.setStretchFactor(0, 1)
-        registry_splitter.setStretchFactor(1, 2)
+        self.wyckoff_registry_splitter.addWidget(self.wyckoff_site_table)
+        self.wyckoff_registry_splitter.addWidget(
+            self.wyckoff_combination_table
+        )
+        self.wyckoff_registry_splitter.setStretchFactor(0, 1)
+        self.wyckoff_registry_splitter.setStretchFactor(1, 2)
         registry_layout.addWidget(self.wyckoff_registry_status)
-        registry_layout.addWidget(registry_splitter, stretch=1)
+        registry_layout.addWidget(self.wyckoff_registry_splitter, stretch=1)
+        registry_tab_layout.addWidget(registry_group, stretch=1)
 
+        self.generated_cifs_tab = QtWidgets.QWidget()
+        generated_cifs_layout = QtWidgets.QVBoxLayout(self.generated_cifs_tab)
         cifs_group = QtWidgets.QGroupBox("Generated CIFs")
         cifs_layout = QtWidgets.QVBoxLayout(cifs_group)
-        cifs_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
-        cifs_splitter.addWidget(self.cif_table)
-        cifs_splitter.addWidget(self.cif_visualizer)
-        cifs_splitter.setStretchFactor(0, 1)
-        cifs_splitter.setStretchFactor(1, 1)
-        cifs_layout.addWidget(cifs_splitter, stretch=1)
+        self.generated_cifs_splitter = QtWidgets.QSplitter(
+            QtCore.Qt.Orientation.Vertical
+        )
+        self.generated_cifs_splitter.addWidget(self.cif_table)
+        self.generated_cifs_splitter.addWidget(self.cif_visualizer)
+        self.generated_cifs_splitter.setStretchFactor(0, 1)
+        self.generated_cifs_splitter.setStretchFactor(1, 2)
+        cifs_layout.addWidget(self.generated_cifs_splitter, stretch=1)
+        generated_cifs_layout.addWidget(cifs_group, stretch=1)
 
-        output_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
-        output_splitter.addWidget(registry_group)
-        output_splitter.addWidget(cifs_group)
-        output_splitter.setStretchFactor(0, 2)
-        output_splitter.setStretchFactor(1, 2)
+        self.wyckoff_subtabs.addTab(
+            self.candidate_mapping_tab,
+            "Candidate Mapping",
+        )
+        self.wyckoff_subtabs.addTab(
+            self.wyckoff_registry_tab,
+            "Wyckoff Registry",
+        )
+        self.wyckoff_subtabs.addTab(
+            self.generated_cifs_tab,
+            "Generated CIFs",
+        )
 
-        main_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
-        main_splitter.addWidget(setup_scroll)
-        main_splitter.addWidget(output_splitter)
-        main_splitter.setStretchFactor(0, 0)
-        main_splitter.setStretchFactor(1, 1)
-        main_splitter.setSizes([360, 720])
-
-        layout.addWidget(main_splitter, stretch=1)
+        layout.addWidget(self.wyckoff_subtabs, stretch=1)
         return tab
 
     def _set_initial_image(self) -> None:
@@ -1621,9 +2176,10 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             if self.family_highlight_scatter is not None:
                 self.family_highlight_scatter.setData(spots=[])
             self._clear_roi_overlays()
+            self._clear_candidate_grid_overlay()
             return
-        selected_family_peak_ids = self._selected_family_peak_ids()
-        if self.active_family_peak_id not in selected_family_peak_ids:
+        highlighted_family_peak_ids = self._highlighted_family_peak_ids()
+        if self.active_family_peak_id not in highlighted_family_peak_ids:
             self.active_family_peak_id = None
         spots = []
         family_spots = []
@@ -1646,7 +2202,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
                     "pen": pen,
                 }
             )
-            if peak.peak_id in selected_family_peak_ids:
+            if peak.peak_id in highlighted_family_peak_ids:
                 active_family_ring = peak.peak_id == self.active_family_peak_id
                 family_spots.append(
                     {
@@ -1665,6 +2221,76 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         if self.family_highlight_scatter is not None:
             self.family_highlight_scatter.setData(spots=family_spots)
         self._sync_roi_overlays()
+        self._sync_candidate_grid_overlay()
+
+    def _handle_candidate_grid_toggled(self, enabled: bool) -> None:
+        self._analysis_state()["show_candidate_grid"] = bool(enabled)
+        self._sync_candidate_grid_overlay()
+
+    def _sync_candidate_grid_overlay(self, *_args: Any) -> None:
+        if pg is None or self.candidate_grid_scatter is None:
+            return
+        if (
+            self.coordinate_space != "qspace"
+            or not self.candidate_grid_check.isChecked()
+        ):
+            self._clear_candidate_grid_overlay()
+            return
+        candidate = self._selected_candidate(fallback_first=False)
+        if candidate is None:
+            self._clear_candidate_grid_overlay()
+            return
+        self.candidate_grid_scatter.setData(
+            spots=self._candidate_grid_spots(candidate)
+        )
+
+    def _clear_candidate_grid_overlay(self) -> None:
+        if self.candidate_grid_scatter is not None:
+            self.candidate_grid_scatter.setData(spots=[])
+
+    def _candidate_grid_spots(
+        self,
+        candidate: LatticeCandidate,
+    ) -> list[dict[str, Any]]:
+        params = candidate.as_parameters()
+        params.h_max = self.hkl_max.value()
+        params.k_max = self.hkl_max.value()
+        params.l_max = self.hkl_max.value()
+        result = CrystalOverlayCalculator(params).project(params)
+        if result.qxy.size == 0:
+            return []
+        keep = np.isfinite(result.qxy) & np.isfinite(result.qz)
+        if self.axis_ranges is not None:
+            x0, x1, y0, y1 = (float(value) for value in self.axis_ranges)
+            x_min, x_max = sorted((x0, x1))
+            y_min, y_max = sorted((y0, y1))
+            x_pad = max((x_max - x_min) * 0.04, 1.0e-9)
+            y_pad = max((y_max - y_min) * 0.04, 1.0e-9)
+            keep &= (
+                (result.qxy >= x_min - x_pad)
+                & (result.qxy <= x_max + x_pad)
+                & (result.qz >= y_min - y_pad)
+                & (result.qz <= y_max + y_pad)
+            )
+        spots: list[dict[str, Any]] = []
+        for qxy, qz, hkl in zip(
+            result.qxy[keep],
+            result.qz[keep],
+            result.hkl[keep],
+            strict=False,
+        ):
+            spots.append(
+                {
+                    "pos": (float(qxy), float(qz)),
+                    "data": {
+                        "candidate_id": candidate.candidate_id,
+                        "hkl": format_hkl(hkl),
+                        "qxy": float(qxy),
+                        "qz": float(qz),
+                    },
+                }
+            )
+        return spots
 
     def _sync_roi_overlays(self) -> None:
         self._clear_roi_overlays()
@@ -1683,6 +2309,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
                 pen=pg.mkPen(color, width=1.5),
             )
             item.setZValue(13)
+            _make_plot_item_non_interactive(item)
             self.plot_widget.addItem(item)
             self.roi_overlay_items.append(item)
 
@@ -1762,6 +2389,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
                 self.candidate_table.setItem(row, column, item)
         self.candidate_table.resizeColumnsToContents()
         self._sync_wyckoff_candidate_combo()
+        self._sync_candidate_grid_overlay()
 
     def _sync_families(self, select_family_id: str | None = None) -> None:
         if select_family_id is None:
@@ -1772,38 +2400,123 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             for family in self._family_records()
             if _family_confidence(family) >= min_confidence
         ]
-        self.family_table.setRowCount(len(families))
-        selected_row = -1
-        for row, family in enumerate(families):
-            peak_ids = [str(value) for value in family.get("peak_ids", [])]
-            family_id = str(family.get("family_id", ""))
-            if family_id == select_family_id:
-                selected_row = row
-            flag = _family_flag(family)
-            reason = str(family.get("reason", ""))
-            notes = str(family.get("notes", ""))
-            values = [
-                family_id,
-                _family_flag_label(flag),
-                f"{_family_confidence(family):.2f}",
-                family.get("kind", ""),
-                family.get("phase_tag", ""),
-                _format_float(family.get("reference")),
-                ", ".join(family.get("labels", family.get("peak_ids", []))),
-                reason,
-                notes,
-            ]
-            for column, value in enumerate(values):
-                item = QtWidgets.QTableWidgetItem(str(value))
-                item.setData(QtCore.Qt.ItemDataRole.UserRole, peak_ids)
-                item.setData(QtCore.Qt.ItemDataRole.UserRole + 1, family_id)
-                item.setToolTip(reason or notes)
-                self._style_family_item(item, flag)
-                self.family_table.setItem(row, column, item)
+        sorting_enabled = self.family_table.isSortingEnabled()
+        header = self.family_table.horizontalHeader()
+        sort_column = header.sortIndicatorSection()
+        sort_order = header.sortIndicatorOrder()
+        self.family_table.setSortingEnabled(False)
+        try:
+            self.family_table.setRowCount(len(families))
+            for row, family in enumerate(families):
+                peak_ids = [str(value) for value in family.get("peak_ids", [])]
+                family_id = str(family.get("family_id", ""))
+                confidence = _family_confidence(family)
+                flag = _family_flag(family)
+                reason = str(family.get("reason", ""))
+                notes = str(family.get("notes", ""))
+                values = [
+                    family_id,
+                    _family_flag_label(flag),
+                    f"{confidence:.2f}",
+                    family.get("kind", ""),
+                    family.get("phase_tag", ""),
+                    _format_float(family.get("reference")),
+                    ", ".join(
+                        family.get("labels", family.get("peak_ids", []))
+                    ),
+                    reason,
+                    notes,
+                ]
+                for column, value in enumerate(values):
+                    item = QtWidgets.QTableWidgetItem(str(value))
+                    item.setFlags(
+                        QtCore.Qt.ItemFlag.ItemIsEnabled
+                        | QtCore.Qt.ItemFlag.ItemIsSelectable
+                        | QtCore.Qt.ItemFlag.ItemIsDragEnabled
+                        | QtCore.Qt.ItemFlag.ItemIsDropEnabled
+                    )
+                    item.setData(QtCore.Qt.ItemDataRole.UserRole, peak_ids)
+                    item.setData(
+                        QtCore.Qt.ItemDataRole.UserRole + 1,
+                        family_id,
+                    )
+                    item.setToolTip(reason or notes)
+                    self._style_family_item(item, flag)
+                    self.family_table.setItem(row, column, item)
+        finally:
+            self.family_table.setSortingEnabled(sorting_enabled)
+        if sorting_enabled and 0 <= sort_column < len(FAMILY_COLUMNS):
+            self.family_table.sortItems(sort_column, sort_order)
         self.family_table.resizeColumnsToContents()
-        if selected_row >= 0:
-            self.family_table.selectRow(selected_row)
+        if select_family_id:
+            self._select_family_by_id(select_family_id)
         self._sync_peak_plot()
+
+    def _prepare_family_drag(self) -> None:
+        if self.family_table.isSortingEnabled():
+            self.family_table.setSortingEnabled(False)
+
+    def _handle_family_header_clicked(self, column: int) -> None:
+        if self.family_table.isSortingEnabled():
+            return
+        header = self.family_table.horizontalHeader()
+        order = header.sortIndicatorOrder()
+        self.family_table.setSortingEnabled(True)
+        self.family_table.sortItems(column, order)
+
+    def _handle_family_rows_reordered(self, family_ids: list[str]) -> None:
+        if not family_ids:
+            return
+        select_family_id = self._selected_family_id() or family_ids[-1]
+        self.family_table.setSortingEnabled(False)
+        if not self._reorder_families(family_ids):
+            return
+        self._sync_families(select_family_id=select_family_id)
+        self._set_status("Saved manual peak-family order.")
+        self.structureAnalysisChanged.emit(self.data_id)
+
+    def _reorder_families(self, ordered_family_ids: list[str]) -> bool:
+        requested_ids: list[str] = []
+        seen: set[str] = set()
+        for family_id in ordered_family_ids:
+            normalized = str(family_id)
+            if not normalized or normalized in seen:
+                continue
+            requested_ids.append(normalized)
+            seen.add(normalized)
+        if len(requested_ids) < 2:
+            return False
+
+        families = self._family_records()
+        family_by_id = {
+            str(family.get("family_id", "")): family for family in families
+        }
+        reordered_visible = [
+            family_by_id[family_id]
+            for family_id in requested_ids
+            if family_id in family_by_id
+        ]
+        if len(reordered_visible) < 2:
+            return False
+
+        visible_ids = {
+            str(family.get("family_id", "")) for family in reordered_visible
+        }
+        reordered_iter = iter(reordered_visible)
+        reordered: list[dict[str, Any]] = []
+        for family in families:
+            family_id = str(family.get("family_id", ""))
+            if family_id in visible_ids:
+                reordered.append(next(reordered_iter))
+            else:
+                reordered.append(family)
+
+        before = [str(family.get("family_id", "")) for family in families]
+        after = [str(family.get("family_id", "")) for family in reordered]
+        if before == after:
+            return False
+        self._analysis_state()["families"] = reordered
+        return True
 
     def _selected_family_peak_ids(self) -> set[str]:
         if not hasattr(self, "family_table"):
@@ -1813,6 +2526,27 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             values = item.data(QtCore.Qt.ItemDataRole.UserRole)
             if values:
                 peak_ids.update(str(value) for value in values)
+        return peak_ids
+
+    def _highlighted_family_peak_ids(self) -> set[str]:
+        peak_ids = set(self._selected_family_peak_ids())
+        if (
+            hasattr(self, "family_highlight_appropriate_button")
+            and self.family_highlight_appropriate_button.isChecked()
+        ):
+            peak_ids.update(self._appropriate_family_peak_ids())
+        return peak_ids
+
+    def _appropriate_family_peak_ids(self) -> set[str]:
+        peak_ids: set[str] = set()
+        for family in self._family_records():
+            if _family_flag(family) != FAMILY_FLAG_APPROPRIATE:
+                continue
+            peak_ids.update(
+                str(value)
+                for value in family.get("peak_ids", [])
+                if str(value).strip()
+            )
         return peak_ids
 
     def _selected_family_id(self) -> str | None:
@@ -1827,6 +2561,24 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         return str(
             item.data(QtCore.Qt.ItemDataRole.UserRole + 1) or item.text()
         )
+
+    def _select_family_by_id(self, family_id: str) -> bool:
+        for row in range(self.family_table.rowCount()):
+            item = self.family_table.item(row, FAMILY_COL_ID)
+            if item is None:
+                continue
+            item_family_id = str(
+                item.data(QtCore.Qt.ItemDataRole.UserRole + 1) or item.text()
+            )
+            if item_family_id != str(family_id):
+                continue
+            self.family_table.selectRow(row)
+            self.family_table.scrollToItem(
+                item,
+                QtWidgets.QAbstractItemView.ScrollHint.PositionAtCenter,
+            )
+            return True
+        return False
 
     def _selected_family_ids(self) -> list[str]:
         if not hasattr(self, "family_table"):
@@ -1918,6 +2670,38 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         self._set_status(f"Deleted {len(family_ids)} peak family record(s).")
         self.structureAnalysisChanged.emit(self.data_id)
 
+    def validate_reviewed_families(self) -> None:
+        families = self._family_records()
+        if not families:
+            self._set_status("No peak families are available to validate.")
+            return
+        reviewed_families = []
+        removed_inappropriate = 0
+        for family in families:
+            if _family_flag(family) == FAMILY_FLAG_INAPPROPRIATE:
+                removed_inappropriate += 1
+                continue
+            reviewed_families.append(family)
+        cleaned_families, removed_duplicates = _deduplicate_families(
+            reviewed_families
+        )
+        removed_total = removed_inappropriate + removed_duplicates
+        if removed_total == 0:
+            self._set_status(
+                "Family validation found no inappropriate or duplicate "
+                "family records."
+            )
+            return
+        self._analysis_state()["families"] = cleaned_families
+        self.active_family_peak_id = None
+        self._sync_families()
+        self._set_status(
+            "Validated families: removed "
+            f"{removed_inappropriate} inappropriate and "
+            f"{removed_duplicates} duplicate family record(s)."
+        )
+        self.structureAnalysisChanged.emit(self.data_id)
+
     def add_peak_to_active_family(self, peak_id: str) -> bool:
         family_id = self._selected_family_id()
         family = self._family_by_id(family_id)
@@ -1943,6 +2727,8 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             family["labels"] = labels
             _append_family_note(family, f"manually added {peak.label}")
             added = True
+        if _is_manual_family(family):
+            self._update_family_reference_from_members(family)
         if added:
             family["manual_edited"] = True
         self.active_family_peak_id = peak.peak_id
@@ -1981,7 +2767,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             for peak_id in peak_ids
             if peak_id != self.active_family_peak_id
         ]
-        if len(remaining_ids) < 2:
+        if len(remaining_ids) < 2 and not _is_manual_family(family):
             state = self._analysis_state()
             state["families"] = [
                 item
@@ -2001,11 +2787,25 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             peak_lookup.get(peak_id, peak_id) for peak_id in remaining_ids
         ]
         family["manual_edited"] = True
+        if _is_manual_family(family):
+            self._update_family_reference_from_members(family)
         _append_family_note(family, f"manually removed {removed_label}")
         self.active_family_peak_id = None
         self._sync_families(select_family_id=family_id)
         self._set_status(f"Removed {removed_label} from {family_id}.")
         self.structureAnalysisChanged.emit(self.data_id)
+
+    def _update_family_reference_from_members(
+        self,
+        family: dict[str, Any],
+    ) -> None:
+        peaks_by_id = {peak.peak_id: peak for peak in self._structure_peaks()}
+        q_values = [
+            peaks_by_id[peak_id].q_magnitude
+            for peak_id in [str(value) for value in family.get("peak_ids", [])]
+            if peak_id in peaks_by_id
+        ]
+        family["reference"] = float(np.mean(q_values)) if q_values else None
 
     def _sync_molecule_table(self) -> None:
         molecules = self._wyckoff_state().get("molecules", [])
@@ -2374,11 +3174,61 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             return
         if isinstance(self.plot_widget, QtWidgets.QWidget):
             self.plot_widget.setFocus()
+        if self._family_editing_active():
+            family_id = self._selected_family_id()
+            family = self._family_by_id(family_id)
+            if family is not None:
+                family_peak_ids = {
+                    str(value) for value in family.get("peak_ids", [])
+                }
+                if peak_id not in family_peak_ids:
+                    if self.add_peak_to_active_family(peak_id):
+                        return
         self.active_family_peak_id = peak_id
         self._select_peak_by_id(peak_id, scroll_table=True)
         self._set_status(
             "Selected family ring. Press R to remove it from the active family."
         )
+
+    def _handle_plot_scene_clicked(self, event: Any) -> None:
+        if not (
+            self._family_editing_active()
+            and self._selected_family_id()
+            and self.view_box is not None
+        ):
+            return
+        button = event.button() if hasattr(event, "button") else None
+        if button is not None and button != QtCore.Qt.MouseButton.LeftButton:
+            return
+        peak_id = self._peak_id_near_scene_position(event.scenePos())
+        if not peak_id:
+            return
+        if self.add_peak_to_active_family(peak_id):
+            if hasattr(event, "accept"):
+                event.accept()
+
+    def _peak_id_near_scene_position(
+        self,
+        scene_pos: QtCore.QPointF,
+        *,
+        max_distance_px: float = 18.0,
+    ) -> str | None:
+        if self.view_box is None:
+            return None
+        best_peak_id: str | None = None
+        best_distance = float(max_distance_px)
+        for peak in self._structure_peaks():
+            peak_scene_pos = self.view_box.mapViewToScene(
+                QtCore.QPointF(float(peak.qxy), float(peak.qz))
+            )
+            distance = math.hypot(
+                float(peak_scene_pos.x() - scene_pos.x()),
+                float(peak_scene_pos.y() - scene_pos.y()),
+            )
+            if distance <= best_distance:
+                best_distance = distance
+                best_peak_id = peak.peak_id
+        return best_peak_id
 
     def _family_editing_active(self) -> bool:
         return (
@@ -2449,7 +3299,7 @@ class StructureAnalysisPane(QtWidgets.QWidget):
         for peak in peaks:
             if peak.peak_id == peak_id:
                 peak.phase_tag = phase_tag.strip() or DEFAULT_PHASE_TAG
-                if peak.phase_tag == PHASE_REJECTED:
+                if peak.phase_tag in {PHASE_REJECTED, PHASE_FORBIDDEN}:
                     peak.include = False
                 break
         self._store_peaks(peaks)
@@ -2506,18 +3356,33 @@ class StructureAnalysisPane(QtWidgets.QWidget):
             float(value) for value in normalize_quaternion(orientation)
         )
 
-    def _selected_candidate(self) -> LatticeCandidate | None:
+    def _selected_candidate(
+        self,
+        *,
+        fallback_first: bool = True,
+    ) -> LatticeCandidate | None:
         candidates = {
             item.candidate_id: item for item in self._candidate_records()
         }
+        candidate_id = self._selected_candidate_id()
+        if candidate_id in candidates:
+            return candidates[str(candidate_id)]
+        if fallback_first:
+            return next(iter(candidates.values()), None)
+        return None
+
+    def _selected_candidate_id(self) -> str | None:
         row = self.candidate_table.currentRow()
-        if row >= 0:
-            item = self.candidate_table.item(row, 0)
-            if item is not None:
-                candidate_id = item.data(QtCore.Qt.ItemDataRole.UserRole)
-                if candidate_id in candidates:
-                    return candidates[str(candidate_id)]
-        return next(iter(candidates.values()), None)
+        if row < 0:
+            selected = self.candidate_table.selectedItems()
+            row = selected[0].row() if selected else -1
+        if row < 0:
+            return None
+        item = self.candidate_table.item(row, 0)
+        if item is None:
+            return None
+        candidate_id = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        return str(candidate_id) if candidate_id is not None else None
 
     def _wyckoff_candidate(self) -> LatticeCandidate | None:
         candidate_id = self.wyckoff_candidate_combo.currentData()
@@ -2571,6 +3436,11 @@ class StructureAnalysisPane(QtWidgets.QWidget):
                 "space_group": record.get("space_group"),
                 "wyckoff_combination": record.get("wyckoff_combination"),
                 "wyckoff_assignments": record.get("wyckoff_assignments"),
+                "structure_variant": record.get(
+                    "structure_variant",
+                    STRUCTURE_OUTPUT_FULL,
+                ),
+                "parent_cif_id": record.get("parent_cif_id"),
             }
 
     def _write_generated_cif_files(
@@ -2600,6 +3470,57 @@ class StructureAnalysisPane(QtWidgets.QWidget):
 
     def _set_status(self, message: str) -> None:
         self.status_label.setText(message)
+
+
+def _estimate_candidate_guess_seconds(
+    peaks: list[StructurePeak],
+    config: CandidateSearchConfig,
+) -> float:
+    peak_count = max(len(peaks), 1)
+    system_count = max(len(tuple(config.crystal_systems)), 1)
+    grid_points = max(int(config.grid_points), 1)
+    hkl_extent = max(int(config.hkl_max), 1)
+    projected_factor = 1.35 if config.enable_projected_axis_search else 1.0
+    orientation_factor = (
+        1.2 if config.orientation_quaternion is not None else 1.0
+    )
+    work_units = (
+        peak_count
+        * system_count
+        * grid_points
+        * hkl_extent
+        * projected_factor
+        * orientation_factor
+    )
+    candidate_refinement = max(int(config.max_candidates), 1) * 0.2
+    return min(
+        max(0.5 + work_units / 2200.0 + candidate_refinement, 1.0), 180.0
+    )
+
+
+def _candidate_guess_progress_text(
+    elapsed_seconds: float,
+    estimate_seconds: float,
+) -> str:
+    return (
+        "Guessing candidate structures...\n"
+        f"Elapsed: {_format_duration(elapsed_seconds)}\n"
+        f"Estimated time: {_format_duration(estimate_seconds)}"
+    )
+
+
+def _format_duration(seconds: float) -> str:
+    seconds = max(float(seconds), 0.0)
+    if seconds < 10.0:
+        return f"{seconds:.1f}s"
+    if seconds < 60.0:
+        return f"{round(seconds):.0f}s"
+    minutes = int(seconds // 60)
+    remainder = int(round(seconds % 60))
+    if remainder == 60:
+        minutes += 1
+        remainder = 0
+    return f"{minutes}m {remainder:02d}s"
 
 
 def _lattice_spinbox(value: float) -> QtWidgets.QDoubleSpinBox:
@@ -2655,6 +3576,76 @@ def _family_flag_label(flag: str) -> str:
     return "Unreviewed"
 
 
+def _is_manual_family(family: dict[str, Any]) -> bool:
+    return (
+        str(family.get("source", "")).strip().lower() == FAMILY_SOURCE_MANUAL
+        or str(family.get("kind", "")).strip().lower() == "custom"
+    )
+
+
+def _unique_family_id(
+    requested: str,
+    families: list[dict[str, Any]],
+) -> str:
+    base = " ".join(str(requested).strip().split()) or "Custom family"
+    existing = {str(family.get("family_id", "")) for family in families}
+    if base not in existing:
+        return base
+    index = 2
+    while f"{base} {index}" in existing:
+        index += 1
+    return f"{base} {index}"
+
+
+def _deduplicate_families(
+    families: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    order: list[tuple[str, Any]] = []
+    best_by_key: dict[tuple[str, Any], dict[str, Any]] = {}
+    removed = 0
+    for index, family in enumerate(families):
+        key = _family_duplicate_key(family)
+        if key is None:
+            key = ("family", str(family.get("family_id", index)))
+        else:
+            key = ("peaks", key)
+        if key not in best_by_key:
+            order.append(key)
+            best_by_key[key] = family
+            continue
+        removed += 1
+        if _family_validation_rank(family) > _family_validation_rank(
+            best_by_key[key]
+        ):
+            best_by_key[key] = family
+    return [best_by_key[key] for key in order], removed
+
+
+def _family_duplicate_key(
+    family: dict[str, Any],
+) -> tuple[str, tuple[str, ...]] | None:
+    peak_ids = tuple(
+        sorted(
+            {
+                str(peak_id).strip()
+                for peak_id in family.get("peak_ids", [])
+                if str(peak_id).strip()
+            }
+        )
+    )
+    if not peak_ids:
+        return None
+    phase = str(family.get("phase_tag", "")).strip().lower()
+    return phase, peak_ids
+
+
+def _family_validation_rank(family: dict[str, Any]) -> tuple[int, int, float]:
+    flag = _family_flag(family)
+    flag_score = 2 if flag == FAMILY_FLAG_APPROPRIATE else 1
+    manual_score = 1 if _is_manual_family(family) else 0
+    return flag_score, manual_score, _family_confidence(family)
+
+
 def _append_family_note(family: dict[str, Any], note: str) -> None:
     existing = str(family.get("notes", "")).strip()
     if note in existing:
@@ -2662,9 +3653,232 @@ def _append_family_note(family: dict[str, Any], note: str) -> None:
     family["notes"] = f"{existing}; {note}" if existing else note
 
 
+def _structure_output_records(
+    records: list[dict[str, Any]],
+    mode: str,
+    *,
+    keep_elements: list[str],
+) -> list[dict[str, Any]]:
+    if mode == STRUCTURE_OUTPUT_FULL:
+        return records
+    keep = {
+        element
+        for element in (_canonical_cif_element(item) for item in keep_elements)
+        if element
+    }
+    if not keep:
+        return records
+    scaffold_records = [
+        _inorganic_scaffold_record(record, keep_elements=keep)
+        for record in records
+    ]
+    if mode == STRUCTURE_OUTPUT_SCAFFOLD_ONLY:
+        return scaffold_records
+    if mode == STRUCTURE_OUTPUT_FULL_PLUS_SCAFFOLD:
+        paired: list[dict[str, Any]] = []
+        for full_record, scaffold_record in zip(records, scaffold_records):
+            paired.append(full_record)
+            paired.append(scaffold_record)
+        return paired
+    return records
+
+
+def _inorganic_scaffold_record(
+    record: dict[str, Any],
+    *,
+    keep_elements: set[str],
+) -> dict[str, Any]:
+    source_cif_text = str(record.get("cif_text") or "")
+    cif_text, composition = _filter_cif_text_to_elements(
+        source_cif_text,
+        keep_elements,
+    )
+    parent_cif_id = str(record.get("cif_id") or record.get("id") or "cif")
+    organic_note = _organic_scaffold_note(record, source_cif_text)
+    cif_text = _annotate_inorganic_scaffold_cif(
+        cif_text,
+        parent_cif_id,
+        organic_note=organic_note,
+    )
+    payload = dict(record)
+    payload.update(
+        {
+            "cif_id": f"{parent_cif_id}_inorganic_scaffold",
+            "parent_cif_id": parent_cif_id,
+            "structure_variant": STRUCTURE_OUTPUT_SCAFFOLD_ONLY,
+            "status": "inorganic scaffold",
+            "composition": _cif_formula_sum(composition),
+            "composition_elements": dict(composition),
+            "molecules": [],
+            "coordinate_model": (
+                f"{record.get('coordinate_model', 'generated')}"
+                "_inorganic_scaffold"
+            ),
+            "cif_text": cif_text,
+        }
+    )
+    payload.pop("path", None)
+    payload.pop("structure_path", None)
+    return payload
+
+
+def _annotate_inorganic_scaffold_cif(
+    cif_text: str,
+    parent_cif_id: str,
+    *,
+    organic_note: str,
+) -> str:
+    lines = cif_text.splitlines()
+    annotated: list[str] = []
+    inserted_parent = False
+    for line in lines:
+        annotated.append(line)
+        if line.startswith("data_") and not inserted_parent:
+            annotated.append("# structure variant: inorganic scaffold only")
+            annotated.append(f"# parent generated CIF: {parent_cif_id}")
+            annotated.append(f"# organic molecules to add: {organic_note}")
+            inserted_parent = True
+    for index, line in enumerate(annotated):
+        if line.startswith("# molecular species:"):
+            annotated[index] = (
+                "# molecular species: inorganic scaffold only; planned "
+                f"organics: {organic_note}"
+            )
+            break
+    return "\n".join(annotated).rstrip() + "\n"
+
+
+def _organic_scaffold_note(record: dict[str, Any], cif_text: str) -> str:
+    pieces: list[str] = []
+    seen: set[str] = set()
+    molecules = record.get("molecules", [])
+    if isinstance(molecules, list):
+        for molecule in molecules:
+            if not isinstance(molecule, dict):
+                continue
+            label = str(
+                molecule.get("label") or molecule.get("name") or ""
+            ).strip()
+            formula = str(molecule.get("formula") or "").strip()
+            if not label:
+                continue
+            piece = f"{label} ({formula})" if formula else label
+            if piece not in seen:
+                pieces.append(piece)
+                seen.add(piece)
+    if pieces:
+        return ", ".join(pieces)
+    for line in cif_text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("# molecular species:"):
+            continue
+        note = stripped.split(":", 1)[1].strip()
+        if note and note.lower() not in {"none", "unspecified"}:
+            return note
+    return "none recorded"
+
+
+def _filter_cif_text_to_elements(
+    cif_text: str,
+    keep_elements: set[str],
+) -> tuple[str, dict[str, float]]:
+    output: list[str] = []
+    composition: dict[str, float] = {}
+    in_loop = False
+    atom_loop = False
+    headers: list[str] = []
+    type_index: int | None = None
+    occupancy_index: int | None = None
+
+    for line in cif_text.splitlines():
+        stripped = line.strip()
+        if stripped == "loop_":
+            in_loop = True
+            atom_loop = False
+            headers = []
+            type_index = None
+            occupancy_index = None
+            output.append(line)
+            continue
+        if in_loop and stripped.startswith("_"):
+            header = stripped.split()[0].lower()
+            headers.append(header)
+            atom_loop = atom_loop or header.startswith("_atom_site_")
+            output.append(line)
+            continue
+        if in_loop and atom_loop and stripped and not stripped.startswith("#"):
+            parts = _split_cif_row(stripped)
+            if type_index is None:
+                try:
+                    type_index = headers.index("_atom_site_type_symbol")
+                except ValueError:
+                    type_index = 1
+                try:
+                    occupancy_index = headers.index("_atom_site_occupancy")
+                except ValueError:
+                    occupancy_index = None
+            if len(parts) > type_index:
+                element = _canonical_cif_element(parts[type_index])
+                if element in keep_elements:
+                    output.append(line)
+                    occupancy = (
+                        _float_or_default(parts[occupancy_index], 1.0)
+                        if occupancy_index is not None
+                        and len(parts) > occupancy_index
+                        else 1.0
+                    )
+                    composition[element] = (
+                        composition.get(element, 0.0) + occupancy
+                    )
+            continue
+        output.append(line)
+
+    formula = _cif_formula_sum(composition)
+    if formula:
+        for index, line in enumerate(output):
+            if line.strip().lower().startswith("_chemical_formula_sum"):
+                output[index] = f"_chemical_formula_sum '{formula}'"
+                break
+    return "\n".join(output).rstrip() + "\n", composition
+
+
+def _split_cif_row(line: str) -> list[str]:
+    try:
+        return shlex.split(line)
+    except ValueError:
+        return line.split()
+
+
+def _canonical_cif_element(value: Any) -> str:
+    token = str(value).strip().strip("'\"")
+    letters = "".join(character for character in token if character.isalpha())
+    if not letters:
+        return ""
+    return letters[0].upper() + letters[1:].lower()
+
+
+def _cif_formula_sum(composition: dict[str, float]) -> str:
+    pieces = []
+    for element in sorted(composition):
+        count = composition[element]
+        if count <= 1.0e-9:
+            continue
+        if abs(count - round(count)) < 1.0e-9:
+            suffix = "" if int(round(count)) == 1 else str(int(round(count)))
+        else:
+            suffix = f"{count:g}"
+        pieces.append(f"{element}{suffix}")
+    return " ".join(pieces)
+
+
 def _default_generated_cif_directory(project_path: Path | None) -> Path:
-    base = project_path.parent if project_path is not None else Path.cwd()
-    return base / "output" / "generated_cifs"
+    if project_path is not None:
+        return project_path.parent / project_path.stem / "generated_cifs"
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "example" / "projects"
+        if candidate.exists():
+            return candidate / "generated_cifs"
+    return Path.cwd() / "generated_cifs"
 
 
 def _safe_generated_cif_filename(cif_id: str) -> str:
@@ -2736,6 +3950,8 @@ def _phase_color(phase_tag: str) -> QtGui.QColor:
         return QtGui.QColor("#9ca3af")
     if phase_tag == PHASE_REJECTED:
         return QtGui.QColor("#111827")
+    if phase_tag == PHASE_FORBIDDEN:
+        return QtGui.QColor("#7f1d1d")
     if "secondary" in phase_tag.lower() or phase_tag.endswith("2"):
         return QtGui.QColor("#dc2626")
     if "gap" in phase_tag.lower():
@@ -3158,6 +4374,29 @@ def _roi_overlay_points(
     if kind == "arch":
         return _arch_roi_overlay_points(roi)
     return _box_roi_overlay_points(roi)
+
+
+def _make_plot_item_non_interactive(item: Any) -> None:
+    targets = [item]
+    for attribute in ("curve", "scatter"):
+        child = getattr(item, attribute, None)
+        if child is not None:
+            targets.append(child)
+    targets.extend(item.childItems() if hasattr(item, "childItems") else [])
+    seen: set[int] = set()
+    for target in targets:
+        target_id = id(target)
+        if target_id in seen:
+            continue
+        seen.add(target_id)
+        if hasattr(target, "setAcceptedMouseButtons"):
+            target.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
+        if hasattr(target, "setAcceptTouchEvents"):
+            target.setAcceptTouchEvents(False)
+        if hasattr(target, "setAcceptHoverEvents"):
+            target.setAcceptHoverEvents(False)
+        if hasattr(target, "setClickable"):
+            target.setClickable(False)
 
 
 def _box_roi_overlay_points(

@@ -1,6 +1,10 @@
 # Documentation Maintenance Checklist
 
-- [ ] Update screenshot placeholders when UI visuals change.
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
+- [ ] Regenerate tutorial screenshots when UI visuals change.
 - [ ] Check installation instructions for new dependency requirements.
 - [ ] Update supported file formats and data-loading behavior.
 - [ ] Verify calibration and pyFAI workflow instructions.

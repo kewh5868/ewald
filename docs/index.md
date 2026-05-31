@@ -1,13 +1,21 @@
 # EWALD Documentation
 
+<p align="center">
+  <img src="ewald.png" alt="EWALD package icon" width="180">
+</p>
+
 **Experimental WAXS Analysis for Lattice Determination**
 
-EWALD is a Qt6 scientific software package for GIWAXS/WAXS analysis. It brings
+!!! note "Package icon"
+    The EWALD package icon shown on this site was generated with help from a large language model.
+
+EWALD is a Qt6 scientific workbench for GIWAXS/WAXS analysis. It brings
 detector-image import, calibration-aware q-space correction, ROI and peak
-fitting workflows, lattice and structure-candidate ranking, and GIWAXS
-simulation into one project-based desktop interface. The simulation workflow is
-designed to compare experimental scattering targets against generated solved CIF
-structures, including residual difference maps for judging fit quality.
+fitting workflows, mathematical reciprocal-space conventions, lattice and
+structure-candidate ranking, CIF generation, and GIWAXS simulation into one
+project-based desktop interface. The simulation workflow compares experimental
+scattering targets against solved or generated CIF structures, including
+residual difference maps for judging fit quality.
 
 ## Quick start
 
@@ -19,6 +27,7 @@ structures, including residual difference maps for judging fit quality.
    - [ROI Tools](guides/roi-tools.md)
    - [Peak Identification](guides/peak-identification.md)
    - [Peak Fitting](guides/peak-fitting.md)
+   - [Mathematical Foundations](guides/mathematical-foundations.md)
    - [Structure Analysis](guides/structure-analysis.md)
 
 ## What EWALD is for
@@ -26,6 +35,8 @@ structures, including residual difference maps for judging fit quality.
 - Correct and inspect detector images in `q<sub>xy</sub>` and `q<sub>z</sub>`.
 - Build ROI definitions for lineout and azimuthal workflows.
 - Integrate peaks and fit `q<sub>xy</sub>`, `q<sub>z</sub>`, and azimuthal traces.
+- Follow documented derivations for q-space mapping, reciprocal lattices,
+  Bragg conditions, ROI integrations, peak fitting, and simulation residuals.
 - Rank lattice candidates in **Structure Analysis** and compare with GIWAXS simulations.
 - Generate pole figures and export simulation/analysis outputs.
 
@@ -57,6 +68,7 @@ If this is your first run:
 - [Data Loading](guides/data-loading.md)
 - [Calibration](guides/calibration.md)
 - [Detector geometry and corrections](guides/detector-geometry-and-corrections.md)
+- [Mathematical Foundations](guides/mathematical-foundations.md)
 - [ROI Tools](guides/roi-tools.md)
 - [Peak Identification](guides/peak-identification.md)
 - [Peak Fitting](guides/peak-fitting.md)
@@ -100,5 +112,5 @@ EWALD is actively developed. This documentation marks each feature as:
 Where a feature is not yet implemented, the docs call it out directly in its topic.
 
 Local sample data and generated outputs are not committed to the repository.
-Project-specific datasets can live in ignored `example/` or `output/` folders
-without changing the Git checkout.
+Project-specific datasets should live under the ignored `example/projects/`
+tree without changing the Git checkout.

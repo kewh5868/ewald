@@ -1,5 +1,9 @@
 # Tutorial: Using Structure Analysis
 
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
 Use this sequence after peak fitting to build and rank structure candidates.
 
 ## Prerequisites
@@ -49,7 +53,7 @@ Use this sequence after peak fitting to build and rank structure candidates.
 - Generate ranked CIF outputs when candidates are available.
 - The generated records are attached to project output state and can be reviewed and reused.
 
-![Structure Analysis workflow placeholder](../assets/placeholders/structure-analysis.svg)
+![Structure Analysis tutorial screen capture](../assets/screenshots/tutorials/structure-analysis.png)
 
 ## Status
 

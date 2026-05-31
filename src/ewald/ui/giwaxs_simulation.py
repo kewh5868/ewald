@@ -11,6 +11,10 @@ from typing import Any
 import numpy as np
 from qtpy import QtCore, QtGui, QtWidgets
 
+from ewald.crystallography.cif import (
+    extract_cif_lattice_parameters,
+    infer_crystal_system_from_lattice,
+)
 from ewald.data.models import ProjectState
 from ewald.simulation.giwaxs import (
     PEAK_TABLE_ATTR,
@@ -110,7 +114,12 @@ HKL_TABLE_HEADERS = [
     f"{QXY_HTML} ({QSPACE_UNITS_HTML})",
     f"{QZ_HTML} ({QSPACE_UNITS_HTML})",
     "Intensity",
+    "Status",
 ]
+PEAK_INFO_SIGNIFICANT_DIGITS = 3
+STRUCTURE_PREVIEW_MIN_SIDE = 160
+STRUCTURE_PREVIEW_PREFERRED_SIDE = 200
+STRUCTURE_PREVIEW_MAX_SIDE = 220
 
 try:  # pragma: no cover - exercised through Qt tests when installed.
     import pyqtgraph as pg
@@ -244,9 +253,9 @@ class GIWAXSSimulationResultPane(QtWidgets.QWidget):
             hoverable=True,
             hoverBrush=pg.mkBrush("#f59e0b"),
             hoverPen=pg.mkPen("#111827", width=1.0),
+            tip=_peak_tip,
         )
         self.hkl_scatter.setZValue(15)
-        self.hkl_scatter.sigHovered.connect(self._handle_hkl_hover)
         self.plot_widget.addItem(self.hkl_scatter)
 
     def _build_playback_controls(self) -> None:
@@ -651,18 +660,33 @@ class GIWAXSSimulationResultPane(QtWidgets.QWidget):
                 _format_float(row.get("qxy")),
                 _format_float(row.get("qz")),
                 _format_float(row.get("intensity")),
+                _peak_status_text(row),
             ]
             tooltip = _peak_tooltip(row)
             for column, value in enumerate(values):
                 item = QtWidgets.QTableWidgetItem(value)
                 item.setToolTip(tooltip)
+                if _is_forbidden_peak_row(row):
+                    item.setForeground(QtGui.QBrush(QtGui.QColor("#7f1d1d")))
+                    item.setBackground(QtGui.QBrush(QtGui.QColor("#fef2f2")))
                 self.hkl_table.setItem(row_index, column, item)
         self.hkl_table.resizeColumnsToContents()
 
     def _sync_hkl_overlay(self, *_args: Any) -> None:
         count = len(self.peak_rows)
-        noun = "point" if count == 1 else "points"
-        self.hkl_count_label.setText(f"{count} calculated {noun}")
+        forbidden_count = sum(
+            1 for row in self.peak_rows if _is_forbidden_peak_row(row)
+        )
+        indexable_count = count - forbidden_count
+        noun = "point" if indexable_count == 1 else "points"
+        suffix = (
+            f", {forbidden_count} forbidden"
+            if forbidden_count
+            else ""
+        )
+        self.hkl_count_label.setText(
+            f"{indexable_count} indexable {noun}{suffix}"
+        )
         if self.hkl_scatter is None or pg is None:
             return
         if not self.show_hkl_points.isChecked():
@@ -675,34 +699,10 @@ class GIWAXSSimulationResultPane(QtWidgets.QWidget):
                 "data": row,
             }
             for row in self.peak_rows
+            if not _is_forbidden_peak_row(row)
         ]
-        self.hkl_scatter.setData(spots=spots)
+        self.hkl_scatter.setData(spots=spots, hoverable=True, tip=_peak_tip)
         self.hkl_scatter.setVisible(bool(spots))
-
-    def _handle_hkl_hover(self, *args: Any) -> None:
-        if self.plot_widget is None:
-            return
-        points = next(
-            (arg for arg in args if isinstance(arg, (list, tuple))),
-            [],
-        )
-        event = next((arg for arg in args if hasattr(arg, "screenPos")), None)
-        if not points:
-            QtWidgets.QToolTip.hideText()
-            return
-        point = points[0]
-        row = point.data() if hasattr(point, "data") else None
-        if isinstance(row, dict):
-            screen_pos = (
-                event.screenPos().toPoint()
-                if event is not None
-                else QtGui.QCursor.pos()
-            )
-            QtWidgets.QToolTip.showText(
-                screen_pos,
-                _peak_tooltip(row),
-                self.plot_widget,
-            )
 
 
 class GIWAXSComparisonPane(QtWidgets.QWidget):
@@ -1070,25 +1070,35 @@ class SquarePlotContainer(QtWidgets.QWidget):
         self,
         child: QtWidgets.QWidget,
         *,
+        minimum_side: int = STRUCTURE_PREVIEW_MIN_SIDE,
+        preferred_side: int = STRUCTURE_PREVIEW_PREFERRED_SIDE,
+        maximum_side: int = STRUCTURE_PREVIEW_MAX_SIDE,
         parent: QtWidgets.QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.child = child
+        self.minimum_side = int(minimum_side)
+        self.preferred_side = int(preferred_side)
+        self.maximum_side = int(maximum_side)
         self.child.setParent(self)
-        self.setMinimumSize(210, 210)
+        self.setMinimumSize(self.minimum_side, self.minimum_side)
+        self.setMaximumHeight(self.maximum_side)
         self.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Expanding,
             QtWidgets.QSizePolicy.Policy.Preferred,
         )
 
     def sizeHint(self) -> QtCore.QSize:
-        return QtCore.QSize(260, 260)
+        return QtCore.QSize(self.preferred_side, self.preferred_side)
 
     def hasHeightForWidth(self) -> bool:
         return True
 
     def heightForWidth(self, width: int) -> int:
-        return max(210, int(width))
+        return max(
+            self.minimum_side,
+            min(self.maximum_side, int(width)),
+        )
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         side = min(self.width(), self.height())
@@ -1180,7 +1190,10 @@ class UnitCellStructureView(QtWidgets.QWidget):
         self._clear_plot()
 
     def _build_widgets(self) -> None:
-        self.setMinimumHeight(330)
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred,
+            QtWidgets.QSizePolicy.Policy.Maximum,
+        )
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
@@ -1200,13 +1213,19 @@ class UnitCellStructureView(QtWidgets.QWidget):
         if pg is None:
             self.plot_widget = QtWidgets.QLabel("Unit cell preview")
             self.plot_widget.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            self.plot_widget.setMinimumSize(210, 210)
+            self.plot_widget.setMinimumSize(
+                STRUCTURE_PREVIEW_MIN_SIDE,
+                STRUCTURE_PREVIEW_MIN_SIDE,
+            )
             self.plot_container = SquarePlotContainer(self.plot_widget)
             layout.addWidget(self.plot_container)
             return
 
         self.plot_widget = pg.PlotWidget()
-        self.plot_widget.setMinimumSize(210, 210)
+        self.plot_widget.setMinimumSize(
+            STRUCTURE_PREVIEW_MIN_SIDE,
+            STRUCTURE_PREVIEW_MIN_SIDE,
+        )
         self.plot_widget.setLabel("bottom", "x", units="A")
         self.plot_widget.setLabel("left", "z", units="A")
         self.plot_widget.showGrid(x=True, y=True, alpha=0.18)
@@ -1507,11 +1526,12 @@ class OrientationDistributionView(QtWidgets.QWidget):
 
 
 class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
-    """Deployable simulation tool linked to an optional EWALD
+    """GIWAXS simulation workspace linked to an optional EWALD
     project."""
 
     simulationCreated = QtCore.Signal(str)
     simulationLinked = QtCore.Signal(str)
+    projectChanged = QtCore.Signal()
 
     def __init__(
         self,
@@ -1543,6 +1563,7 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
             else QtCore.QSettings("EWALD", "EWALD")
         )
         self.structure_history = _read_structure_history(self.settings)
+        self.project_structure_paths = self._project_loaded_cif_paths()
         self.setWindowTitle("GIWAXS Simulation")
         self.resize(1200, 760)
 
@@ -1556,29 +1577,210 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
         self._connect_result_pane_signals()
         self._build_layout()
         self._load_project_simulations()
+        self._load_project_generated_cifs()
         self._refresh_simulation_cache()
         self._refresh_tree()
+        if self.structures:
+            self._set_active_structure(next(iter(self.structures)))
         self._sync_structure_orientation()
         self._sync_orientation_distribution()
+
+    @property
+    def simulation_id(self) -> str | None:
+        """Currently displayed simulation id, for tab-level callers."""
+
+        return self.result_pane.simulation_id
 
     def import_structure_path(self, path: str | Path) -> str:
         structure = load_structure(path)
         metadata = structure.metadata()
-        self.structures[structure.structure_id] = {
-            "structure_id": structure.structure_id,
-            "path": str(structure.path),
-            "name": structure.path.stem,
-            "metadata": metadata,
-            "structure_data": structure,
-            "simulation_ids": _simulation_ids_for_structure(
-                self.project,
-                structure.structure_id,
-            ),
-        }
-        self._remember_structure_path(structure.path)
-        self._refresh_tree()
-        self._set_active_structure(structure.structure_id)
+        loaded_cif = self._remember_imported_cif(structure)
+        if loaded_cif is not None:
+            metadata["source"] = "loaded_cif"
+            metadata["loaded_cif_id"] = str(loaded_cif["cif_id"])
+        self._register_structure(
+            structure,
+            metadata=metadata,
+            name=structure.path.stem,
+            remember_path=True,
+            persist_history=True,
+            select=True,
+        )
+        if loaded_cif is not None:
+            self.projectChanged.emit()
         return structure.structure_id
+
+    def _remember_imported_cif(
+        self,
+        structure: Any,
+    ) -> dict[str, Any] | None:
+        structure_path = Path(structure.path)
+        if structure_path.suffix.lower() not in {".cif", ".mcif"}:
+            return None
+        try:
+            cif_text = structure_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            cif_text = structure_path.read_text(encoding="latin-1")
+        except OSError:
+            return None
+        try:
+            lattice = extract_cif_lattice_parameters(structure_path)
+        except Exception:
+            lattice = _lattice_parameters_from_matrix(structure.lattice)
+        record = self.project.remember_loaded_cif(
+            structure_path,
+            cif_text=cif_text,
+            lattice=lattice,
+            crystal_system=infer_crystal_system_from_lattice(lattice),
+            label=structure_path.stem,
+            target_id=self.target_data_id,
+        )
+        self.project_structure_paths = self._project_loaded_cif_paths()
+        return record
+
+    def refresh_project_context(
+        self,
+        *,
+        project_path: Path | None = None,
+        target_data_id: str | None = None,
+    ) -> None:
+        """Refresh project-derived structures, links, and cached results."""
+
+        if project_path is not None:
+            self.project_path = project_path
+            self.output_directory = _default_output_directory(project_path)
+        self.project_structure_paths = self._project_loaded_cif_paths()
+        self._populate_data_file_links(
+            target_data_id
+            if target_data_id is not None
+            else self.target_data_id
+        )
+        self._refresh_structure_history_field()
+        self._load_project_simulations()
+        self._load_project_generated_cifs()
+        self._refresh_simulation_cache()
+        self._refresh_tree()
+        if (
+            self.structures
+            and self.structure_viewer.structure_id not in self.structures
+        ):
+            self._set_active_structure(next(iter(self.structures)))
+        self._maybe_display_cached_result()
+
+    def _register_structure(
+        self,
+        structure: Any,
+        *,
+        metadata: dict[str, Any] | None = None,
+        name: str | None = None,
+        remember_path: bool = False,
+        persist_history: bool = False,
+        select: bool = False,
+    ) -> str:
+        structure_id = str(structure.structure_id)
+        existing = self.structures.get(structure_id, {})
+        simulation_ids = list(
+            existing.get(
+                "simulation_ids",
+                _simulation_ids_for_structure(self.project, structure_id),
+            )
+        )
+        self.structures[structure_id] = {
+            "structure_id": structure_id,
+            "path": str(structure.path),
+            "name": name or structure.path.stem,
+            "metadata": metadata or structure.metadata(),
+            "structure_data": structure,
+            "simulation_ids": simulation_ids,
+        }
+        if remember_path:
+            self._remember_structure_path(
+                structure.path,
+                persist=persist_history,
+            )
+        if select:
+            self._refresh_tree()
+            self._set_active_structure(structure_id)
+        return structure_id
+
+    def _load_project_generated_cifs(self, limit: int | None = None) -> int:
+        loaded = 0
+        for record in self._top_generated_cif_records(limit):
+            cif_path = self._ensure_generated_cif_path(record)
+            if cif_path is None:
+                continue
+            try:
+                structure = load_structure(cif_path)
+            except Exception as exc:
+                record["load_error"] = str(exc)
+                continue
+            metadata = {
+                **structure.metadata(),
+                **self._generated_cif_structure_metadata(record),
+            }
+            self._register_structure(
+                structure,
+                metadata=metadata,
+                name=_generated_cif_label(record),
+                remember_path=True,
+                persist_history=False,
+                select=False,
+            )
+            loaded += 1
+        return loaded
+
+    def _generated_cif_structure_metadata(
+        self,
+        record: dict[str, Any],
+    ) -> dict[str, Any]:
+        metadata = {
+            "source": "Structure Analysis generated CIF",
+            "generated_cif_id": str(
+                record.get("cif_id") or record.get("id") or ""
+            ),
+            "candidate_id": record.get("candidate_id"),
+            "rank": record.get("rank"),
+            "score": record.get("score"),
+            "data_id": record.get("data_id"),
+        }
+        for key in ("space_group", "wyckoff_combination"):
+            if record.get(key) is not None:
+                metadata[key] = record.get(key)
+        return metadata
+
+    def _annotate_record_from_structure(
+        self,
+        record: dict[str, Any],
+        structure: dict[str, Any],
+    ) -> None:
+        metadata = structure.get("metadata", {})
+        if not isinstance(metadata, dict):
+            return
+        loaded_cif_id = metadata.get("loaded_cif_id")
+        if loaded_cif_id:
+            record["source"] = "loaded_cif"
+            record["loaded_cif_id"] = str(loaded_cif_id)
+            record_metadata = record.setdefault("metadata", {})
+            if isinstance(record_metadata, dict):
+                record_metadata["loaded_cif_id"] = record["loaded_cif_id"]
+        generated_cif_id = metadata.get("generated_cif_id")
+        if not generated_cif_id:
+            return
+        record["source"] = "generated_cif"
+        record["generated_cif_id"] = str(generated_cif_id)
+        record["generated_cif_rank"] = metadata.get("rank")
+        record["generated_cif_score"] = metadata.get("score")
+        record_metadata = record.setdefault("metadata", {})
+        if isinstance(record_metadata, dict):
+            record_metadata["generated_cif_id"] = record["generated_cif_id"]
+            record_metadata["generated_cif_rank"] = record[
+                "generated_cif_rank"
+            ]
+            record_metadata["generated_cif_score"] = record[
+                "generated_cif_score"
+            ]
+            if metadata.get("candidate_id") is not None:
+                record_metadata["candidate_id"] = metadata["candidate_id"]
 
     def run_selected_simulation(self) -> dict[str, Any] | None:
         structure_id = self._selected_structure_id()
@@ -1593,8 +1795,11 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
             params,
         )
         if cached_record is not None:
-            self._apply_target_link_to_cached_record(cached_record)
+            if self.target_data_id is not None:
+                self._apply_target_link_to_cached_record(cached_record)
+            self._annotate_record_from_structure(cached_record, structure)
             self._display_cached_record(cached_record)
+            self.projectChanged.emit()
             return cached_record
         record = run_and_store_simulation(
             self.project,
@@ -1603,6 +1808,7 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
             parameters=params,
             target_data_id=self.target_data_id,
         )
+        self._annotate_record_from_structure(record, structure)
         if record["simulation_id"] not in structure["simulation_ids"]:
             structure["simulation_ids"].append(record["simulation_id"])
         self._refresh_simulation_cache()
@@ -1616,6 +1822,7 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
             record["simulation_id"],
         )
         self.simulationCreated.emit(record["simulation_id"])
+        self.projectChanged.emit()
         return record
 
     def run_selected_mode(self) -> dict[str, Any] | None:
@@ -1637,8 +1844,11 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
             params.as_dict(),
         )
         if cached_record is not None:
-            self._apply_target_link_to_cached_record(cached_record)
+            if self.target_data_id is not None:
+                self._apply_target_link_to_cached_record(cached_record)
+            self._annotate_record_from_structure(cached_record, structure)
             self._display_cached_record(cached_record)
+            self.projectChanged.emit()
             return cached_record
         record = run_and_store_ewald_sphere_sweep(
             self.project,
@@ -1647,6 +1857,7 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
             parameters=params,
             target_data_id=self.target_data_id,
         )
+        self._annotate_record_from_structure(record, structure)
         if record["simulation_id"] not in structure["simulation_ids"]:
             structure["simulation_ids"].append(record["simulation_id"])
         self._refresh_simulation_cache()
@@ -1660,6 +1871,7 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
             record["simulation_id"],
         )
         self.simulationCreated.emit(record["simulation_id"])
+        self.projectChanged.emit()
         return record
 
     def compare_displayed_simulation_to_target(
@@ -1705,6 +1917,7 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
         if hasattr(self, "right_tabs"):
             self.right_tabs.setCurrentWidget(self.comparison_pane)
         self._refresh_tree()
+        self.projectChanged.emit()
         return comparison
 
     def rank_stored_simulations_against_target(self) -> list[dict[str, Any]]:
@@ -1777,6 +1990,7 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
             self.comparison_pane.clear(
                 "No single-pattern simulations to rank."
             )
+        self.projectChanged.emit()
         return ranked
 
     def run_top_generated_cif_fit_comparisons(
@@ -1880,6 +2094,7 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
             )
             if hasattr(self, "right_tabs"):
                 self.right_tabs.setCurrentWidget(self.comparison_pane)
+        self.projectChanged.emit()
         return ranked
 
     def run_generated_cif_fit_comparisons(self) -> list[dict[str, Any]]:
@@ -1960,7 +2175,11 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
         self.import_structure_combo.setInsertPolicy(
             QtWidgets.QComboBox.InsertPolicy.NoInsert
         )
-        self.import_structure_combo.addItems(self.structure_history)
+        self.import_structure_combo.addItems(
+            _dedupe_structure_history(
+                [*self.project_structure_paths, *self.structure_history]
+            )
+        )
         self.import_structure_combo.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Expanding,
             QtWidgets.QSizePolicy.Policy.Fixed,
@@ -2093,7 +2312,7 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
         )
         self.apply_preset_button.clicked.connect(self.apply_orientation_preset)
 
-        self.sweep_controls = QtWidgets.QGroupBox("Theta sweep")
+        self.sweep_controls = QtWidgets.QGroupBox("Ewald sphere sweep")
         self.sweep_controls.setToolTip(
             "Theta sweep rotates the crystal through a grid of theta X and "
             "theta Y values and computes one low-resolution detector pattern "
@@ -2133,7 +2352,6 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
         sweep_layout.addWidget(self.sweep_theta_y_min, 2, 1)
         sweep_layout.addWidget(self.sweep_theta_y_max, 2, 2)
         sweep_layout.addWidget(self.sweep_theta_y_step, 2, 3)
-        self.sweep_controls.setVisible(False)
         self.link_data_file_combo = QtWidgets.QComboBox()
         self.link_data_file_combo.currentIndexChanged.connect(
             self._handle_target_data_file_changed
@@ -2219,6 +2437,7 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
         mode_layout.addWidget(self.apply_preset_button, 1, 2)
         mode_layout.setColumnStretch(1, 1)
         controls_layout.addWidget(mode_group)
+        controls_layout.addWidget(self.sweep_controls)
 
         parameters_group = QtWidgets.QGroupBox("Pattern parameters")
         parameter_layout = QtWidgets.QGridLayout(parameters_group)
@@ -2332,7 +2551,6 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
         rotation_layout.addWidget(self.rotate_y_pos_button, 1, 3)
         controls_layout.addWidget(rotation_group)
 
-        controls_layout.addWidget(self.sweep_controls)
         controls_layout.addWidget(self.cache_status_label)
         controls_layout.addStretch(1)
 
@@ -2402,7 +2620,6 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
         sweep_mode = (
             self.simulation_mode.currentData() == SIMULATION_MODE_EWALD_SWEEP
         )
-        self.sweep_controls.setVisible(sweep_mode)
         self.run_action.setText(
             "Run Sweep" if sweep_mode else "Run Simulation"
         )
@@ -2725,9 +2942,9 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
         scroll_layout = QtWidgets.QVBoxLayout(self.left_scroll_content)
         scroll_layout.setContentsMargins(0, 0, 0, 0)
         scroll_layout.setSpacing(8)
+        scroll_layout.addWidget(self.controls)
         scroll_layout.addWidget(self.structure_viewer)
         scroll_layout.addWidget(self.orientation_distribution_view)
-        scroll_layout.addWidget(self.controls)
         self.left_scroll.setWidget(self.left_scroll_content)
         left_layout.addWidget(self.left_scroll, stretch=1)
         left_layout.addWidget(self.run_bar)
@@ -2896,6 +3113,41 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
             item.setExpanded(True)
         root.setExpanded(True)
 
+    def select_simulation(self, simulation_id: str) -> bool:
+        """Select and display a stored simulation in this workspace."""
+
+        target_id = str(simulation_id)
+        item = self._simulation_tree_item(target_id)
+        if item is None:
+            self.result_pane.set_simulation(target_id)
+            record = self.project.simulations.get(target_id)
+            if isinstance(record, dict):
+                data_id = record.get("data_id")
+                self.set_target_data_id(str(data_id) if data_id else None)
+            return False
+        self.tree.setCurrentItem(item)
+        return True
+
+    def _simulation_tree_item(
+        self,
+        simulation_id: str,
+    ) -> QtWidgets.QTreeWidgetItem | None:
+        root = self.tree.invisibleRootItem()
+        stack = [root.child(index) for index in range(root.childCount())]
+        while stack:
+            item = stack.pop()
+            payload = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+            if (
+                isinstance(payload, dict)
+                and payload.get("kind") == "simulation"
+                and str(payload.get("simulation_id")) == simulation_id
+            ):
+                return item
+            stack.extend(
+                item.child(index) for index in range(item.childCount())
+            )
+        return None
+
     def _add_record_details(
         self,
         parent: QtWidgets.QTreeWidgetItem,
@@ -2909,6 +3161,7 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
             "fit_target_data_id",
             "generated_cif_id",
             "generated_cif_rank",
+            "cif_path",
             "dataset_uri",
             "structure_path",
         ):
@@ -3064,6 +3317,7 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
         self._refresh_tree()
         self.result_pane.set_simulation(simulation_id)
         self.simulationLinked.emit(simulation_id)
+        self.projectChanged.emit()
         return record
 
     def _handle_target_data_file_changed(self) -> None:
@@ -3110,17 +3364,24 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
         previous_blocked = self.import_structure_combo.blockSignals(True)
         try:
             self.import_structure_combo.clear()
-            self.import_structure_combo.addItems(self.structure_history)
+            entries = _dedupe_structure_history(
+                [*self.project_structure_paths, *self.structure_history]
+            )
+            self.import_structure_combo.addItems(entries)
             if selected_path:
                 self.import_structure_combo.setCurrentText(selected_path)
-            elif self.structure_history:
+            elif entries:
                 self.import_structure_combo.setCurrentIndex(0)
         finally:
             self.import_structure_combo.blockSignals(previous_blocked)
 
     def _structure_dialog_directory(self) -> Path:
         current_path = self.import_structure_combo.currentText().strip()
-        for path_text in [current_path, *self.structure_history]:
+        for path_text in [
+            current_path,
+            *self.project_structure_paths,
+            *self.structure_history,
+        ]:
             if not path_text:
                 continue
             candidate = Path(path_text).expanduser()
@@ -3130,6 +3391,55 @@ class GIWAXSSimulationWindow(QtWidgets.QMainWindow):
         if self.project_path is not None:
             return self.project_path.parent
         return Path.home()
+
+    def _project_loaded_cif_paths(self) -> list[str]:
+        loaded = self.project.reference_cifs.get("loaded", {})
+        if not isinstance(loaded, dict):
+            return []
+        paths: list[str] = []
+        for record in loaded.values():
+            if not isinstance(record, dict):
+                continue
+            path = self._ensure_loaded_cif_path(record)
+            if path is not None:
+                paths.append(str(path))
+        return _dedupe_structure_history(paths)
+
+    def _ensure_loaded_cif_path(
+        self,
+        record: dict[str, Any],
+    ) -> Path | None:
+        for key in ("local_path", "path", "structure_path"):
+            path_value = record.get(key)
+            if path_value:
+                path = Path(str(path_value))
+                if path.exists():
+                    return path
+        cif_text = str(record.get("cif_text") or "")
+        if not cif_text.strip():
+            return None
+        cif_id = str(record.get("cif_id") or record.get("id") or "loaded_cif")
+        directory = Path(self.output_directory) / "loaded_cifs"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / _safe_generated_cif_filename(cif_id)
+        if not path.exists() or path.read_text(encoding="utf-8") != cif_text:
+            path.write_text(cif_text, encoding="utf-8")
+        record["path"] = str(path)
+        record["local_path"] = str(path)
+        record["structure_path"] = str(path)
+        return path
+
+
+class GIWAXSSimulationPane(GIWAXSSimulationWindow):
+    """Embedded main-workflow version of the GIWAXS simulation tool."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.setWindowFlags(QtCore.Qt.WindowType.Widget)
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Expanding,
+        )
 
 
 def _simulation_ids_for_structure(
@@ -3505,7 +3815,13 @@ def _record_html(record: dict[str, Any]) -> str:
     ]
     lines.append(f"Mode: {escape(_simulation_type_label(record))}")
     lines.append("")
-    for key in ("data_id", "structure_name", "structure_path", "dataset_uri"):
+    for key in (
+        "data_id",
+        "structure_name",
+        "cif_path",
+        "structure_path",
+        "dataset_uri",
+    ):
         if record.get(key):
             lines.append(f"{_labelize(key)}: {escape(str(record[key]))}")
     lines.append("")
@@ -3527,7 +3843,11 @@ def _record_html(record: dict[str, Any]) -> str:
 
 def _labelize(key: str) -> str:
     parts = [
-        QXY_HTML if part == "qxy" else QZ_HTML if part == "qz" else part
+        (
+            QXY_HTML
+            if part == "qxy"
+            else QZ_HTML if part == "qz" else "CIF" if part == "cif" else part
+        )
         for part in key.split("_")
     ]
     label = " ".join(parts)
@@ -3595,9 +3915,22 @@ def _normalize_peak_row(row: Any) -> dict[str, Any]:
     normalized: dict[str, Any] = {}
     for key in ("h", "k", "l"):
         normalized[key] = int(row.get(key, 0))
-    for key in ("qxy", "qz", "intensity", "amplitude"):
+    for key in ("qxy", "qz", "intensity", "amplitude", "relative_intensity"):
         value = row.get(key)
         normalized[key] = None if value is None else float(value)
+    forbidden = bool(
+        row.get("forbidden_reflection")
+        or row.get("excluded_from_indexing")
+        or str(row.get("reflection_status", "")).lower() == "forbidden"
+    )
+    normalized["forbidden_reflection"] = forbidden
+    normalized["excluded_from_indexing"] = bool(
+        row.get("excluded_from_indexing", forbidden)
+    )
+    normalized["reflection_status"] = str(
+        row.get("reflection_status")
+        or ("forbidden" if forbidden else "indexable")
+    )
     return normalized
 
 
@@ -3615,11 +3948,15 @@ def _format_hkl(row: dict[str, Any]) -> str:
     )
 
 
-def _format_float(value: Any) -> str:
+def _format_float(
+    value: Any,
+    *,
+    significant_digits: int = 4,
+) -> str:
     if value is None:
         return ""
     try:
-        return f"{float(value):.4g}"
+        return f"{float(value):.{significant_digits}g}"
     except (TypeError, ValueError):
         return str(value)
 
@@ -3635,21 +3972,59 @@ def _qspace_extent(data_array: Any) -> tuple[float, float, float, float]:
     )
 
 
-def _peak_tooltip(row: dict[str, Any]) -> str:
+def _format_peak_info_float(value: Any) -> str:
+    return _format_float(
+        value,
+        significant_digits=PEAK_INFO_SIGNIFICANT_DIGITS,
+    )
+
+
+def _is_forbidden_peak_row(row: dict[str, Any]) -> bool:
+    return bool(
+        row.get("forbidden_reflection")
+        or row.get("excluded_from_indexing")
+        or str(row.get("reflection_status", "")).lower() == "forbidden"
+    )
+
+
+def _peak_status_text(row: dict[str, Any]) -> str:
+    if _is_forbidden_peak_row(row):
+        return "Forbidden"
+    return "Indexable"
+
+
+def _peak_tip(*, x: float, y: float, data: Any) -> str:
+    if not isinstance(data, dict):
+        return ""
+    return _peak_tooltip(data, qxy=x, qz=y)
+
+
+def _peak_tooltip(
+    row: dict[str, Any],
+    *,
+    qxy: Any | None = None,
+    qz: Any | None = None,
+) -> str:
+    qxy_value = row.get("qxy") if qxy is None else qxy
+    qz_value = row.get("qz") if qz is None else qz
+    lines = [
+        f"(hkl): {_format_hkl(row)}",
+        (
+            f"{QXY_HTML}: {_format_peak_info_float(qxy_value)} "
+            f"{QSPACE_UNITS_HTML}"
+        ),
+        (
+            f"{QZ_HTML}: {_format_peak_info_float(qz_value)} "
+            f"{QSPACE_UNITS_HTML}"
+        ),
+    ]
+    intensity = row.get("intensity")
+    if intensity is not None:
+        lines.append(f"Intensity: {_format_peak_info_float(intensity)}")
+    if _is_forbidden_peak_row(row):
+        lines.append("Forbidden reflection; excluded from indexing/training")
     return qt_tooltip(
-        "<br>".join(
-            [
-                f"(hkl): {_format_hkl(row)}",
-                (
-                    f"{QXY_HTML}: {_format_float(row.get('qxy'))} "
-                    f"{QSPACE_UNITS_HTML}"
-                ),
-                (
-                    f"{QZ_HTML}: {_format_float(row.get('qz'))} "
-                    f"{QSPACE_UNITS_HTML}"
-                ),
-            ]
-        )
+        "<br>".join(lines)
     )
 
 
@@ -3855,6 +4230,36 @@ def _octahedron_mesh() -> tuple[np.ndarray, tuple[tuple[int, int, int], ...]]:
         (0, 3, 5),
     )
     return vertices, faces
+
+
+def _lattice_parameters_from_matrix(
+    lattice: Any,
+) -> dict[str, float]:
+    vectors = np.asarray(lattice, dtype=float)
+    if vectors.shape != (3, 3):
+        raise ValueError("Expected a 3x3 lattice matrix.")
+    a_vec, b_vec, c_vec = vectors
+    return {
+        "a": _vector_length(a_vec),
+        "b": _vector_length(b_vec),
+        "c": _vector_length(c_vec),
+        "alpha": _vector_angle_degrees(b_vec, c_vec),
+        "beta": _vector_angle_degrees(a_vec, c_vec),
+        "gamma": _vector_angle_degrees(a_vec, b_vec),
+    }
+
+
+def _vector_length(vector: np.ndarray) -> float:
+    return float(np.linalg.norm(np.asarray(vector, dtype=float)))
+
+
+def _vector_angle_degrees(first: np.ndarray, second: np.ndarray) -> float:
+    first_length = _vector_length(first)
+    second_length = _vector_length(second)
+    if first_length <= 0.0 or second_length <= 0.0:
+        raise ValueError("Lattice vectors must be non-zero.")
+    cosine = float(np.dot(first, second) / (first_length * second_length))
+    return float(math.degrees(math.acos(np.clip(cosine, -1.0, 1.0))))
 
 
 def _lattice_summary(lattice: np.ndarray) -> str:

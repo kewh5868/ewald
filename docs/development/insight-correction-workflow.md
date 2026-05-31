@@ -1,5 +1,9 @@
 # INSIGHT-Style Correction Gate
 
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
 EWALD's raw detector workflow follows the INSIGHT analysis order: load a raw
 frame, verify geometry and correction inputs, apply intensity/mask corrections,
 then proceed to reciprocal-space viewing, integration, peak work, structure

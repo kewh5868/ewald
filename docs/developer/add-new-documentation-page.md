@@ -1,5 +1,9 @@
 # Add a New Documentation Page
 
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
 Use this short process whenever adding user-facing documentation content.
 
 ## 1) Create the markdown file

@@ -13,6 +13,7 @@ from ewald.data.models import (
     ProjectState,
     ROIRegion,
     roi_hkl_label,
+    roi_intensity_metadata,
     roi_pole_figure_status,
 )
 from ewald.simulation.giwaxs import SIMULATION_MODE_EWALD_SWEEP
@@ -161,6 +162,7 @@ class DataTreePane(QtWidgets.QWidget):
             project.calibrants,
             project,
         )
+        self._add_loaded_cifs(root, project)
         self._add_simulations(root, project)
         self._add_structures(root, project)
 
@@ -509,7 +511,7 @@ class DataTreePane(QtWidgets.QWidget):
         )
         parent.addChild(item)
         self._add_leaf(item, "Simulation id", simulation_id)
-        for key in ("structure_path", "dataset_uri"):
+        for key in ("cif_path", "structure_path", "dataset_uri"):
             if record.get(key):
                 self._add_leaf(item, _labelize(key), record[key])
         data_id = record.get("data_id")
@@ -604,6 +606,64 @@ class DataTreePane(QtWidgets.QWidget):
                 "Wyckoff sites",
                 combination.get("site_labels"),
             )
+        if record.get("cif_text"):
+            line_count = len(str(record.get("cif_text", "")).splitlines())
+            self._add_leaf(item, "CIF text", f"embedded, {line_count} lines")
+
+    def _add_loaded_cifs(
+        self,
+        parent: QtWidgets.QTreeWidgetItem,
+        project: ProjectState,
+    ) -> None:
+        records = _loaded_cif_records(project)
+        loaded_item = QtWidgets.QTreeWidgetItem(
+            ["Loaded CIFs", str(len(records))]
+        )
+        loaded_item.setData(
+            0,
+            QtCore.Qt.ItemDataRole.UserRole,
+            {"kind": "loaded-cif-collection"},
+        )
+        parent.addChild(loaded_item)
+        if not records:
+            self._add_leaf(loaded_item, "Status", "No loaded CIFs")
+            return
+        for cif_id, record in records:
+            self._add_loaded_cif_record(loaded_item, cif_id, record)
+
+    def _add_loaded_cif_record(
+        self,
+        parent: QtWidgets.QTreeWidgetItem,
+        cif_id: str,
+        record: dict[str, Any],
+    ) -> None:
+        label = record.get("label") or record.get("name") or cif_id
+        item = QtWidgets.QTreeWidgetItem([str(label), "loaded CIF"])
+        item.setData(
+            0,
+            QtCore.Qt.ItemDataRole.UserRole,
+            {
+                "kind": "loaded-cif",
+                "cif_id": record.get("cif_id", cif_id),
+                "path": record.get("path") or record.get("local_path"),
+            },
+        )
+        parent.addChild(item)
+        self._add_leaf(item, "CIF id", record.get("cif_id", cif_id))
+        for key in (
+            "path",
+            "local_path",
+            "archive_path",
+            "source",
+            "crystal_system",
+        ):
+            if record.get(key) not in (None, ""):
+                self._add_leaf(item, _labelize(key), record.get(key))
+        lattice = record.get("lattice")
+        if isinstance(lattice, dict):
+            for key in ("a", "b", "c", "alpha", "beta", "gamma"):
+                if key in lattice:
+                    self._add_leaf(item, key, lattice[key])
         if record.get("cif_text"):
             line_count = len(str(record.get("cif_text", "")).splitlines())
             self._add_leaf(item, "CIF text", f"embedded, {line_count} lines")
@@ -778,6 +838,13 @@ class DataTreePane(QtWidgets.QWidget):
             hkl = roi_hkl_label(roi)
             if hkl:
                 self._add_leaf(child, "hkl", hkl)
+            intensity = roi_intensity_metadata(roi)
+            if intensity:
+                self._add_leaf(
+                    child,
+                    "Integrated intensity",
+                    intensity.get("integrated_intensity"),
+                )
             pole_status = roi_pole_figure_status(roi)
             if pole_status:
                 self._add_leaf(child, "Pole figure", pole_status)
@@ -847,6 +914,20 @@ def _computed_cif_records(
         merged.update(record)
         records[cif_id] = merged
     return sorted(records.items())
+
+
+def _loaded_cif_records(
+    project: ProjectState,
+) -> list[tuple[str, dict[str, Any]]]:
+    loaded = project.reference_cifs.get("loaded", {})
+    if not isinstance(loaded, dict):
+        return []
+    records = [
+        (str(record.get("cif_id") or cif_id), dict(record))
+        for cif_id, record in loaded.items()
+        if isinstance(record, dict)
+    ]
+    return sorted(records, key=lambda item: item[0])
 
 
 def _is_generated_structure_record(record: dict[str, Any]) -> bool:
@@ -990,7 +1071,11 @@ def _labelize(key: str) -> str:
     if key.startswith("_"):
         key = key[1:]
     parts = [
-        QXY_HTML if part == "qxy" else QZ_HTML if part == "qz" else part
+        (
+            QXY_HTML
+            if part == "qxy"
+            else QZ_HTML if part == "qz" else "CIF" if part == "cif" else part
+        )
         for part in key.split("_")
     ]
     label = " ".join(parts)

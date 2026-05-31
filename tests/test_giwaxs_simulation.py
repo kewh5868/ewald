@@ -9,8 +9,9 @@ import numpy as np
 import pytest
 from qtpy import QtCore, QtWidgets
 
-from ewald.data.models import ProjectState
+from ewald.data.models import ImageCorrectionState, ProjectState
 from ewald.io.importers import build_data_group_from_paths
+from ewald.io.project import load_project
 from ewald.simulation.giwaxs import (
     PEAK_TABLE_ATTR,
     SIMULATION_MODE_EWALD_SWEEP,
@@ -31,9 +32,13 @@ from ewald.simulation.giwaxs import (
 from ewald.ui.data_tree import DataTreePane
 from ewald.ui.data_viewer import DataViewerPane
 from ewald.ui.giwaxs_simulation import (
+    GIWAXSSimulationPane,
     GIWAXSSimulationResultPane,
     GIWAXSSimulationWindow,
+    STRUCTURE_PREVIEW_MAX_SIDE,
+    STRUCTURE_PREVIEW_MIN_SIDE,
     _cpk_color,
+    _peak_tip,
 )
 from ewald.ui.main_window import MainWindow
 
@@ -75,6 +80,65 @@ def test_giwaxs_simulation_backend_runs_and_stores_poscar(tmp_path):
     assert loaded.shape == (24, 32)
     loaded_peak_rows = json.loads(loaded.attrs[PEAK_TABLE_ATTR])
     assert len(loaded_peak_rows) == len(peak_rows)
+
+
+def test_giwaxs_peak_rows_flag_forbidden_reflections(tmp_path):
+    poscar = _write_species_poscar(
+        tmp_path / "bcc_Si_POSCAR",
+        ["Si"],
+        [2],
+        [(0.0, 0.0, 0.0), (0.5, 0.5, 0.5)],
+    )
+    params = GIWAXSSimulationParameters(
+        hkl_extent=1,
+        resolution_x=32,
+        resolution_z=24,
+        qxy_min=-4.0,
+        qxy_max=4.0,
+        qz_min=0.0,
+        qz_max=4.0,
+    )
+
+    data = simulate_giwaxs_image(poscar, params)
+    peak_rows = json.loads(data.attrs[PEAK_TABLE_ATTR])
+    forbidden = [row for row in peak_rows if row["forbidden_reflection"]]
+
+    assert forbidden
+    assert all(row["excluded_from_indexing"] for row in forbidden)
+    assert all(row["amplitude"] == 0.0 for row in forbidden)
+    assert data.attrs["forbidden_reflection_count"] == len(forbidden)
+    assert data.attrs["peak_count"] == len(peak_rows) - len(forbidden)
+    assert any(
+        abs(row["h"]) + abs(row["k"]) + abs(row["l"]) == 1
+        for row in forbidden
+    )
+
+
+def test_giwaxs_missing_wedge_masks_image_and_peak_rows(tmp_path):
+    poscar = _write_poscar(tmp_path / "Si_POSCAR")
+    params = GIWAXSSimulationParameters(
+        hkl_extent=2,
+        resolution_x=48,
+        resolution_z=44,
+        qxy_min=-3.0,
+        qxy_max=3.0,
+        qz_min=0.0,
+        qz_max=3.0,
+        wavelength_angstrom=1.0,
+        incident_angle_deg=8.0,
+        missing_wedge_correction=True,
+    )
+
+    image = simulate_giwaxs_image(poscar, params)
+
+    horizon_qz = image.attrs["missing_wedge_horizon_qz"]
+    low_qz = np.asarray(image.coords["qz"].values) < horizon_qz
+    assert image.attrs["missing_wedge_correction_applied"] == 1
+    assert image.attrs["missing_wedge_masked_fraction"] > 0.0
+    assert np.all(np.asarray(image.values)[low_qz, :] == 0.0)
+    peak_rows = json.loads(image.attrs[PEAK_TABLE_ATTR])
+    assert peak_rows
+    assert min(float(row["qz"]) for row in peak_rows) >= horizon_qz - 1.0e-9
 
 
 def test_giwaxs_image_comparison_fits_scale_and_writes_plot(tmp_path):
@@ -133,6 +197,67 @@ def test_giwaxs_image_comparison_fits_scale_and_writes_plot(tmp_path):
     assert plot_path.exists()
 
 
+def test_giwaxs_point_tip_uses_compact_numeric_values():
+    tip = _peak_tip(
+        x=1.23456789,
+        y=0.987654321,
+        data={
+            "h": 1,
+            "k": 2,
+            "l": 3,
+            "qxy": 1.23456789,
+            "qz": 0.987654321,
+            "intensity": 12345.6789,
+            "forbidden_reflection": True,
+        },
+    )
+
+    assert "(1, 2, 3)" in tip
+    assert "1.23" in tip
+    assert "0.988" in tip
+    assert "1.23e+04" in tip
+    assert "1.23456789" not in tip
+    assert "0.987654321" not in tip
+    assert "12345.6789" not in tip
+    assert "Forbidden reflection" in tip
+
+
+def test_giwaxs_result_table_marks_forbidden_reflections(qtbot):
+    pane = GIWAXSSimulationResultPane(ProjectState(name="Forbidden UI"))
+    qtbot.addWidget(pane)
+
+    pane._set_peak_rows(
+        [
+            {
+                "h": 1,
+                "k": 0,
+                "l": 0,
+                "qxy": 1.0,
+                "qz": 0.0,
+                "intensity": 1.0e-16,
+                "amplitude": 0.0,
+                "forbidden_reflection": True,
+                "excluded_from_indexing": True,
+                "reflection_status": "forbidden",
+            },
+            {
+                "h": 1,
+                "k": 1,
+                "l": 0,
+                "qxy": 1.5,
+                "qz": 0.2,
+                "intensity": 4.0,
+                "amplitude": 4.0,
+            },
+        ]
+    )
+
+    assert pane.hkl_table.item(0, 4).text() == "Forbidden"
+    assert pane.hkl_table.item(1, 4).text() == "Indexable"
+    assert "1 indexable point" in pane.hkl_count_label.text()
+    assert "1 forbidden" in pane.hkl_count_label.text()
+
+
 def test_rank_giwaxs_simulation_fits_orders_candidate_parameters(tmp_path):
     poscar = _write_poscar(tmp_path / "Si_POSCAR")
     good_params = GIWAXSSimulationParameters(
@@ -168,8 +293,26 @@ def test_rank_giwaxs_simulation_fits_orders_candidate_parameters(tmp_path):
     assert ranked[0].as_dict()["structure_name"] == "good_structure"
 
 
-def test_load_structure_suppresses_known_pymatgen_cif_rounding_warning(
-    monkeypatch, tmp_path
+@pytest.mark.parametrize(
+    "warning_message",
+    [
+        (
+            "Issues encountered while parsing CIF: 16 fractional coordinates "
+            "rounded to ideal values to avoid issues with finite precision."
+        ),
+        (
+            "No _symmetry_equiv_pos_as_xyz type key found. Spacegroup from "
+            "_symmetry_space_group_name_H-M used."
+        ),
+        (
+            "Issues encountered while parsing CIF: No "
+            "_symmetry_equiv_pos_as_xyz type key found. Spacegroup from "
+            "_symmetry_space_group_name_H-M used."
+        ),
+    ],
+)
+def test_load_structure_suppresses_known_pymatgen_cif_warnings(
+    monkeypatch, tmp_path, warning_message
 ):
     from pymatgen.core import Structure
 
@@ -178,8 +321,7 @@ def test_load_structure_suppresses_known_pymatgen_cif_rounding_warning(
 
     def fake_from_file(path):
         warnings.warn(
-            "Issues encountered while parsing CIF: 16 fractional coordinates "
-            "rounded to ideal values to avoid issues with finite precision.",
+            warning_message,
             UserWarning,
             stacklevel=2,
         )
@@ -307,6 +449,53 @@ def test_simulation_window_runs_multiple_project_simulations(qtbot, tmp_path):
         assert window.result_pane.hkl_scatter.isVisible()
         window.result_pane.show_hkl_points.setChecked(False)
         assert not window.result_pane.hkl_scatter.isVisible()
+
+
+def test_simulation_window_recalls_project_loaded_cifs(qtbot, tmp_path):
+    from pymatgen.core import Lattice, Structure
+
+    cif_path = tmp_path / "reference_tetragonal.cif"
+    structure = Structure(
+        Lattice.from_parameters(4.2, 4.2, 7.1, 90.0, 90.0, 90.0),
+        ["Si"],
+        [[0.0, 0.0, 0.0]],
+    )
+    cif_text = structure.to(fmt="cif")
+    cif_path.write_text(cif_text, encoding="utf-8")
+    project = ProjectState(name="Loaded CIF Project")
+    project.remember_loaded_cif(
+        cif_path,
+        cif_text=cif_text,
+        lattice={
+            "a": 4.2,
+            "b": 4.2,
+            "c": 7.1,
+            "alpha": 90.0,
+            "beta": 90.0,
+            "gamma": 90.0,
+        },
+        crystal_system="Tetragonal",
+    )
+
+    window = GIWAXSSimulationWindow(
+        project=project,
+        output_directory=tmp_path / "simulations",
+        settings=_settings(tmp_path),
+    )
+    qtbot.addWidget(window)
+
+    entries = [
+        window.import_structure_combo.itemText(index)
+        for index in range(window.import_structure_combo.count())
+    ]
+    assert str(cif_path) in entries
+
+    window.import_structure_combo.setCurrentText(str(cif_path))
+    structure_id = window.import_structure_from_field()
+
+    assert structure_id is not None
+    assert structure_id in window.structures
+    assert window.structures[structure_id]["metadata"]["atom_count"] == 1
 
 
 def test_simulation_window_reuses_cached_larger_pattern(qtbot, tmp_path):
@@ -680,6 +869,88 @@ def test_simulation_window_runs_generated_cif_difference_comparisons(
     assert window.right_tabs.currentWidget() is window.comparison_pane
     generated_path = Path(project.reference_cifs["generated"][cif_id]["path"])
     assert generated_path.exists()
+    assert ranked[0]["record"]["cif_path"] == str(generated_path)
+
+    pane = DataTreePane()
+    qtbot.addWidget(pane)
+    pane.set_project(project)
+    simulations_item = _child_with_text(
+        pane.tree.topLevelItem(0), "GIWAXS Simulations"
+    )
+    simulation_item = _child_with_text(
+        simulations_item, ranked[0]["record"]["structure_name"]
+    )
+    assert _child_with_text(simulation_item, "CIF path").text(1) == str(
+        generated_path
+    )
+
+
+def test_main_giwaxs_tab_embeds_generated_structure_workflow(
+    qtbot,
+    tmp_path,
+    repo_root,
+):
+    from pymatgen.core import Lattice, Structure
+
+    data_path = next((repo_root / "example").glob("*.tiff"))
+    group, _ = build_data_group_from_paths([data_path], group_name="Example")
+    data_id = group.data_files[0].data_id
+    project = ProjectState(name="Embedded Simulation Project")
+    project.add_data_group(group)
+    project.set_image_corrections(
+        ImageCorrectionState(target_id=data_id, confirmed=True)
+    )
+
+    cif_id = "candidate_001_cif_01"
+    project.reference_cifs["generated"] = {
+        cif_id: {
+            "cif_id": cif_id,
+            "candidate_id": "candidate_001",
+            "rank": 1,
+            "score": 0.1,
+            "data_id": data_id,
+            "cif_text": Structure(
+                Lattice.cubic(3.0),
+                ["Si"],
+                [[0.0, 0.0, 0.0]],
+            ).to(fmt="cif"),
+        }
+    }
+    window = MainWindow(
+        project=project,
+        project_path=tmp_path / "embedded_project.ewld",
+        settings=_settings(tmp_path),
+    )
+    qtbot.addWidget(window)
+
+    tab_index = [
+        window.tabs.tabText(index) for index in range(window.tabs.count())
+    ].index("GIWAXS Simulation")
+    pane = window.tabs.widget(tab_index)
+    assert isinstance(pane, GIWAXSSimulationPane)
+    assert pane.selected_data_id() == data_id
+    assert any(
+        structure["metadata"].get("generated_cif_id") == cif_id
+        for structure in pane.structures.values()
+    )
+
+    pane.output_directory = tmp_path / "simulations"
+    pane.hkl_extent.setValue(1)
+    pane.resolution_x.setValue(24)
+    pane.resolution_z.setValue(20)
+    record = pane.run_selected_simulation()
+
+    assert record is not None
+    assert record["data_id"] == data_id
+    assert record["generated_cif_id"] == cif_id
+    assert Path(record["cif_path"]).exists()
+
+    file_item = _child_with_text(
+        window.data_tree.tree.topLevelItem(0),
+        group.data_files[0].name,
+    )
+    linked_item = _child_with_text(file_item, "Linked Simulations")
+    assert linked_item.text(1) == "1"
 
 
 def test_simulation_window_relinks_selected_simulation(qtbot, tmp_path):
@@ -769,7 +1040,23 @@ def test_simulation_window_has_scrollable_compact_inputs_and_presets(
 
     assert isinstance(window.left_scroll, QtWidgets.QScrollArea)
     assert window.run_bar.parentWidget() is not window.left_scroll_content
+    scroll_layout = window.left_scroll_content.layout()
+    assert scroll_layout.itemAt(0).widget() is window.controls
+    assert scroll_layout.itemAt(1).widget() is window.structure_viewer
+    assert scroll_layout.itemAt(2).widget() is window.orientation_distribution_view
+    controls_layout = window.controls.layout()
+    assert window.sweep_controls.isVisibleTo(window)
+    assert window.sweep_controls.title() == "Ewald sphere sweep"
+    assert controls_layout.itemAt(2).widget() is window.sweep_controls
     assert window.structure_viewer.plot_container.hasHeightForWidth()
+    assert (
+        window.structure_viewer.plot_container.heightForWidth(430)
+        == STRUCTURE_PREVIEW_MAX_SIDE
+    )
+    assert (
+        window.structure_viewer.plot_widget.minimumHeight()
+        == STRUCTURE_PREVIEW_MIN_SIDE
+    )
 
     window.orientation_distribution_view.auto_update_check.setChecked(False)
     isotropic_index = window.preset_combo.findData("isotropic")
@@ -971,6 +1258,86 @@ def test_project_tree_labels_ewald_sphere_sweeps(qtbot, tmp_path):
     assert simulation_item.text(1) == "Ewald sphere sweep"
 
 
+def test_main_window_runs_cif_simulation_without_data_and_saves_project(
+    qtbot,
+    tmp_path,
+    monkeypatch,
+):
+    from pymatgen.core import Lattice, Structure
+
+    cif_path = tmp_path / "standalone_structure.cif"
+    cif_path.write_text(
+        Structure(
+            Lattice.cubic(3.0),
+            ["Si"],
+            [[0.0, 0.0, 0.0]],
+        ).to(fmt="cif"),
+        encoding="utf-8",
+    )
+    saved_path = tmp_path / "cif_only_project.ewld"
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    assert not window.project_active
+    assert window.giwaxs_simulation_action.isEnabled()
+
+    window.open_giwaxs_simulation_tool()
+    simulation_window = window.giwaxs_simulation_window
+    simulation_window.output_directory = tmp_path / "simulations"
+    simulation_window.import_structure_path(cif_path)
+    loaded_cifs = window.project.reference_cifs.get("loaded", {})
+    assert len(loaded_cifs) == 1
+    loaded_cif_id = next(iter(loaded_cifs))
+    uploaded_cif = loaded_cifs[loaded_cif_id]
+    assert uploaded_cif["lattice"]["a"] == pytest.approx(3.0)
+    assert uploaded_cif["crystal_system"] == "Cubic"
+    assert window.project_active
+    assert window.save_project_action.isEnabled()
+    simulation_window.hkl_extent.setValue(1)
+    simulation_window.resolution_x.setValue(24)
+    simulation_window.resolution_z.setValue(20)
+
+    record = simulation_window.run_selected_simulation()
+
+    assert record is not None
+    assert record["data_id"] is None
+    assert record["cif_path"] == str(cif_path)
+    assert record["loaded_cif_id"] == loaded_cif_id
+    assert window.project_active
+    assert window.save_project_action.isEnabled()
+    assert _project_data_count(window.project) == 0
+
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (
+            str(saved_path),
+            "EWALD Projects (*.ewld *.ewald.json)",
+        ),
+    )
+
+    assert window.save_project_as()
+
+    cif_path.unlink()
+    loaded = load_project(saved_path)
+    loaded_record = loaded.simulations[record["simulation_id"]]
+    loaded_cif = loaded.reference_cifs["loaded"][loaded_cif_id]
+    assert _project_data_count(loaded) == 0
+    assert loaded_record["data_id"] is None
+    assert loaded_record["loaded_cif_id"] == loaded_cif_id
+    assert Path(loaded_cif["local_path"]).exists()
+    assert Path(loaded_cif["local_path"]).read_text(encoding="utf-8")
+    assert loaded_record["cif_path"] == loaded_cif["local_path"]
+    assert loaded_record["structure_path"] == loaded_cif["local_path"]
+    assert Path(loaded_record["dataset_uri"]).exists()
+    assert saved_path.with_suffix(".ewald.json").exists()
+    readable = load_project(saved_path.with_suffix(".ewald.json"))
+    readable_record = readable.simulations[record["simulation_id"]]
+    readable_cif = readable.reference_cifs["loaded"][loaded_cif_id]
+    assert readable_record["cif_path"] == readable_cif["local_path"]
+    assert Path(readable_record["cif_path"]).exists()
+
+
 def _write_poscar(path: Path) -> Path:
     return _write_species_poscar(
         path,
@@ -1014,6 +1381,12 @@ def _settings(tmp_path: Path) -> QtCore.QSettings:
 
 def _combo_items(combo) -> list[str]:
     return [combo.itemText(index) for index in range(combo.count())]
+
+
+def _project_data_count(project: ProjectState) -> int:
+    return len(project.data_files) + sum(
+        len(group.data_files) for group in project.data_groups
+    )
 
 
 def _child_with_text(parent, text):

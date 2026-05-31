@@ -197,7 +197,7 @@ class CrystalOverlayCalculator:
         rotated_cell = rotate_vectors_by_quaternion(
             self._cell_corners, quaternion
         )
-        qxy = rotated_q[:, 0]
+        qxy = _signed_in_plane_qxy(rotated_q)
         qz = rotated_q[:, 2]
         hkl = self._hkl
         q_vectors = rotated_q
@@ -215,6 +215,20 @@ class CrystalOverlayCalculator:
             cell_corners=rotated_cell,
             cell_edges=_cell_edges(),
         )
+
+
+def _signed_in_plane_qxy(q_vectors: np.ndarray) -> np.ndarray:
+    """Project q-vectors to signed GIWAXS qxy coordinates."""
+
+    vectors = np.asarray(q_vectors, dtype=float)
+    if vectors.size == 0:
+        return np.empty((0,), dtype=float)
+    qxy = np.hypot(vectors[:, 0], vectors[:, 1])
+    signs = np.sign(vectors[:, 0])
+    near_zero_x = np.isclose(signs, 0.0)
+    signs[near_zero_x] = np.sign(vectors[near_zero_x, 1])
+    signs[np.isclose(signs, 0.0)] = 1.0
+    return qxy * signs
 
 
 def apply_crystal_system_constraints(values: dict[str, Any]) -> dict[str, Any]:

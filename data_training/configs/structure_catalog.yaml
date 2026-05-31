@@ -1,0 +1,62 @@
+schema_version: "1"
+catalog_id: ewald_seed_structure_catalog
+default_structure_root: .
+metadata:
+  purpose: >
+    Seed catalog for generated GIWAXS training data. Paths are intentionally
+    relative to the repository so local and cluster runtimes can remap them.
+  curator: EWALD data_training scaffold
+records:
+  - structure_id: pb_i2_2h
+    name: 2H PbI2
+    source:
+      path: example/structures/2hPbI2.cif
+      format: cif
+      kind: local_file
+    chemistry_family: lead_halide
+    dimensionality: layered_2d
+    texture_tags:
+      - fibril_texture_seed
+      - layered_reference
+    expected_motifs:
+      - lamellar_qz_series
+      - in_plane_halide_framework
+    references:
+      - Local EWALD example structure collection
+    metadata:
+      notes: Baseline layered lead iodide reference for early sweeps.
+
+  - structure_id: ma2_pbi3i8_dmso
+    name: MA2 PbI3I8 2DMSO
+    source:
+      path: example/structures/MA2_PbI3I8_2DMSO_Nanfeng_2016.cif
+      format: cif
+      kind: local_file
+    chemistry_family: hybrid_lead_halide
+    dimensionality: layered_2d
+    texture_tags:
+      - fibril_texture_seed
+      - solvent_complex
+    expected_motifs:
+      - low_q_lamellar_peak
+      - mixed_in_plane_out_of_plane_grid
+    references:
+      - Local EWALD example structure collection
+
+  - structure_id: fa2pb3i8_4dmf
+    name: FA2Pb3I8 4DMF
+    source:
+      path: example/structures/FA2Pb3I8-4DMF-2022-Petrov.cif
+      format: cif
+      kind: local_file
+    chemistry_family: hybrid_lead_halide
+    dimensionality: quasi_2d
+    texture_tags:
+      - fibril_texture_seed
+      - orientational_variant
+    expected_motifs:
+      - quasi_2d_peak_family
+      - anisotropic_intensity_envelope
+    references:
+      - Local EWALD example structure collection
+

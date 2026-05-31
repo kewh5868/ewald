@@ -12,13 +12,17 @@ from ewald.io.importers import (
     build_data_group_from_folder,
     build_data_group_from_paths,
 )
-from ewald.io.project import load_project, normalize_project_path, save_project
+from ewald.io.project import (
+    PROJECT_FILE_FILTER,
+    load_project,
+    normalize_project_path,
+    save_project,
+)
 from ewald.ui.corrections import ApplyImageCorrectionsPane
 from ewald.ui.data_tree import DataTreePane
 from ewald.ui.data_viewer import DataViewerPane
 from ewald.ui.giwaxs_simulation import (
-    GIWAXSSimulationResultPane,
-    GIWAXSSimulationWindow,
+    GIWAXSSimulationPane,
 )
 from ewald.ui.metadata_dialog import ManualMetadataDialog
 from ewald.ui.peak_identification import PeakIdentificationPane
@@ -29,12 +33,15 @@ from ewald.ui.pyfai_calib2 import (
     PyFAICalib2Status,
 )
 from ewald.ui.structure_analysis import StructureAnalysisPane
+from ewald.ui.theme import apply_application_theme
 from ewald.version import __version__
 
 GITHUB_URL = "https://github.com/kewh5868/ewald/"
 DEVELOPER_NAME = "Keith White"
 DEVELOPER_EMAIL = "keith.white@colorado.edu"
 PROJECT_DIRECTORY_SETTING = "project_directory"
+RECENT_PROJECTS_SETTING = "recent_projects"
+MAX_RECENT_PROJECTS = 8
 APP_TITLE = APPLICATION_DISPLAY_NAME
 
 
@@ -50,6 +57,7 @@ class MainWindow(QtWidgets.QMainWindow):
         parent: QtWidgets.QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        apply_application_theme(QtWidgets.QApplication.instance())
         self.settings = settings or QtCore.QSettings("EWALD", "EWALD")
         self.project = project or ProjectState()
         self.project_active = project is not None
@@ -60,6 +68,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.current_tree_selection: dict[str, str | None] = {"kind": "root"}
         self.setWindowTitle(APP_TITLE)
         self.resize(1600, 1000)
+        self._build_status_bar()
 
         self.tabs = QtWidgets.QTabWidget()
         self.setCentralWidget(self.tabs)
@@ -76,6 +85,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._build_tabs()
         self._refresh_project_views()
         self._refresh_workflow_context()
+        self._refresh_save_status()
+        if self.project_active and self.project_path is not None:
+            self._remember_recent_project(self.project_path)
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self.pyfai_calib2_launcher.terminate()
@@ -83,7 +95,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _create_actions(self) -> None:
         self.new_project_action = QtGui.QAction("New Project", self)
+        self.new_project_action.setShortcut(QtGui.QKeySequence.StandardKey.New)
         self.open_project_action = QtGui.QAction("Open Project", self)
+        self.open_project_action.setShortcut(
+            QtGui.QKeySequence.StandardKey.Open
+        )
         self.load_files_action = QtGui.QAction("Import Data File", self)
         self.load_folder_action = QtGui.QAction("Import Data Folder", self)
         self.save_project_action = QtGui.QAction("Save Project", self)
@@ -113,6 +129,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.version_info_action = QtGui.QAction("Version Information", self)
         self.exit_action = QtGui.QAction("Exit", self)
         self._set_action_icons()
+        self._set_action_status_tips()
 
         self.new_project_action.triggered.connect(self.new_project)
         self.open_project_action.triggered.connect(self.open_project)
@@ -147,6 +164,32 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _set_action_icons(self) -> None:
         style = self.style()
+        self.new_project_action.setIcon(
+            style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileIcon)
+        )
+        self.open_project_action.setIcon(
+            style.standardIcon(
+                QtWidgets.QStyle.StandardPixmap.SP_DialogOpenButton
+            )
+        )
+        self.load_files_action.setIcon(
+            style.standardIcon(
+                QtWidgets.QStyle.StandardPixmap.SP_FileDialogNewFolder
+            )
+        )
+        self.load_folder_action.setIcon(
+            style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DirIcon)
+        )
+        self.save_project_action.setIcon(
+            style.standardIcon(
+                QtWidgets.QStyle.StandardPixmap.SP_DialogSaveButton
+            )
+        )
+        self.save_project_as_action.setIcon(
+            style.standardIcon(
+                QtWidgets.QStyle.StandardPixmap.SP_DialogApplyButton
+            )
+        )
         mask_icon = style.standardIcon(
             QtWidgets.QStyle.StandardPixmap.SP_FileDialogDetailedView
         )
@@ -158,11 +201,45 @@ class MainWindow(QtWidgets.QMainWindow):
         self.create_calibrant_action.setIcon(calibrant_icon)
         self.load_calibrant_action.setIcon(calibrant_icon)
         self.pyfai_calibration_action.setIcon(calibrant_icon)
+        self.giwaxs_simulation_action.setIcon(
+            style.standardIcon(
+                QtWidgets.QStyle.StandardPixmap.SP_FileDialogInfoView
+            )
+        )
+        self.pole_figure_action.setIcon(
+            style.standardIcon(
+                QtWidgets.QStyle.StandardPixmap.SP_FileDialogContentsView
+            )
+        )
+        self.github_action.setIcon(
+            style.standardIcon(
+                QtWidgets.QStyle.StandardPixmap.SP_DialogHelpButton
+            )
+        )
+
+    def _set_action_status_tips(self) -> None:
+        tips = {
+            self.new_project_action: "Create a new EWALD project.",
+            self.open_project_action: "Open an existing EWALD project.",
+            self.load_files_action: "Import one detector image into the project.",
+            self.load_folder_action: "Import a folder of detector images.",
+            self.save_project_action: "Save the active EWALD project.",
+            self.save_project_as_action: "Save the project to a new file.",
+            self.load_mask_action: "Assign a mask to the selected data.",
+            self.load_calibrant_action: "Assign a PONI calibration file.",
+            self.pyfai_calibration_action: "Open pyFAI calibration tools.",
+            self.giwaxs_simulation_action: "Open the GIWAXS simulation workflow.",
+            self.pole_figure_action: "Generate a pole figure from the selected ROI.",
+        }
+        for action, tip in tips.items():
+            action.setStatusTip(tip)
+            action.setToolTip(tip)
 
     def _build_menu(self) -> None:
         self.file_menu = self.menuBar().addMenu("File")
         self.file_menu.addAction(self.new_project_action)
         self.file_menu.addAction(self.open_project_action)
+        self.recent_projects_menu = self.file_menu.addMenu("Open Recent")
         self.file_menu.addSeparator()
         self.file_menu.addAction(self.load_files_action)
         self.file_menu.addAction(self.load_folder_action)
@@ -188,45 +265,74 @@ class MainWindow(QtWidgets.QMainWindow):
         self.help_menu.addAction(self.github_action)
         self.help_menu.addAction(self.developer_info_action)
         self.help_menu.addAction(self.version_info_action)
+        self._refresh_recent_projects_menu()
 
     def _build_workflow_toolbar(self) -> None:
         self.workflow_toolbar = QtWidgets.QToolBar("Workflow", self)
         self.workflow_toolbar.setObjectName("WorkflowToolbar")
         self.workflow_toolbar.setMovable(False)
+        self.workflow_toolbar.setToolButtonStyle(
+            QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly
+        )
         self.workflow_context_label = QtWidgets.QLabel("Project")
         self.workflow_context_label.setMinimumWidth(220)
         self.workflow_toolbar.addWidget(self.workflow_context_label)
+        self.workflow_toolbar.addSeparator()
+        for action in (
+            self.new_project_action,
+            self.open_project_action,
+            self.save_project_action,
+            self.load_files_action,
+            self.load_folder_action,
+        ):
+            self.workflow_toolbar.addAction(action)
+        self.workflow_toolbar.addSeparator()
+        for action in (
+            self.pyfai_calibration_action,
+            self.giwaxs_simulation_action,
+            self.pole_figure_action,
+        ):
+            self.workflow_toolbar.addAction(action)
         self.addToolBar(
             QtCore.Qt.ToolBarArea.TopToolBarArea,
             self.workflow_toolbar,
         )
 
+    def _build_status_bar(self) -> None:
+        self.save_status_label = QtWidgets.QLabel()
+        self.save_status_label.setAlignment(
+            QtCore.Qt.AlignmentFlag.AlignRight
+            | QtCore.Qt.AlignmentFlag.AlignVCenter
+        )
+        self.save_status_label.setMinimumWidth(260)
+        self.statusBar().addPermanentWidget(self.save_status_label)
+
     def open_github_repository(self) -> None:
         QtGui.QDesktopServices.openUrl(QtCore.QUrl(GITHUB_URL))
 
     def open_giwaxs_simulation_tool(self) -> None:
-        if not hasattr(self, "giwaxs_simulation_window"):
-            self.giwaxs_simulation_window = None
-        target_data_id = self._selected_file_data_id()
-        if self.giwaxs_simulation_window is None:
-            self.giwaxs_simulation_window = GIWAXSSimulationWindow(
-                project=self.project,
-                project_path=self.project_path,
-                initial_data_id=target_data_id,
-                settings=self.settings,
-                parent=self,
-            )
-            self.giwaxs_simulation_window.simulationCreated.connect(
-                self._handle_simulation_created
-            )
-            self.giwaxs_simulation_window.simulationLinked.connect(
-                self._handle_simulation_linked
-            )
-        elif target_data_id is not None:
-            self.giwaxs_simulation_window.set_target_data_id(target_data_id)
-        self.giwaxs_simulation_window.show()
-        self.giwaxs_simulation_window.raise_()
-        self.giwaxs_simulation_window.activateWindow()
+        if not self.project_active:
+            self._activate_project_from_simulation()
+            self.current_tree_selection = {"kind": "root"}
+            self._refresh_project_views()
+            self._refresh_workflow_context()
+        target_data_id = (
+            self._selected_file_data_id()
+            or self._selected_simulation_data_id()
+        )
+        pane = self._embedded_simulation_tab()
+        if pane is None:
+            self._refresh_right_tabs()
+            pane = self._embedded_simulation_tab()
+        if pane is None:
+            return
+        pane.refresh_project_context(
+            project_path=self.project_path,
+            target_data_id=target_data_id,
+        )
+        if target_data_id is not None:
+            pane.set_target_data_id(target_data_id)
+        self.tabs.setCurrentWidget(pane)
 
     def open_pole_figure_tool(
         self,
@@ -351,8 +457,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.project_active:
             self.project_summary.setPlainText(
                 "No active EWALD project\n\n"
-                "Create a new project or load an existing .ewld project before "
-                "importing detector data."
+                "Create a new project, load an existing project, or open the "
+                "GIWAXS Simulation workflow to start from a structure file."
             )
             return
         lines = [
@@ -417,12 +523,26 @@ class MainWindow(QtWidgets.QMainWindow):
         name = self._request_new_project_name()
         if name is None:
             return
+        previous_project = self.project
+        previous_project_active = self.project_active
+        previous_project_path = self.project_path
+        previous_selection = dict(self.current_tree_selection)
+        previous_pole_window = getattr(self, "pole_figure_window", None)
         self.project = ProjectState(name=name)
         self.project_active = True
         self.project_path = None
-        self.giwaxs_simulation_window = None
         self.pole_figure_window = None
         self.current_tree_selection = {"kind": "root"}
+        if not self.save_project_as():
+            self.project = previous_project
+            self.project_active = previous_project_active
+            self.project_path = previous_project_path
+            self.current_tree_selection = previous_selection
+            self.pole_figure_window = previous_pole_window
+            self._refresh_project_views()
+            self._refresh_workflow_context()
+            self._refresh_save_status()
+            return
         self._refresh_project_views()
         self._refresh_workflow_context()
 
@@ -431,7 +551,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self,
             "Open EWALD Project",
             str(self._project_directory()),
-            "EWALD Projects (*.ewld)",
+            PROJECT_FILE_FILTER,
         )
         if not path:
             return
@@ -439,15 +559,45 @@ class MainWindow(QtWidgets.QMainWindow):
             "opening a different project"
         ):
             return
-        self.project = load_project(path)
+        self._open_project_path(Path(path))
+
+    def _open_recent_project(self, path_text: str) -> None:
+        path = Path(path_text)
+        if not path.exists():
+            self._forget_recent_project(path)
+            QtWidgets.QMessageBox.information(
+                self,
+                "Recent Project Not Found",
+                f"The recent project could not be found:\n{path}",
+            )
+            return
+        if not self._confirm_replace_current_project(
+            "opening a recent project"
+        ):
+            return
+        self._open_project_path(path)
+
+    def _open_project_path(self, path: Path) -> bool:
+        try:
+            project = load_project(path)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Open Project Failed",
+                f"EWALD could not open this project:\n{path}\n\n{exc}",
+            )
+            return False
+        self.project = project
         self.project_active = True
-        self.project_path = Path(path)
-        self.giwaxs_simulation_window = None
+        self.project_path = normalize_project_path(path)
         self.pole_figure_window = None
         self._remember_project_directory(self.project_path.parent)
+        self._remember_recent_project(self.project_path)
+        self._refresh_save_status()
         self.current_tree_selection = {"kind": "root"}
         self._refresh_project_views()
         self._refresh_workflow_context()
+        return True
 
     def load_files(self) -> None:
         if not self._require_project():
@@ -566,6 +716,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.project_path is None:
             return self.save_project_as()
         self.project_path = save_project(self.project, self.project_path)
+        self._remember_recent_project(self.project_path)
+        self._mark_project_saved()
         return True
 
     def save_project_as(self) -> bool:
@@ -575,13 +727,42 @@ class MainWindow(QtWidgets.QMainWindow):
             self,
             "Save EWALD Project",
             str(self._suggested_project_save_path()),
-            "EWALD Projects (*.ewld)",
+            PROJECT_FILE_FILTER,
         )
         if not path:
             return False
         self.project_path = save_project(self.project, path)
         self._remember_project_directory(self.project_path.parent)
+        self._remember_recent_project(self.project_path)
+        self._mark_project_saved()
         return True
+
+    def _mark_project_saved(self) -> None:
+        self._refresh_save_status(saved_now=True)
+        if self.project_path is not None:
+            self.statusBar().showMessage(
+                f"Project saved: {self.project_path}",
+                4000,
+            )
+
+    def _refresh_save_status(self, *, saved_now: bool = False) -> None:
+        if not hasattr(self, "save_status_label"):
+            return
+        if not self.project_active:
+            text = "No project saved"
+            tooltip = "Create or open a project to enable saving."
+        elif self.project_path is None:
+            text = "Not saved"
+            tooltip = "Save the project to choose a project file."
+        elif saved_now:
+            timestamp = QtCore.QTime.currentTime().toString("h:mm:ss AP")
+            text = f"Last saved: {timestamp}"
+            tooltip = f"Project file: {self.project_path}"
+        else:
+            text = f"Saved: {self.project_path.name}"
+            tooltip = f"Project file: {self.project_path}"
+        self.save_status_label.setText(text)
+        self.save_status_label.setToolTip(tooltip)
 
     def _request_new_project_name(self) -> str | None:
         while True:
@@ -617,6 +798,83 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings.setValue(PROJECT_DIRECTORY_SETTING, str(directory))
         self.settings.sync()
 
+    def _recent_project_paths(self) -> list[Path]:
+        raw_value = self.settings.value(RECENT_PROJECTS_SETTING, [])
+        if isinstance(raw_value, str):
+            values = [raw_value]
+        else:
+            values = list(raw_value or [])
+        paths: list[Path] = []
+        seen: set[str] = set()
+        for value in values:
+            path = Path(str(value)).expanduser()
+            key = str(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            paths.append(path)
+        return paths[:MAX_RECENT_PROJECTS]
+
+    def _remember_recent_project(self, path: Path) -> None:
+        normalized = normalize_project_path(path).expanduser()
+        recent = [
+            candidate
+            for candidate in self._recent_project_paths()
+            if candidate != normalized
+        ]
+        recent.insert(0, normalized)
+        self.settings.setValue(
+            RECENT_PROJECTS_SETTING,
+            [str(candidate) for candidate in recent[:MAX_RECENT_PROJECTS]],
+        )
+        self.settings.sync()
+        if hasattr(self, "recent_projects_menu"):
+            self._refresh_recent_projects_menu()
+
+    def _forget_recent_project(self, path: Path) -> None:
+        normalized = normalize_project_path(path).expanduser()
+        recent = [
+            candidate
+            for candidate in self._recent_project_paths()
+            if candidate != normalized
+        ]
+        self.settings.setValue(
+            RECENT_PROJECTS_SETTING,
+            [str(candidate) for candidate in recent],
+        )
+        self.settings.sync()
+        if hasattr(self, "recent_projects_menu"):
+            self._refresh_recent_projects_menu()
+
+    def _clear_recent_projects(self) -> None:
+        self.settings.setValue(RECENT_PROJECTS_SETTING, [])
+        self.settings.sync()
+        self._refresh_recent_projects_menu()
+
+    def _refresh_recent_projects_menu(self) -> None:
+        self.recent_projects_menu.clear()
+        recent = self._recent_project_paths()
+        if not recent:
+            empty_action = self.recent_projects_menu.addAction(
+                "No Recent Projects"
+            )
+            empty_action.setEnabled(False)
+            self.recent_projects_menu.setEnabled(False)
+            return
+        self.recent_projects_menu.setEnabled(True)
+        for path in recent:
+            action = self.recent_projects_menu.addAction(path.name)
+            action.setToolTip(str(path))
+            action.setStatusTip(f"Open {path}")
+            action.triggered.connect(
+                lambda _checked=False, recent_path=str(path): (
+                    self._open_recent_project(recent_path)
+                )
+            )
+        self.recent_projects_menu.addSeparator()
+        clear_action = self.recent_projects_menu.addAction("Clear Recent")
+        clear_action.triggered.connect(self._clear_recent_projects)
+
     def _confirm_replace_current_project(self, action: str) -> bool:
         if not self.project_active:
             return True
@@ -651,7 +909,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.data_tree.set_project_active(self.project_active)
         has_target = self.project_active and bool(self._selected_target_ids())
         locked = self._selected_file_corrections_confirmed()
-        self.giwaxs_simulation_action.setEnabled(self.project_active)
+        self.giwaxs_simulation_action.setEnabled(True)
         self.pole_figure_action.setEnabled(self.project_active)
         self.pyfai_calibration_action.setEnabled(True)
         self.create_mask_action.setEnabled(True)
@@ -782,15 +1040,20 @@ class MainWindow(QtWidgets.QMainWindow):
 
         simulation_id = self._selected_simulation_id()
         if simulation_id is not None:
-            self.tabs.addTab(
-                GIWAXSSimulationResultPane(self.project, simulation_id),
-                "GIWAXS Simulation",
+            pane = self._create_embedded_simulation_pane(
+                self._selected_simulation_data_id()
             )
+            pane.select_simulation(simulation_id)
+            self.tabs.addTab(pane, "GIWAXS Simulation")
             return
 
         data_id = self._selected_viewer_data_id()
         if data_id is None:
             self.tabs.addTab(self.project_summary, "Project")
+            self.tabs.addTab(
+                self._create_embedded_simulation_pane(None),
+                "GIWAXS Simulation",
+            )
             return
 
         viewer = DataViewerPane(self.project, str(data_id))
@@ -827,6 +1090,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._handle_image_corrections_confirmed
             )
             self.tabs.addTab(pane, "Apply Image Corrections")
+            self.tabs.addTab(
+                self._create_embedded_simulation_pane(str(data_id)),
+                "GIWAXS Simulation",
+            )
             return
 
         peak_pane = PeakIdentificationPane(
@@ -857,10 +1124,46 @@ class MainWindow(QtWidgets.QMainWindow):
             self._handle_structure_candidate_overlay_requested
         )
         self.tabs.addTab(structure_pane, "Structure Analysis")
+
+        simulation_pane = self._create_embedded_simulation_pane(str(data_id))
+        structure_pane.structureAnalysisChanged.connect(
+            lambda changed_data_id, pane=simulation_pane: (
+                self._refresh_embedded_simulation_from_structure_analysis(
+                    pane,
+                    changed_data_id,
+                )
+            )
+        )
         self.tabs.addTab(
-            self._placeholder("GIWAXS Simulation"),
+            simulation_pane,
             "GIWAXS Simulation",
         )
+
+    def _create_embedded_simulation_pane(
+        self,
+        target_data_id: str | None,
+    ) -> GIWAXSSimulationPane:
+        pane = GIWAXSSimulationPane(
+            project=self.project,
+            project_path=self.project_path,
+            initial_data_id=target_data_id,
+            settings=self.settings,
+            parent=self,
+        )
+        pane.projectChanged.connect(
+            lambda data_id=target_data_id: (
+                self._handle_embedded_simulation_project_changed(data_id)
+            )
+        )
+        self.giwaxs_simulation_window = pane
+        return pane
+
+    def _embedded_simulation_tab(self) -> GIWAXSSimulationPane | None:
+        for index in range(self.tabs.count()):
+            widget = self.tabs.widget(index)
+            if isinstance(widget, GIWAXSSimulationPane):
+                return widget
+        return None
 
     def _handle_image_corrections_applied(self, data_id: str) -> None:
         self._refresh_project_summary()
@@ -894,6 +1197,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
 
     def _handle_simulation_created(self, simulation_id: str) -> None:
+        self._activate_project_from_simulation()
         self.current_tree_selection = {
             "kind": "simulation",
             "simulation_id": simulation_id,
@@ -902,12 +1206,46 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_workflow_context()
 
     def _handle_simulation_linked(self, simulation_id: str) -> None:
+        self._activate_project_from_simulation()
         self.current_tree_selection = {
             "kind": "simulation",
             "simulation_id": simulation_id,
         }
         self._refresh_project_views()
         self._refresh_workflow_context()
+
+    def _handle_simulation_project_changed(self) -> None:
+        self._activate_project_from_simulation()
+        self._refresh_project_summary()
+        self.data_tree.set_project(self.project)
+        self._refresh_workflow_context()
+
+    def _activate_project_from_simulation(self) -> None:
+        if self.project_active:
+            return
+        self.project_active = True
+        self._refresh_save_status()
+
+    def _handle_embedded_simulation_project_changed(
+        self,
+        data_id: str | None,
+    ) -> None:
+        self._activate_project_from_simulation()
+        self._refresh_project_summary()
+        self.data_tree.set_project(self.project)
+        self._refresh_workflow_context()
+
+    def _refresh_embedded_simulation_from_structure_analysis(
+        self,
+        pane: GIWAXSSimulationPane,
+        data_id: str,
+    ) -> None:
+        if pane.selected_data_id() != data_id:
+            return
+        pane.refresh_project_context(
+            project_path=self.project_path,
+            target_data_id=data_id,
+        )
 
     def _handle_peak_set_changed(self, data_id: str) -> None:
         self._refresh_project_summary()
@@ -946,7 +1284,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 and widget.data_id == data_id
             ):
                 widget.add_integration_markers(marker_list)
-                self.tabs.setCurrentIndex(index)
                 self._handle_peak_set_changed(data_id)
                 return
 
@@ -986,6 +1323,16 @@ class MainWindow(QtWidgets.QMainWindow):
             return None
         simulation_id = self.current_tree_selection.get("simulation_id")
         return str(simulation_id) if simulation_id else None
+
+    def _selected_simulation_data_id(self) -> str | None:
+        simulation_id = self._selected_simulation_id()
+        if simulation_id is None:
+            return None
+        record = self.project.simulations.get(simulation_id)
+        if not isinstance(record, dict):
+            return None
+        data_id = record.get("data_id")
+        return str(data_id) if data_id else None
 
     def _selected_file_data_id(self) -> str | None:
         if self.current_tree_selection.get("kind") != "file":
@@ -1128,10 +1475,9 @@ def _project_data_files(project: ProjectState):
 def _default_project_directory() -> Path:
     source_path = Path(__file__).resolve()
     for parent in source_path.parents:
-        for relative in ("examples/projects", "example/projects"):
-            candidate = parent / relative
-            if candidate.exists():
-                return candidate
+        candidate = parent / "example" / "projects"
+        if candidate.exists():
+            return candidate
     return Path.home() / "EWALD" / "projects"
 
 

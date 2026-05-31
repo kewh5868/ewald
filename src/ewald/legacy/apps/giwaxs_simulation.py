@@ -1,4 +1,4 @@
-"""Launch the standalone GIWAXS simulation tool."""
+"""Launch the legacy standalone GIWAXS simulation tool."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from ewald.app.metadata import configure_qapplication_metadata
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the deployable GIWAXS simulation application."""
+    """Run the legacy standalone GIWAXS simulation application."""
 
     from qtpy import QtWidgets
 

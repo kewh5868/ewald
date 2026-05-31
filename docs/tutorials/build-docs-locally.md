@@ -1,5 +1,9 @@
 # Tutorial: Building the EWALD docs locally
 
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
 This tutorial is for contributors and users who want to check docs locally.
 
 ## 1) Install docs dependencies
@@ -36,8 +40,13 @@ The built site appears in `site/`.
 
 ## 5) Refresh docs from screenshots and diagrams
 
-- Place new screenshots under `docs/assets/placeholders/` during development.
-- Replace placeholders with real captures once the matching workflow screen is stable.
+- Generate UI captures from the active EWALD environment:
+  ```bash
+  python scripts/generate_tutorial_screenshots.py
+  ```
+- Store runtime captures under `docs/assets/screenshots/tutorials/`.
+- Keep placeholders under `docs/assets/placeholders/` only for workflows that do not yet
+  have a stable capture.
 - Rebuild and confirm all docs pages render cleanly.
 
-![Loading placeholder](../assets/placeholders/loading-data.svg)
+![EWALD main window screen capture](../assets/screenshots/tutorials/ui-main-window.png)

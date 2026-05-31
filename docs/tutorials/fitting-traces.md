@@ -1,5 +1,9 @@
 # Tutorial: Fitting `q<sub>xy</sub>` and `q<sub>z</sub>` traces
 
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
 ## 1) Select a ROI
 
 - Ensure a box or arch ROI exists.
@@ -25,4 +29,4 @@
 
 - Push fitted centers into Structure Analysis for candidate evaluation.
 
-![Peak fitting tutorial placeholder](../assets/placeholders/peak-fitting.svg)
+![Peak fitting tutorial screen capture](../assets/screenshots/tutorials/peak-fitting.png)

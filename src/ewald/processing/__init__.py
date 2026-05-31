@@ -3,9 +3,11 @@
 from ewald.processing.calibration import CalibrationInputs
 from ewald.processing.fitting import FitResult, fit_peak_set
 from ewald.processing.peak_detection import (
+    GapAwarePeakInferenceConfig,
     LocalMaxPeakFinderConfig,
     PeakCandidate,
     find_local_maxima_peaks,
+    infer_detector_gap_peaks,
     threshold_peaks,
 )
 from ewald.processing.peak_fitting import (
@@ -51,6 +53,7 @@ __all__ = [
     "CakingConfig",
     "CalibrationInputs",
     "FitResult",
+    "GapAwarePeakInferenceConfig",
     "GrazingIncidenceConfig",
     "BACKGROUND_CONSTANT",
     "BACKGROUND_LOCAL_ANNULAR",
@@ -73,6 +76,7 @@ __all__ = [
     "evaluate_peak_fit_2d",
     "export_pole_figure_csv",
     "find_local_maxima_peaks",
+    "infer_detector_gap_peaks",
     "fit_peak_integration",
     "fit_peak_integrations",
     "fit_peak_roi_2d",

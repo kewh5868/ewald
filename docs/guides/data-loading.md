@@ -1,5 +1,9 @@
 # Data Loading
 
+!!! warning "Documentation notice"
+    This documentation was generated with help from a large language model and has not been fully vetted by the developer. Verify critical details against the source code and current application behavior.
+
+
 EWALD currently supports TIFF detector images for direct loading.
 
 ## Supported input formats
@@ -57,4 +61,4 @@ Common parsed values include:
 3. Review inferred metadata and confirm values.
 4. Continue to corrections and Data Viewer.
 
-![Data loading placeholder](../assets/placeholders/data-loading.svg)
+![EWALD data loading screen capture](../assets/screenshots/tutorials/ui-main-window.png)

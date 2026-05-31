@@ -310,66 +310,81 @@ class ApplyImageCorrectionsPane(QtWidgets.QWidget):
             )
             return
 
-        self.apply_selected_assets(emit_signal=False)
-        existing = self.project.image_corrections.get(self.data_id)
-        metadata = dict(existing.metadata) if existing is not None else {}
-        metadata.update(
-            {
-                "workflow": "insight-style-preprocessing",
-                "locked_after_confirmation": True,
-                "sample_stoichiometry": self.sample_stoichiometry.text().strip(),
-                "sample_density_g_cm3": self.sample_density.value(),
-                "refractive_index_delta": (
+        progress = self._correction_confirmation_progress_dialog()
+        self.confirm_button.setEnabled(False)
+        try:
+            progress.show()
+            QtWidgets.QApplication.processEvents()
+            self.apply_selected_assets(emit_signal=False)
+            existing = self.project.image_corrections.get(self.data_id)
+            metadata = dict(existing.metadata) if existing is not None else {}
+            metadata.update(
+                {
+                    "workflow": "insight-style-preprocessing",
+                    "locked_after_confirmation": True,
+                    "sample_stoichiometry": (
+                        self.sample_stoichiometry.text().strip()
+                    ),
+                    "sample_density_g_cm3": self.sample_density.value(),
+                    "refractive_index_delta": (
+                        self.refractive_delta.value()
+                        if self.refractive_delta.value() > 0
+                        else None
+                    ),
+                }
+            )
+            state = ImageCorrectionState(
+                target_id=self.data_id,
+                mask_asset_id=str(mask_id),
+                calibrant_asset_id=str(calibrant_id),
+                xray_energy_kev=self.energy_kev.value(),
+                image_rotation_deg=int(self.rotation_combo.currentData() or 0),
+                image_mirrored_y=self.mirror_y_check.isChecked(),
+                pyfai_sample_orientation=int(
+                    self.sample_orientation_combo.currentData() or 1
+                ),
+                correct_solid_angle=self.solid_angle_check.isChecked(),
+                polarization_factor=(
+                    self.polarization_factor.value()
+                    if self.polarization_check.isChecked()
+                    else None
+                ),
+                normalization_factor=self.normalization_factor.value(),
+                dummy=(
+                    self.dummy_value.value()
+                    if self.dummy_check.isChecked()
+                    else None
+                ),
+                delta_dummy=(
+                    self.delta_dummy.value()
+                    if self.dummy_check.isChecked()
+                    else None
+                ),
+                reflected_beam_x_px=self.reflected_x.value(),
+                reflected_beam_y_px=self.reflected_y.value(),
+                critical_angle_deg=self.critical_angle.value(),
+                sample_stoichiometry=(
+                    self.sample_stoichiometry.text().strip() or None
+                ),
+                sample_density_g_cm3=self.sample_density.value(),
+                refractive_index_delta=(
                     self.refractive_delta.value()
                     if self.refractive_delta.value() > 0
                     else None
                 ),
-            }
-        )
-        state = ImageCorrectionState(
-            target_id=self.data_id,
-            mask_asset_id=str(mask_id),
-            calibrant_asset_id=str(calibrant_id),
-            xray_energy_kev=self.energy_kev.value(),
-            image_rotation_deg=int(self.rotation_combo.currentData() or 0),
-            image_mirrored_y=self.mirror_y_check.isChecked(),
-            pyfai_sample_orientation=int(
-                self.sample_orientation_combo.currentData() or 1
-            ),
-            correct_solid_angle=self.solid_angle_check.isChecked(),
-            polarization_factor=(
-                self.polarization_factor.value()
-                if self.polarization_check.isChecked()
-                else None
-            ),
-            normalization_factor=self.normalization_factor.value(),
-            dummy=(
-                self.dummy_value.value()
-                if self.dummy_check.isChecked()
-                else None
-            ),
-            delta_dummy=(
-                self.delta_dummy.value()
-                if self.dummy_check.isChecked()
-                else None
-            ),
-            reflected_beam_x_px=self.reflected_x.value(),
-            reflected_beam_y_px=self.reflected_y.value(),
-            critical_angle_deg=self.critical_angle.value(),
-            sample_stoichiometry=self.sample_stoichiometry.text().strip()
-            or None,
-            sample_density_g_cm3=self.sample_density.value(),
-            refractive_index_delta=(
-                self.refractive_delta.value()
-                if self.refractive_delta.value() > 0
-                else None
-            ),
-            artifact_regions=self.artifact_regions(),
-            confirmed=True,
-            metadata=metadata,
-        )
-        self.project.set_image_corrections(state)
-        self.correctionsConfirmed.emit(self.data_id)
+                artifact_regions=self.artifact_regions(),
+                confirmed=True,
+                metadata=metadata,
+            )
+            self.project.set_image_corrections(state)
+            self.correctionsConfirmed.emit(self.data_id)
+            progress.setRange(0, 1)
+            progress.setValue(1)
+            QtWidgets.QApplication.processEvents()
+        finally:
+            self.confirm_button.setEnabled(True)
+            progress.close()
+            progress.deleteLater()
 
     def calculate_critical_angle_from_delta(self) -> None:
         delta = self.refractive_delta.value()
@@ -1048,6 +1063,24 @@ class ApplyImageCorrectionsPane(QtWidgets.QWidget):
         ]
         for current_widget, next_widget in zip(widgets, widgets[1:]):
             QtWidgets.QWidget.setTabOrder(current_widget, next_widget)
+
+    def _correction_confirmation_progress_dialog(
+        self,
+    ) -> QtWidgets.QProgressDialog:
+        dialog = QtWidgets.QProgressDialog(
+            "Applying image corrections...",
+            "",
+            0,
+            0,
+            self,
+        )
+        dialog.setWindowTitle("Applying Corrections")
+        dialog.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
+        dialog.setCancelButton(None)
+        dialog.setMinimumDuration(0)
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+        return dialog
 
     def _populate_asset_combos(self) -> None:
         _populate_combo(

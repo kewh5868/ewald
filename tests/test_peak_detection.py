@@ -3,6 +3,7 @@
 import numpy as np
 
 from ewald.processing.peak_detection import (
+    GapAwarePeakInferenceConfig,
     LocalMaxPeakFinderConfig,
     find_local_maxima_peaks,
 )
@@ -82,3 +83,83 @@ def test_adaptive_peak_finder_recovers_weaker_local_peaks():
     )
     assert weak_peak.snr is not None
     assert weak_peak.snr > 3.0
+
+
+def test_peak_finder_infers_center_for_narrow_detector_gap():
+    image = np.ones((40, 52), dtype=float)
+    image[:, 24:27] = 0.0
+    image[20, 22] = 85.0
+    image[20, 28] = 82.0
+
+    peaks = find_local_maxima_peaks(
+        image,
+        config=LocalMaxPeakFinderConfig(
+            min_intensity=10.0,
+            max_peaks=10,
+            min_distance_px=8,
+            neighborhood_radius_px=1,
+            gap_inference=GapAwarePeakInferenceConfig(
+                sample_texture="anisotropic",
+                max_gap_width_px=5,
+                max_gap_fraction=0.15,
+            ),
+        ),
+    )
+
+    gap_peaks = [
+        peak for peak in peaks if (peak.metadata or {}).get("gap_estimate")
+    ]
+
+    assert len(gap_peaks) == 1
+    assert round(gap_peaks[0].x) == 25
+    assert round(gap_peaks[0].y) == 20
+    assert gap_peaks[0].metadata["gap_width_px"] == 3
+    assert gap_peaks[0].metadata["gap_axis"] == "qxy"
+
+
+def test_peak_finder_does_not_bridge_large_missing_gap():
+    image = np.ones((40, 80), dtype=float)
+    image[:, 30:52] = 0.0
+    image[20, 28] = 85.0
+    image[20, 54] = 82.0
+
+    peaks = find_local_maxima_peaks(
+        image,
+        config=LocalMaxPeakFinderConfig(
+            min_intensity=10.0,
+            max_peaks=10,
+            min_distance_px=8,
+            neighborhood_radius_px=1,
+            gap_inference=GapAwarePeakInferenceConfig(
+                sample_texture="anisotropic",
+                max_gap_width_px=6,
+                max_gap_fraction=0.2,
+            ),
+        ),
+    )
+
+    assert not any((peak.metadata or {}).get("gap_estimate") for peak in peaks)
+
+
+def test_peak_finder_does_not_bridge_isotropic_ring_sample():
+    image = np.ones((48, 64), dtype=float)
+    image[:, 31:34] = 0.0
+    image[24, 29] = 90.0
+    image[24, 36] = 88.0
+
+    peaks = find_local_maxima_peaks(
+        image,
+        config=LocalMaxPeakFinderConfig(
+            min_intensity=10.0,
+            max_peaks=10,
+            min_distance_px=8,
+            neighborhood_radius_px=1,
+            gap_inference=GapAwarePeakInferenceConfig(
+                sample_texture="isotropic",
+                max_gap_width_px=5,
+                max_gap_fraction=0.15,
+            ),
+        ),
+    )
+
+    assert not any((peak.metadata or {}).get("gap_estimate") for peak in peaks)

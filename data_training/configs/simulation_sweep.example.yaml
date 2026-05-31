@@ -1,0 +1,38 @@
+dataset: demo_fibril_texture_v0
+structures: ../catalog/structures.example.yaml
+artifacts: artifacts.example.yaml
+output_root: ../runs/demo_fibril_texture_v0
+default_artifact_profile_id: default
+
+detector:
+  qxy_range: [-2.8, 2.8]
+  qz_range: [0.0, 2.8]
+  resolution: [384, 256]
+  wavelength_angstrom: 1.0
+  incident_angle_deg: 0.2
+  tilt_angle_deg: 0.0
+  solid_angle_correction: true
+  missing_wedge_correction: true
+  detector: pilatus1m_pyfai
+
+sweep:
+  theta_x_deg: [90]
+  theta_y_deg: [0, 90]
+  sigma_theta: [0.03]
+  sigma_phi: [0.25]
+  sigma_r: [0.035]
+  q_dependent_sigma_r: [0.25]
+  q_dependent_sigma_z: [0.15]
+  hkl_extent: [14]
+  orientation_label: [fiber_out_of_plane]
+  texture_model: [fiber_gaussian]
+  artifact_profile_id: [default]
+  seed: [1001]
+
+metadata:
+  purpose: "Small local smoke-test sweep for the EWALD data_training scaffold."
+  notes: >
+    Defaults are biased toward 2-3 A^-1 detector windows so structure ranking
+    learns to work with realistic GIWAXS information content. Cluster
+    production sweeps should increase resolution and shard count, and may add
+    separate high-q shards when needed.
